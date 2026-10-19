@@ -35,8 +35,14 @@ public final class Monitor: @unchecked Sendable {
 
     let scanner = ProcessScanner()
     private var latestTable = ProcessTable()
+    private var lastSystemSample: UInt64 = 0
 
-    public init() {
+    public let history: HistoryStore
+    public let alerts = AlertEngine()
+    public var onAlert: (@MainActor (Alert) -> Void)?
+
+    public init(history: HistoryStore = HistoryStore()) {
+        self.history = history
         jobs = [
             Job(name: "system") { [unowned self] in self.sampleSystem() },
             Job(name: "thermal") { [unowned self] in self.sampleThermal() },
@@ -86,6 +92,10 @@ public final class Monitor: @unchecked Sendable {
                 reschedule(runNow: true)
             }
         }
+    }
+
+    public func update(rules: AlertRules) {
+        queue.async { [self] in alerts.rules = rules }
     }
 
     /// Runs `body` on the monitor queue. Used by the IPC server and tests.
@@ -194,6 +204,10 @@ public final class Monitor: @unchecked Sendable {
         if demand.contains(.network) { snapshot.network = network.sample() }
         if demand.contains(.gpu) { snapshot.gpu = gpu.sample() } else { gpu.close() }
         if demand.contains(.power) { snapshot.power = power.sample() } else { power.close() }
+        let now = MachTime.now
+        let interval = lastSystemSample == 0 ? plan.interval : MachTime.seconds(now &- lastSystemSample)
+        lastSystemSample = now
+        history.record(system: snapshot, interval: min(interval, plan.interval * 4))
         publish(snapshot)
     }
 
@@ -219,8 +233,13 @@ public final class Monitor: @unchecked Sendable {
     private func sampleProcesses() {
         let visible = activity >= .menuBar && plan.demand.contains(.processes)
         let wantsNetwork = visible ? plan.demand.contains(.appNetwork) : plan.backgroundAppNetwork
-        let table = scanner.scan(network: wantsNetwork)
+        let table = scanner.scan(network: wantsNetwork || alerts.needsNetwork)
         lock.withLock { latestTable = table }
+        history.record(table: table)
+        let fired = alerts.evaluate(table, history: history)
+        if !fired.isEmpty, let onAlert {
+            DispatchQueue.main.async { fired.forEach(onAlert) }
+        }
         processObserver?(table, visible)
         if visible, let onProcesses {
             DispatchQueue.main.async { onProcesses(table) }
