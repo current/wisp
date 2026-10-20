@@ -110,6 +110,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if ProcessInfo.processInfo.environment["WISP_FLOAT"] != nil { window.level = .floating }
 
         sidebar.onSelect = { [weak self] id in self?.show(id) }
+        inspectorItem.isCollapsed = true
         show(.apps)
 
         delegate.observeSystem { [weak self] snapshot in
@@ -138,6 +139,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let page = pages[id] ?? makePage(id)
         pages[id] = page
         guard page !== current else { return }
+        if current != nil { select(nil) }
         current?.view.removeFromSuperview()
         current = page
         page.view.translatesAutoresizingMaskIntoConstraints = false
@@ -155,15 +157,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func makePage(_ id: PageID) -> Page {
-        let select: (Selection?) -> Void = { [weak self] selection in self?.inspector.show(selection) }
+        let select: (Selection?) -> Void = { [weak self] selection in self?.select(selection) }
         switch id {
         case .apps: return AppsPage(delegate: delegate, onSelect: select)
         case .cpu, .memory, .energy, .disk, .network, .gpu:
             return MetricPage(id, delegate: delegate, onSelect: select)
         case .sensors: return SensorsPage(delegate: delegate)
-        case .ports: return PortsPage(delegate: delegate)
+        case .ports:
+            let page = PortsPage(delegate: delegate)
+            page.onSelect = select
+            return page
         case .docker: return DockerPage(delegate: delegate)
         case .agents: return AgentsPage(delegate: delegate, onSelect: select)
+        }
+    }
+
+    /// The inspector folds away when nothing is selected, so tables get the width.
+    private func select(_ selection: Selection?) {
+        inspector.show(selection)
+        if inspectorItem.isCollapsed != (selection == nil) {
+            inspectorItem.animator().isCollapsed = selection == nil
         }
     }
 

@@ -70,3 +70,22 @@ func probeMonitorLoop() {
     monitor.stop()
     print("passes", passes)
 }
+
+@Test(.enabled(if: ProcessInfo.processInfo.environment["WISP_PROBE"] != nil))
+func probeDeveloper() {
+    let scanner = ProcessScanner()
+    _ = scanner.scan(network: false)
+    Thread.sleep(forTimeInterval: 0.5)
+    let table = scanner.scan(network: false)
+    var start = clock()
+    let projects = DevServerScanner().scan(table)
+    print("dev servers \(Double(clock() - start) / Double(CLOCKS_PER_SEC) * 1000) ms")
+    for p in projects { print(" ", p.name, p.servers.map { "\($0.name):\($0.ports.map(\.port))" }) }
+    start = clock()
+    let agents = AgentFinder().find(table)
+    print("agents \(Double(clock() - start) / Double(CLOCKS_PER_SEC) * 1000) ms")
+    for a in agents { print(" ", a.kind, a.pid, a.processes.count, a.folder ?? "-", a.host ?? "-") }
+    start = clock()
+    let docker = Docker.status()
+    print("docker \(Double(clock() - start) / Double(CLOCKS_PER_SEC) * 1000) ms cpu", docker.socket ?? "none", docker.containers.map { "\($0.name) \($0.cpu ?? -1) \($0.memory ?? 0)" })
+}
