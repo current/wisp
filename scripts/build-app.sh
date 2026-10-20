@@ -10,7 +10,7 @@ if [[ "${1:-}" == "--debug" ]]; then
     archs=()
 fi
 
-version=$(sed -n 's/.*version = "\(.*\)".*/\1/p' Sources/WispCore/Version.swift)
+version=$(sed -n 's/.*version = "\(.*\)".*/\1/p' Sources/WispCore/Support/Wisp.swift)
 build_number=$(git rev-list --count HEAD 2>/dev/null || echo 1)
 
 swift build -c "$config" ${archs[@]+"${archs[@]}"} --product WispApp

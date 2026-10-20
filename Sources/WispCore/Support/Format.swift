@@ -22,6 +22,23 @@ public enum Format {
         return String(format: amount < 10 ? "%.1f %@" : "%.0f %@", amount, units[unit])
     }
 
+    /// Memory in binary units, the way Activity Monitor counts it (16 GB of RAM is 16 GB here).
+    public static func memory(_ value: UInt64) -> String {
+        memory(Double(value))
+    }
+
+    public static func memory(_ value: Double) -> String {
+        let units = ["B", "KB", "MB", "GB", "TB"]
+        var amount = value
+        var unit = 0
+        while amount >= 1024, unit < units.count - 1 {
+            amount /= 1024
+            unit += 1
+        }
+        if unit == 0 { return "\(Int(amount)) B" }
+        return String(format: amount < 10 ? "%.1f %@" : "%.0f %@", amount, units[unit])
+    }
+
     public static func rate(_ bytesPerSecond: Double) -> String {
         bytes(bytesPerSecond) + "/s"
     }
