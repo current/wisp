@@ -157,9 +157,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showWindow(selecting appID: String? = nil) {
         dashboard.close()
         if mainWindow == nil { mainWindow = MainWindowController(delegate: self) }
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         mainWindow?.showWindow(nil)
         mainWindow?.window?.makeKeyAndOrderFront(nil)
+        // An accessory app is not always allowed to activate; make sure the window is seen anyway.
+        mainWindow?.window?.orderFrontRegardless()
         if let appID { mainWindow?.reveal(appID: appID) }
     }
 
@@ -172,9 +174,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showSettings() {
         dashboard.close()
         if settingsWindow == nil { settingsWindow = SettingsWindowController(delegate: self) }
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         settingsWindow?.showWindow(nil)
         settingsWindow?.window?.makeKeyAndOrderFront(nil)
+        settingsWindow?.window?.orderFrontRegardless()
     }
 
     func settingsClosed() { settingsWindow = nil }

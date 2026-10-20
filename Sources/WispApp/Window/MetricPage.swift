@@ -125,15 +125,12 @@ final class MetricPage: NSViewController, Page, NSTableViewDataSource, NSTableVi
     }
 
     private func updateSpanTitle() {
-        let span = spanMinutes == 60 ? "last hour" : "last 24 hours"
+        let span = spanMinutes == 60 ? "Hour" : "Day"
         let title: String
         switch id {
-        case .cpu: title = "Average, " + span
-        case .memory: title = "Peak, " + span
-        case .energy: title = "Used, " + span
-        case .disk: title = "Read and written, " + span
-        case .network: title = "Sent and received, " + span
-        default: title = span
+        case .cpu: title = span + " average"
+        case .memory: title = span + " peak"
+        default: title = span + " total"
         }
         table.tableColumns.last?.title = title
     }

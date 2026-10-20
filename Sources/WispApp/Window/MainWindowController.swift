@@ -106,6 +106,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.toolbar = toolbar
         window.delegate = self
         if !window.setFrameUsingName("WispMain") { window.center() }
+        // For screenshots while other apps are in use.
+        if ProcessInfo.processInfo.environment["WISP_FLOAT"] != nil { window.level = .floating }
 
         sidebar.onSelect = { [weak self] id in self?.show(id) }
         show(.apps)

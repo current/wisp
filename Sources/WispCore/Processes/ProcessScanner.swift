@@ -61,7 +61,7 @@ final class ProcessScanner {
     private let wallStart = Date().timeIntervalSince1970 - MachTime.seconds(mach_absolute_time())
     private var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
     var network: AppNetworkSource?
-    var makeNetworkSource: (() -> AppNetworkSource?)?
+    var makeNetworkSource: (() -> AppNetworkSource?)? = { AppNetwork() }
 
     private static let responsibleFor: (@convention(c) (pid_t) -> pid_t)? = {
         guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_get_pid_responsible_for_pid") else { return nil }

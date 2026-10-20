@@ -39,3 +39,34 @@ func probeScan() {
         print(String(format: "%-34@ %3d procs cpu %6.2f mem %6.0f MB %6.2f W", app.name as NSString, app.processCount, app.cpu * 100, Double(app.memory) / 1e6, app.watts))
     }
 }
+
+@Test(.enabled(if: ProcessInfo.processInfo.environment["WISP_PROBE"] != nil))
+func probePowerAndNetwork() {
+    let power = PowerCollector()
+    _ = power.sample()
+    let network = AppNetwork()
+    _ = network?.rates()
+    Thread.sleep(forTimeInterval: 2)
+    print("power", power.sample() as Any)
+    let cpuStart = clock()
+    let rates = network?.rates() ?? [:]
+    print("network query \(Double(clock() - cpuStart) / Double(CLOCKS_PER_SEC) * 1000) ms cpu, \(rates.count) processes")
+    for (pid, rate) in rates.sorted(by: { $0.value.received + $0.value.sent > $1.value.received + $1.value.sent }).prefix(5) {
+        print(pid, Format.rate(rate.received), Format.rate(rate.sent))
+    }
+}
+
+@Test(.enabled(if: ProcessInfo.processInfo.environment["WISP_PROBE"] != nil))
+func probeMonitorLoop() {
+    let monitor = Monitor()
+    var passes = 0
+    monitor.processObserver = { table, _ in
+        passes += 1
+        print("pass \(passes): \(table.apps.count) apps, network \(table.networkMeasured), system power \(monitor.currentSystem.power as Any)")
+    }
+    monitor.update(activity: .window, plan: SamplingPlan(demand: [.system, .processes, .appNetwork], interval: 1))
+    monitor.start()
+    Thread.sleep(forTimeInterval: 4)
+    monitor.stop()
+    print("passes", passes)
+}

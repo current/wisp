@@ -62,6 +62,7 @@ final class DashboardView: NSView {
     private let gpu = MetricRow(title: "GPU")
     private let thermal = MetricRow(title: "Temperature")
     private let battery = MetricRow(title: "Battery")
+    private let power = MetricRow(title: "Power")
     private var appRows: [AppLine] = []
     private let appsHeader = Style.secondary("Most CPU right now")
 
@@ -69,7 +70,7 @@ final class DashboardView: NSView {
         self.delegate = delegate
         super.init(frame: NSRect(x: 0, y: 0, width: 364, height: 100))
 
-        let metrics = NSGridView(views: [[cpu, memory], [network, disk], [gpu, thermal], [battery, NSGridCell.emptyContentView]])
+        let metrics = NSGridView(views: [[cpu, memory], [network, disk], [gpu, thermal], [power, battery]])
         metrics.translatesAutoresizingMaskIntoConstraints = false
         metrics.columnSpacing = Style.section
         metrics.rowSpacing = Style.pad + Style.unit
@@ -157,6 +158,14 @@ final class DashboardView: NSView {
             thermal.set(value: Format.celsius(celsius), detail: fans, strained: Strain.temperature(t))
             thermal.chart.ceiling = 110
             thermal.chart.values = history.recent(.cpuTemperature)
+        }
+
+        power.isHidden = s.power?.cpu == nil
+        if let p = s.power, let cpuWatts = p.cpu {
+            let total = cpuWatts + (p.gpu ?? 0) + (p.ane ?? 0)
+            power.set(value: Format.watts(total), detail: "CPU \(Format.watts(cpuWatts)), GPU \(Format.watts(p.gpu ?? 0))", strained: false)
+            power.chart.ceiling = nil
+            power.chart.values = history.recent(.power)
         }
 
         battery.isHidden = s.battery == nil
