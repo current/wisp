@@ -47,6 +47,8 @@ public final class AlertEngine: @unchecked Sendable {
     public var rules: AlertRules
     private var since: [AlertKind: [String: Date]] = [:]
     private var lastFired: [String: Date] = [:]
+    /// The last 50 alerts, newest last, for the CLI and assistants.
+    public private(set) var recent: [Alert] = []
 
     public init(rules: AlertRules = AlertRules()) {
         self.rules = rules
@@ -116,7 +118,10 @@ public final class AlertEngine: @unchecked Sendable {
         let key = kind.rawValue + "|" + app.id
         if let last = lastFired[key], now.timeIntervalSince(last) < rules.cooldownMinutes * 60 { return nil }
         lastFired[key] = now
-        return Alert(kind: kind, appID: app.id, appName: app.name, title: message.0, body: message.1, date: now)
+        let alert = Alert(kind: kind, appID: app.id, appName: app.name, title: message.0, body: message.1, date: now)
+        recent.append(alert)
+        if recent.count > 50 { recent.removeFirst(recent.count - 50) }
+        return alert
     }
 
     static func growth(_ series: [Float]) -> Double {

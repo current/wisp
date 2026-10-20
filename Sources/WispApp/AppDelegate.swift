@@ -46,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBar.rebuild(settings.menuItems)
         replan()
         monitor.start()
+        IPCServer.shared.assistantsAllowed = settings.allowMCP
         IPCServer.shared.start(monitor: monitor)
 
         // Finished hours go to disk as they close; this catches the hour in progress
@@ -149,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.save()
         if menuChanged { statusBar.rebuild(settings.menuItems) }
         monitor.update(rules: settings.alerts)
+        IPCServer.shared.assistantsAllowed = settings.allowMCP
         replan()
     }
 

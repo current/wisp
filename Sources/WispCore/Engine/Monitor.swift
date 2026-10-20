@@ -103,6 +103,26 @@ public final class Monitor: @unchecked Sendable {
         queue.sync { body(self) }
     }
 
+    /// Readings no older than `maxAge`, sampling now if the last pass is older. Used
+    /// by the local socket, so the CLI gets current figures with every window closed.
+    public func fresh(maxAge: TimeInterval = 3) -> (system: SystemSnapshot, table: ProcessTable, alerts: [Alert]) {
+        queue.sync {
+            if Date().timeIntervalSince(latestTable.date) > maxAge || latestTable.interval == 0 {
+                let table = scanner.scan(network: scanner.network != nil)
+                lock.withLock { latestTable = table }
+            }
+            if Date().timeIntervalSince(latestSystem.date) > maxAge {
+                let saved = plan
+                plan.demand.formUnion(.system)
+                sampleSystem()
+                plan = saved
+            }
+            if latestSystem.thermal == nil { sampleThermal() }
+            if latestSystem.battery == nil { sampleBattery() }
+            return (lock.withLock { latestSystem }, lock.withLock { latestTable }, alerts.recent)
+        }
+    }
+
     public var currentSystem: SystemSnapshot { lock.withLock { latestSystem } }
     public var currentTable: ProcessTable { lock.withLock { latestTable } }
 
