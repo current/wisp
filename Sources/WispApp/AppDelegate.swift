@@ -56,7 +56,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         flushTimer?.tolerance = 120
 
         switch ProcessInfo.processInfo.environment["WISP_OPEN"] {
-        case "window": showWindow()
+        case "window":
+            showWindow(selecting: ProcessInfo.processInfo.environment["WISP_SELECT"])
+            if let page = ProcessInfo.processInfo.environment["WISP_PAGE"].flatMap(PageID.init(rawValue:)) { mainWindow?.show(page) }
         case "dashboard": DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.statusBar.openDashboard() }
         case "settings": showSettings()
         default: break
