@@ -9,6 +9,9 @@ final class SensorsPage: NSViewController, Page {
     private let temperatures = NSGridView()
     private let fans = NSGridView()
     private let battery = NSGridView()
+    private let accessories = NSGridView()
+    private var accessoryReadings: [AccessoryBattery] = []
+    private var accessoriesRead = Date.distantPast
     private var values: [String: NSTextField] = [:]
     private var layoutKey = ""
 
@@ -22,15 +25,16 @@ final class SensorsPage: NSViewController, Page {
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
-        for grid in [temperatures, fans, battery] {
+        for grid in [temperatures, fans, battery, accessories] {
             grid.translatesAutoresizingMaskIntoConstraints = false
             grid.rowSpacing = Style.gap
             grid.columnSpacing = Style.section
         }
-        let stack = Style.stack([heading("Temperatures"), temperatures, heading("Fans"), fans, heading("Battery"), battery],
+        let stack = Style.stack([heading("Temperatures"), temperatures, heading("Fans"), fans, heading("Battery"), battery, heading("Accessories"), accessories],
                                 axis: .vertical, spacing: Style.gap, alignment: .leading)
         stack.setCustomSpacing(Style.section + Style.unit, after: temperatures)
         stack.setCustomSpacing(Style.section + Style.unit, after: fans)
+        stack.setCustomSpacing(Style.section + Style.unit, after: battery)
         let document = FlippedView()
         document.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(stack)
@@ -67,14 +71,20 @@ final class SensorsPage: NSViewController, Page {
             if let celsius = b.temperature { batteryRows.append(("Temperature", Format.celsius(celsius))) }
         }
 
+        if Date().timeIntervalSince(accessoriesRead) > 60 {
+            accessoriesRead = Date()
+            accessoryReadings = Accessories.batteries()
+        }
+
         // Rebuild the grids only when the set of rows changes; otherwise just set text.
-        let key = sensors.map(\.key).joined() + "|\(fanList.count)|" + batteryRows.map(\.0).joined()
+        let key = sensors.map(\.key).joined() + "|\(fanList.count)|" + batteryRows.map(\.0).joined() + "|" + accessoryReadings.map(\.name).joined()
         if key != layoutKey {
             layoutKey = key
             values.removeAll()
             fill(temperatures, sensors.map { ("t." + $0.key, $0.name) }, empty: "No temperature sensors found")
             fill(fans, fanList.map { ("f.\($0.index)", "Fan \($0.index + 1)") }, empty: "This Mac has no fans")
             fill(battery, batteryRows.map { ("b." + $0.0, $0.0) }, empty: "No battery")
+            fill(accessories, accessoryReadings.map { ("a." + $0.name, $0.name) }, empty: "No Bluetooth keyboard, mouse or trackpad reports a battery")
         }
         for sensor in sensors { values["t." + sensor.key]?.stringValue = Format.celsius(sensor.celsius) }
         for fan in fanList {
@@ -83,6 +93,7 @@ final class SensorsPage: NSViewController, Page {
             values["f.\(fan.index)"]?.stringValue = text
         }
         for (name, value) in batteryRows { values["b." + name]?.stringValue = value }
+        for accessory in accessoryReadings { values["a." + accessory.name]?.stringValue = "\(accessory.percent)%" }
     }
 
     private func fill(_ grid: NSGridView, _ rows: [(String, String)], empty: String) {
