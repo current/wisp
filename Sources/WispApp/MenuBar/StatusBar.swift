@@ -20,6 +20,14 @@ final class StatusBar {
 
     private unowned let delegate: AppDelegate
     private var items: [Item] = []
+    private static let symbols: [MenuMetric: NSImage] = {
+        var result: [MenuMetric: NSImage] = [:]
+        for metric in MenuMetric.allCases {
+            result[metric] = NSImage(systemSymbolName: metric.symbol, accessibilityDescription: metric.title)?
+                .withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
+        }
+        return result
+    }()
     /// Shown when every reading is turned off, so the app can still be reached.
     private var fallback: NSStatusItem?
 
@@ -108,32 +116,14 @@ final class StatusBar {
 
             let tint: NSColor? = reading.strained ? .systemRed : nil
             let ceiling = reading.ceiling > 0 ? reading.ceiling : max(graph.filter { !$0.isNaN }.max() ?? 1, 1)
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular),
-                .foregroundColor: tint ?? NSColor.labelColor,
-            ]
-            var title = text
-
-            if wantsGraph {
-                button.image = MiniGraph.image(graph, ceiling: ceiling, size: NSSize(width: 28, height: 16), tint: tint)
-            } else if metric == .network, let lines = reading.lines {
-                // Up and down stacked in one image, the way people expect a network meter to look.
-                button.image = MiniGraph.twoLines(lines.0, lines.1, width: 44, tint: tint)
-                title = ""
-            } else if icons {
-                let symbol = NSImage(systemSymbolName: metric.symbol, accessibilityDescription: metric.title)?
-                    .withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
-                if let tint, let symbol {
-                    button.image = symbol.withSymbolConfiguration(.init(paletteColors: [tint]))
-                } else {
-                    symbol?.isTemplate = true
-                    button.image = symbol
-                }
-            } else {
-                button.image = nil
-            }
-            button.attributedTitle = NSAttributedString(string: title, attributes: attributes)
-            button.toolTip = metric.title + (reading.text.isEmpty ? "" : ": " + reading.text)
+            let symbol = icons && !wantsGraph && metric != .network ? Self.symbols[metric] : nil
+            let lines = metric == .network && wantsText && !wantsGraph ? reading.lines : nil
+            // One bitmap per change: the menu bar re-snapshots a button whenever any part
+            // of it changes, so a symbol plus an attributed title costs two passes.
+            button.image = StatusImage.render(symbol: symbol, graph: wantsGraph ? (graph, ceiling) : nil,
+                                              text: lines == nil ? text : "", lines: lines, tint: tint)
+            let tip = metric.title + (reading.text.isEmpty ? "" : ": " + reading.text)
+            if button.toolTip != tip { button.toolTip = tip }
         }
     }
 

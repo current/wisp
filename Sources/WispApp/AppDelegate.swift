@@ -62,6 +62,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let page = ProcessInfo.processInfo.environment["WISP_PAGE"].flatMap(PageID.init(rawValue:)) { mainWindow?.show(page) }
         case "dashboard": DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.statusBar.openDashboard() }
         case "settings": showSettings()
+        case "menu":
+            if let seconds = ProcessInfo.processInfo.environment["WISP_MENU_INTERVAL"].flatMap(Double.init) {
+                change { $0.menuInterval = seconds }
+            }
         default: break
         }
     }
@@ -121,7 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let needsBackground = settings.keepHistory || settings.alerts.anyEnabled
         let plan = SamplingPlan(demand: demand,
-                                interval: settings.interval,
+                                interval: activity == .menuBar ? max(settings.interval, settings.menuInterval) : settings.interval,
                                 backgroundProcessInterval: needsBackground ? settings.backgroundInterval : nil,
                                 backgroundAppNetwork: settings.trackAppNetwork)
         monitor.update(activity: activity, plan: plan)

@@ -76,6 +76,9 @@ struct AppSettings: Codable, Equatable {
     var showIcons = true
     /// Seconds between readings while something is on screen.
     var interval: Double = 2
+    /// Seconds between menu bar updates while no window or popover is open. Each
+    /// update costs the menu bar a redraw, which is most of what an idle Wisp spends.
+    var menuInterval: Double = 3
     /// Seconds between the quiet process passes that feed history and alerts.
     var backgroundInterval: Double = 10
     var keepHistory = true
@@ -98,6 +101,7 @@ struct AppSettings: Codable, Equatable {
         showIcons = (try? c.decode(Bool.self, forKey: .showIcons)) ?? fallback.showIcons
         interval = (try? c.decode(Double.self, forKey: .interval)) ?? fallback.interval
         backgroundInterval = (try? c.decode(Double.self, forKey: .backgroundInterval)) ?? fallback.backgroundInterval
+        menuInterval = (try? c.decode(Double.self, forKey: .menuInterval)) ?? fallback.menuInterval
         keepHistory = (try? c.decode(Bool.self, forKey: .keepHistory)) ?? fallback.keepHistory
         trackAppNetwork = (try? c.decode(Bool.self, forKey: .trackAppNetwork)) ?? fallback.trackAppNetwork
         cpuOfMachine = (try? c.decode(Bool.self, forKey: .cpuOfMachine)) ?? fallback.cpuOfMachine

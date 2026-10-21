@@ -148,14 +148,33 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
             appNode.children.sort(by: processOrder)
             result.append(appNode)
         }
-        result.sort(by: appOrder)
+        // Re-rank at most every few seconds. Between re-ranks rows keep their places and
+        // only their figures change, which is easier to read and far cheaper to draw.
+        let now = Date()
+        let sameApps = Set(result.map(\.key)) == Set(roots.map(\.key))
+        if sameApps, !forceSort, now.timeIntervalSince(lastSort) < 6 {
+            let position = Dictionary(uniqueKeysWithValues: roots.enumerated().map { ($1.key, $0) })
+            result.sort { (position[$0.key] ?? 0) < (position[$1.key] ?? 0) }
+        } else {
+            result.sort(by: appOrder)
+            lastSort = now
+            forceSort = false
+        }
         roots = result
         if nodes.count > live.count + 256 { nodes = nodes.filter { live.contains($0.key) } }
 
-        let selected = outline.item(atRow: outline.selectedRow) as? Node
-        outline.reloadData()
-        if let selected, outline.row(forItem: selected) >= 0 {
-            outline.selectRowIndexes([outline.row(forItem: selected)], byExtendingSelection: false)
+        // Same rows in the same order: refresh only what is on screen. Anything else
+        // (a new app, a change in ranking) needs a full reload.
+        let order = flatOrder()
+        if order == lastOrder {
+            refreshVisible()
+        } else {
+            let selected = outline.item(atRow: outline.selectedRow) as? Node
+            outline.reloadData()
+            if let selected, outline.row(forItem: selected) >= 0 {
+                outline.selectRowIndexes([outline.row(forItem: selected)], byExtendingSelection: false)
+            }
+            lastOrder = flatOrder()
         }
         if let pending = pendingSelection, let target = nodes["app:" + pending], outline.row(forItem: target) >= 0 {
             pendingSelection = nil
@@ -164,9 +183,40 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
             outline.scrollRowToVisible(row)
         }
 
-        let processCount = table.processes.count
-        summary.stringValue = "\(roots.count) apps, \(processCount) processes"
-            + (table.unattributedCPU > 0.05 ? ", \(Style.appCPU(table.unattributedCPU, machine: delegate.settings.cpuOfMachine, coreCount: table.coreCount)) CPU in processes Wisp cannot read" : "")
+        // Counts move rarely; a label that changes every tick re-lays out the whole window.
+        let text = "\(roots.count) apps, \(table.processes.count / 10 * 10)+ processes"
+        if summary.stringValue != text { summary.stringValue = text }
+    }
+
+    private var lastOrder: [String] = []
+
+    /// Writes new figures into the cells already on screen. Only labels whose text
+    /// changed redraw; nothing is re-created or laid out again.
+    private func refreshVisible() {
+        let visible = outline.rows(in: outline.visibleRect)
+        guard visible.length > 0 else { return }
+        let columns = outline.tableColumns.compactMap { Column(rawValue: $0.identifier.rawValue) }
+        for row in visible.location..<(visible.location + visible.length) {
+            guard let node = outline.item(atRow: row) as? Node else { continue }
+            for (index, column) in columns.enumerated() where column != .name {
+                guard let cell = outline.view(atColumn: index, row: row, makeIfNecessary: false) as? FigureCell else { continue }
+                let (text, faint) = figure(node, column)
+                cell.set(text, faint: faint)
+            }
+        }
+    }
+    private var lastSort = Date.distantPast
+    private var forceSort = false
+
+    /// Keys of the rows as the outline would show them, expanded children included.
+    private func flatOrder() -> [String] {
+        var keys: [String] = []
+        keys.reserveCapacity(roots.count + 32)
+        for root in roots {
+            keys.append(root.key)
+            if outline.isItemExpanded(root) { keys.append(contentsOf: root.children.map(\.key)) }
+        }
+        return keys
     }
 
     func select(appID: String) {
@@ -238,6 +288,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         guard let first = outlineView.sortDescriptors.first, let column = Column(rawValue: first.key ?? "") else { return }
         sortColumn = column
         ascending = first.ascending
+        forceSort = true
         rebuild()
     }
 
@@ -258,6 +309,14 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         }
 
         let cell = (outlineView.makeView(withIdentifier: id, owner: nil) as? FigureCell) ?? FigureCell(identifier: id)
+        let (text, faint) = figure(node, column)
+        cell.set(text, faint: faint)
+        return cell
+    }
+
+    private func figure(_ node: Node, _ column: Column) -> (String, Bool) {
+        let machine = delegate.settings.cpuOfMachine
+        let cores = table.coreCount
         var text = ""
         var faint = false
         if let app = node.app {
@@ -285,8 +344,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
             case .name: break
             }
         }
-        cell.set(text, faint: faint)
-        return cell
+        return (text, faint)
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
@@ -302,72 +360,103 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         if outline.isItemExpanded(node) { outline.collapseItem(node) } else { outline.expandItem(node) }
     }
 
-    func controlTextDidChange(_ obj: Notification) { rebuild() }
+    func controlTextDidChange(_ obj: Notification) {
+        forceSort = true
+        rebuild()
+    }
 }
 
-/// Icon, name and a quiet note (a pid, or why figures are missing).
+/// Icon, name and a quiet note (a pid, or why figures are missing). Laid out by
+/// hand: a table full of constraint-based cells re-solves them all on every reload.
 final class NameCell: NSTableCellView {
     private let icon = NSImageView()
     private let name = Style.label()
     private let note = Style.label("", font: Style.smallFigure, color: .tertiaryLabelColor)
-    private var iconWidth: NSLayoutConstraint!
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
         self.identifier = identifier
-        icon.translatesAutoresizingMaskIntoConstraints = false
+        for view in [icon, name, note] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = true
+            addSubview(view)
+        }
         icon.imageScaling = .scaleProportionallyUpOrDown
-        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        addSubview(icon)
-        addSubview(name)
-        addSubview(note)
         imageView = icon
         textField = name
-        iconWidth = icon.widthAnchor.constraint(equalToConstant: 18)
-        NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconWidth,
-            icon.heightAnchor.constraint(equalToConstant: 18),
-            name.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
-            name.centerYAnchor.constraint(equalTo: centerYAnchor),
-            note.leadingAnchor.constraint(equalTo: name.trailingAnchor, constant: 6),
-            note.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
-            note.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
-        ])
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     func set(icon image: NSImage?, name text: String, note noteText: String?) {
-        icon.image = image
-        iconWidth.constant = image == nil ? 0 : 18
-        name.stringValue = text
-        note.stringValue = noteText ?? ""
+        if icon.image !== image { icon.image = image }
+        icon.isHidden = image == nil
+        if name.stringValue != text { name.stringValue = text }
+        let noteValue = noteText ?? ""
+        if note.stringValue != noteValue { note.stringValue = noteValue }
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let height = bounds.height
+        var x: CGFloat = 2
+        if !icon.isHidden {
+            icon.frame = NSRect(x: x, y: (height - 18) / 2, width: 18, height: 18)
+            x += 24
+        }
+        let noteWidth = note.stringValue.isEmpty ? 0 : ceil(note.intrinsicContentSize.width)
+        let nameHeight = ceil(name.intrinsicContentSize.height)
+        let nameWidth = min(ceil(name.intrinsicContentSize.width), max(0, bounds.width - x - 4 - (noteWidth > 0 ? noteWidth + 6 : 0)))
+        name.frame = NSRect(x: x, y: (height - nameHeight) / 2, width: nameWidth, height: nameHeight)
+        if noteWidth > 0 {
+            let noteHeight = ceil(note.intrinsicContentSize.height)
+            let baseline = name.frame.minY + name.baselineOffsetFromBottom - note.baselineOffsetFromBottom
+            note.frame = NSRect(x: name.frame.maxX + 6, y: baseline, width: min(noteWidth, max(0, bounds.width - name.frame.maxX - 10)), height: noteHeight)
+        } else {
+            note.frame = .zero
+        }
     }
 }
 
-/// A right-aligned figure in tabular digits.
+/// A figure in tabular digits that draws itself. Setting new text only marks the
+/// cell for redraw; a text field would invalidate its size and re-lay out the window.
 final class FigureCell: NSTableCellView {
-    private let label = Style.label("", font: Style.figure)
+    private static let font = Style.figure
+    private var text = ""
+    private var faint = false
+    var alignment: NSTextAlignment = .right { didSet { needsDisplay = true } }
+    var color: NSColor? { didSet { needsDisplay = true } }
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
         self.identifier = identifier
-        label.alignment = .right
-        addSubview(label)
-        textField = label
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func set(_ text: String, faint: Bool) {
-        if label.stringValue != text { label.stringValue = text }
-        label.textColor = faint ? .tertiaryLabelColor : .labelColor
+    func set(_ newText: String, faint newFaint: Bool) {
+        guard newText != text || newFaint != faint else { return }
+        text = newText
+        faint = newFaint
+        setAccessibilityValue(newText)
+        needsDisplay = true
+    }
+
+    override var backgroundStyle: NSView.BackgroundStyle { didSet { needsDisplay = true } }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard !text.isEmpty else { return }
+        let emphasized = backgroundStyle == .emphasized
+        let textColor = emphasized ? NSColor.alternateSelectedControlTextColor
+            : (color ?? (faint ? .tertiaryLabelColor : .labelColor))
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = alignment
+        paragraph.lineBreakMode = .byTruncatingTail
+        let attributes: [NSAttributedString.Key: Any] = [.font: Self.font, .foregroundColor: textColor, .paragraphStyle: paragraph]
+        let height = ceil(Self.font.ascender - Self.font.descender + Self.font.leading)
+        (text as NSString).draw(in: NSRect(x: 2, y: (bounds.height - height) / 2, width: max(0, bounds.width - 6), height: height),
+                                withAttributes: attributes)
     }
 }

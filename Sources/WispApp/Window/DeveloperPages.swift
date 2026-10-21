@@ -155,9 +155,9 @@ class DeveloperPage: NSViewController, Page, NSOutlineViewDataSource, NSOutlineV
             return cell
         }
         let cell = (outlineView.makeView(withIdentifier: id, owner: nil) as? FigureCell) ?? FigureCell(identifier: id)
+        cell.alignment = columns[index].2 ? .right : .left
+        cell.color = item.accent && index == columns.count - 1 ? .systemOrange : nil
         cell.set(text, faint: item.faint)
-        cell.textField?.alignment = columns[index].2 ? .right : .left
-        cell.textField?.textColor = item.accent && index == columns.count - 1 ? .systemOrange : (item.faint ? .tertiaryLabelColor : .labelColor)
         return cell
     }
 

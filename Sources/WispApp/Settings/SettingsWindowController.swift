@@ -170,7 +170,13 @@ final class GeneralPane: Pane {
                                    selected: intervals.firstIndex(of: s.interval) ?? 1) { [unowned self] i in
             delegate.change { $0.interval = intervals[i] }
         })
-        note("While Wisp is on screen. With every window closed it checks apps every \(Int(s.backgroundInterval)) seconds for history and alerts.")
+        note("While a Wisp window or the dashboard is open.")
+        let menuIntervals: [Double] = [1, 2, 3, 5, 10]
+        row("Menu bar:", popup(menuIntervals.map { $0 == 1 ? "every second" : "every \(Int($0)) seconds" },
+                                selected: menuIntervals.firstIndex(of: s.menuInterval) ?? 2) { [unowned self] i in
+            delegate.change { $0.menuInterval = menuIntervals[i] }
+        })
+        note("Redrawing the menu bar is most of what Wisp costs when no window is open. With every window closed it also checks apps every \(Int(s.backgroundInterval)) seconds for history and alerts.")
         gap()
         row("App CPU:", popup(["100% is one core", "100% is the whole Mac"], selected: s.cpuOfMachine ? 1 : 0) { [unowned self] i in
             delegate.change { $0.cpuOfMachine = i == 1 }

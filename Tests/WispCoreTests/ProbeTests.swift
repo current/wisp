@@ -89,3 +89,20 @@ func probeDeveloper() {
     let docker = Docker.status()
     print("docker \(Double(clock() - start) / Double(CLOCKS_PER_SEC) * 1000) ms cpu", docker.socket ?? "none", docker.containers.map { "\($0.name) \($0.cpu ?? -1) \($0.memory ?? 0)" })
 }
+
+@Test(.enabled(if: ProcessInfo.processInfo.environment["WISP_PROBE"] != nil))
+func probeArchiveCost() {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("wisp-probe-\(UUID().uuidString).sqlite")
+    let history = HistoryStore(archive: HourlyArchive(url: url))
+    let scanner = ProcessScanner()
+    _ = scanner.scan(network: false)
+    Thread.sleep(forTimeInterval: 0.5)
+    let table = scanner.scan(network: false)
+    history.record(table: table)
+    var start = clock()
+    history.flushToArchive()
+    print("first flush \(Double(clock() - start) / Double(CLOCKS_PER_SEC) * 1000) ms cpu for \(table.apps.count) apps")
+    start = clock()
+    history.flushToArchive()
+    print("second flush \(Double(clock() - start) / Double(CLOCKS_PER_SEC) * 1000) ms cpu")
+}
