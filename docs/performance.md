@@ -19,8 +19,8 @@ Wisp shows CPU, memory and network in the menu bar. Nothing else is open.
 The window is in front and redraws every two seconds, with per-app network on.
 Vitals and Stats ran in the background, so their rows look the same as above.
 The Wisp row comes from a second run after a fix to the Network column; the
-other rows are from the first. With its own window open, Vitals measured 3.6 to 4.9% earlier the same
-day.
+other rows are from the first. With its own window open, Vitals measured 3.6
+to 4.9% earlier the same day.
 
 | App    | Mean  | Median | p95  | Max   | Memory |
 |--------|-------|--------|------|-------|--------|

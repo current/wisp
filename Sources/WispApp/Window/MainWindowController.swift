@@ -150,7 +150,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             page.view.topAnchor.constraint(equalTo: container.view.safeAreaLayoutGuide.topAnchor),
             page.view.bottomAnchor.constraint(equalTo: container.view.bottomAnchor),
         ])
-        window?.subtitle = id == .apps ? "" : id.title
+        window?.subtitle = ""
         delegate.windowDemand = page.demand
         page.update(system: delegate.system)
         page.update(table: delegate.table)

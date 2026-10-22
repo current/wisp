@@ -192,7 +192,7 @@ final class PortsPage: DeveloperPage {
             group.icon = NSImage(systemSymbolName: project.path.isEmpty ? "questionmark.folder" : "folder", accessibilityDescription: nil)
             group.children = project.servers.map { server in
                 let ports = Array(Set(server.ports.map(\.port))).sorted().map(String.init).joined(separator: ", ")
-                var activity = server.connections > 0 ? "\(server.connections) connected" : "No connections"
+                var activity = server.connections > 0 ? "\(server.connections) connected" : "–"
                 var accent = false
                 if let idle = server.idleSeconds, server.connections == 0, idle >= DevServerScanner.idleAfter, project.path.isEmpty == false {
                     activity = "Idle " + Format.duration(idle)
