@@ -385,9 +385,8 @@ final class NameCell: NSTableCellView {
         }
         icon.imageScaling = .scaleProportionallyUpOrDown
         // Not assigned to textField: the table would then restyle the label after
-        // layout and the measured width would no longer fit the text.
-        setAccessibilityElement(true)
-        setAccessibilityRole(.staticText)
+        // layout and the measured width would no longer fit the text. The labels
+        // stay accessible on their own.
     }
 
     override var backgroundStyle: NSView.BackgroundStyle {
@@ -408,10 +407,7 @@ final class NameCell: NSTableCellView {
     func set(icon image: NSImage?, name text: String, note noteText: String?) {
         if icon.image !== image { icon.image = image }
         icon.isHidden = image == nil
-        if name.stringValue != text {
-            name.stringValue = text
-            setAccessibilityLabel(text)
-        }
+        if name.stringValue != text { name.stringValue = text }
         let noteValue = noteText ?? ""
         if note.stringValue != noteValue { note.stringValue = noteValue }
         needsLayout = true
