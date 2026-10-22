@@ -221,6 +221,24 @@ public final class HistoryStore: @unchecked Sendable {
         lock.withLock { recent[metric]?.values ?? [] }
     }
 
+    /// The total of a per-second metric (bytes, joules) from `start` until now:
+    /// memory for the last day, the hourly archive before that.
+    public func total(_ metric: SystemMetric, since start: Date, now: Date = Date()) -> Double {
+        let nowMinute = Self.minute(now)
+        let startMinute = Self.minute(start)
+        let memoryFrom = max(startMinute, nowMinute - Self.minutes + 1)
+        var sum = 0.0
+        if let archive, startMinute < memoryFrom {
+            for (hour, value) in archive.system(metric, since: startMinute / 60)
+            where hour * 60 >= startMinute / 60 * 60 && hour * 60 + 59 < memoryFrom {
+                sum += value * 3600
+            }
+        }
+        let recent = day(metric, minutes: nowMinute - memoryFrom + 1, now: now)
+        sum += recent.reduce(0) { $1.isNaN ? $0 : $0 + Double($1) * 60 }
+        return sum
+    }
+
     /// The last few samples of each core, oldest first, in the order the CPU reports them.
     public func cores() -> [[Float]] {
         lock.withLock { recentCores.map(\.values) }

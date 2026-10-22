@@ -2,14 +2,15 @@ import AppKit
 import WispCore
 
 enum PageID: String, CaseIterable {
-    case apps, cpu, memory, energy, disk, network, gpu, sensors, ports, docker, agents
+    case overview, apps, cpu, memory, energy, disk, network, gpu, sensors, ports, docker, agents
 
     var title: String {
         switch self {
+        case .overview: return "Overview"
         case .apps: return "Apps"
         case .cpu: return "CPU"
         case .memory: return "Memory"
-        case .energy: return "Energy"
+        case .energy: return "Power"
         case .disk: return "Disk"
         case .network: return "Network"
         case .gpu: return "GPU"
@@ -22,7 +23,8 @@ enum PageID: String, CaseIterable {
 
     var symbol: String {
         switch self {
-        case .apps: return "square.grid.2x2"
+        case .overview: return "square.grid.2x2"
+        case .apps: return "list.bullet.rectangle"
         case .cpu: return "cpu"
         case .memory: return "memorychip"
         case .energy: return "bolt"
@@ -37,7 +39,7 @@ enum PageID: String, CaseIterable {
     }
 
     static let sections: [(String?, [PageID])] = [
-        (nil, [.apps]),
+        (nil, [.overview, .apps]),
         ("Machine", [.cpu, .memory, .energy, .disk, .network, .gpu, .sensors]),
         ("Developer", [.ports, .docker, .agents]),
     ]
@@ -78,6 +80,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
         window.title = "Wisp"
+        window.appearance = NSAppearance(named: .aqua)
+        window.backgroundColor = Theme.ground
         window.titlebarAppearsTransparent = false
         window.toolbarStyle = .unified
         window.isReleasedWhenClosed = false
@@ -111,7 +115,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         sidebar.onSelect = { [weak self] id in self?.show(id) }
         inspectorItem.isCollapsed = true
-        show(.apps)
+        show(.overview)
 
         delegate.observeSystem { [weak self] snapshot in
             guard let self, self.isVisible else { return }
@@ -159,9 +163,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func makePage(_ id: PageID) -> Page {
         let select: (Selection?) -> Void = { [weak self] selection in self?.select(selection) }
         switch id {
+        case .overview: return OverviewPage(delegate: delegate, open: { [weak self] page in self?.show(page) })
         case .apps: return AppsPage(delegate: delegate, onSelect: select)
-        case .cpu, .memory, .energy, .disk, .network, .gpu:
-            return MetricPage(id, delegate: delegate, onSelect: select)
+        case .cpu: return CPUPage(title: "CPU", metric: .cpu, delegate: delegate, onSelect: select)
+        case .memory: return MemoryPage(title: "Memory", metric: .memory, delegate: delegate, onSelect: select)
+        case .disk: return DiskPage(title: "Disk", metric: .diskRead, delegate: delegate, onSelect: select)
+        case .network: return NetworkPage(title: "Network", metric: .networkIn, delegate: delegate, onSelect: select)
+        case .gpu: return GPUPage(title: "GPU", metric: .gpu, delegate: delegate, onSelect: select)
+        case .energy: return EnergyPage(title: "Power", metric: .power, delegate: delegate, onSelect: select)
         case .sensors: return SensorsPage(delegate: delegate)
         case .ports:
             let page = PortsPage(delegate: delegate)

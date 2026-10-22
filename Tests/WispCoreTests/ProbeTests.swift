@@ -106,3 +106,9 @@ func probeArchiveCost() {
     history.flushToArchive()
     print("second flush \(Double(clock() - start) / Double(CLOCKS_PER_SEC) * 1000) ms cpu")
 }
+
+@Test(.enabled(if: ProcessInfo.processInfo.environment["WISP_PROBE"] != nil))
+func probeVolumesAndSleep() {
+    for volume in Volumes.list() { print("volume", volume.name, volume.path, volume.total / 1_000_000_000, "GB", volume.free / 1_000_000_000, "free") }
+    for blocker in SleepBlockers.list() { print("awake", blocker.pid, blocker.process, blocker.reason, blocker.keepsDisplayOn, blocker.since as Any) }
+}

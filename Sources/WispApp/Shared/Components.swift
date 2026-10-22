@@ -12,7 +12,7 @@ class DrawnView: NSView {
 
 /// White card with a hairline border. Colours are applied in updateLayer, so the
 /// card costs nothing to redraw and follows light and dark.
-final class CardView: NSView {
+class CardView: NSView {
     var fill: NSColor = Theme.card { didSet { needsDisplay = true } }
     var stroke: NSColor = Theme.cardBorder { didSet { needsDisplay = true } }
     var radius: CGFloat = Theme.radius { didSet { needsDisplay = true } }
@@ -87,13 +87,27 @@ final class BigNumber: DrawnView {
     var format: (Double) -> (String, String) = { (String(format: "%.0f", $0), "") }
 
     private(set) var value: Double?
+    private var fixed: (String, String)?
     private var shown: Double = 0
     private var from: Double = 0
     private var started: CFTimeInterval = 0
     private var link: CADisplayLink?
     private static let duration: CFTimeInterval = 0.45
 
+    /// Shows text that is not a number, such as "Normal".
+    func show(_ text: String, unit: String = "") {
+        if fixed.map({ $0 != (text, unit) }) ?? true {
+            fixed = (text, unit)
+            stop()
+            needsDisplay = true
+        }
+    }
+
     func set(_ newValue: Double?) {
+        if fixed != nil {
+            fixed = nil
+            value = nil
+        }
         guard newValue != value else { return }
         let old = value
         value = newValue
@@ -138,7 +152,7 @@ final class BigNumber: DrawnView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let (figure, unit) = value == nil ? ("–", "") : format(shown)
+        let (figure, unit) = fixed ?? (value == nil ? ("–", "") : format(shown))
         let figureText = NSAttributedString(string: figure, attributes: [.font: font, .foregroundColor: color, .kern: -0.6])
         let unitText = NSAttributedString(string: unit, attributes: [.font: unitFont, .foregroundColor: Theme.inkTertiary])
         let baseline = (bounds.height + font.ascender + font.descender) / 2
@@ -152,6 +166,7 @@ final class BigNumber: DrawnView {
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
     override func accessibilityValue() -> Any? {
+        if let fixed { return fixed.0 + " " + fixed.1 }
         guard let value else { return "–" }
         let (figure, unit) = format(value)
         return figure + " " + unit

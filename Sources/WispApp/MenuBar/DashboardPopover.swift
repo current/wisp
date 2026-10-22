@@ -469,7 +469,9 @@ final class DashboardView: DrawnView {
 
     static func titleText(_ name: String, _ count: String) -> NSAttributedString {
         let text = NSMutableAttributedString(string: name, attributes: [.font: Theme.sans(14), .foregroundColor: Theme.ink])
-        text.append(NSAttributedString(string: " · " + count, attributes: [.font: Theme.sans(14), .foregroundColor: Theme.inkTertiary]))
+        if !count.isEmpty {
+            text.append(NSAttributedString(string: " · " + count, attributes: [.font: Theme.sans(14), .foregroundColor: Theme.inkTertiary]))
+        }
         return text
     }
 }

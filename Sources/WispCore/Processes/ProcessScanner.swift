@@ -28,6 +28,7 @@ final class ProcessScanner {
         var energy: UInt64 = 0
         var bytesRead: UInt64 = 0
         var bytesWritten: UInt64 = 0
+        var wakeups: UInt64 = 0
         var sampledAt: UInt64 = 0
         var seen = 0
         var checkedAt = 0
@@ -130,7 +131,10 @@ final class ProcessScanner {
                     row.watts = Double(usage.ri_energy_nj &- (base ? entry.energy : 0)) / 1e9 / span
                     row.diskReadPerSecond = Double(usage.ri_diskio_bytesread &- (base ? entry.bytesRead : 0)) / span
                     row.diskWritePerSecond = Double(usage.ri_diskio_byteswritten &- (base ? entry.bytesWritten : 0)) / span
+                    let wakeups = usage.ri_pkg_idle_wkups &+ usage.ri_interrupt_wkups
+                    row.wakeupsPerSecond = Double(wakeups &- (base ? entry.wakeups : 0)) / span
                 }
+                entry.wakeups = usage.ri_pkg_idle_wkups &+ usage.ri_interrupt_wkups
                 entry.cpuTicks = ticks
                 entry.energy = usage.ri_energy_nj
                 entry.bytesRead = usage.ri_diskio_bytesread

@@ -22,6 +22,8 @@ public struct ProcessRow: Codable, Sendable, Equatable, Identifiable {
     /// Seconds of CPU since launch.
     public var cpuTime: Double
     public var startDate: Date?
+    /// Times per second the process woke the CPU from idle (timers and interrupts).
+    public var wakeupsPerSecond: Double = 0
 
     public var id: Int32 { pid }
 }
@@ -48,6 +50,7 @@ public struct AppGroup: Codable, Sendable, Equatable, Identifiable {
     public var networkOutPerSecond: Double
     /// Processes in the group whose counters could not be read.
     public var unreadable: Int
+    public var wakeupsPerSecond: Double = 0
 
     public var processCount: Int { pids.count }
     public var diskPerSecond: Double { diskReadPerSecond + diskWritePerSecond }

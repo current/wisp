@@ -74,6 +74,7 @@ public enum AppGrouping {
                 group.diskWritePerSecond += row.diskWritePerSecond
                 group.networkInPerSecond += row.networkInPerSecond
                 group.networkOutPerSecond += row.networkOutPerSecond
+                group.wakeupsPerSecond += row.wakeupsPerSecond
                 if !row.readable { group.unreadable += 1 }
                 groups[row.groupID] = group
             } else {
@@ -83,7 +84,7 @@ public enum AppGrouping {
                                                pids: [row.pid], cpu: row.cpu, memory: row.memory, watts: row.watts,
                                                diskReadPerSecond: row.diskReadPerSecond, diskWritePerSecond: row.diskWritePerSecond,
                                                networkInPerSecond: row.networkInPerSecond, networkOutPerSecond: row.networkOutPerSecond,
-                                               unreadable: row.readable ? 0 : 1)
+                                               unreadable: row.readable ? 0 : 1, wakeupsPerSecond: row.wakeupsPerSecond)
             }
         }
         return groups.values.sorted { ($0.cpu, $0.memory, $1.name) > ($1.cpu, $1.memory, $0.name) }

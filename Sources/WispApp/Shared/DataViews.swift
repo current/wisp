@@ -282,6 +282,7 @@ final class ListRow: DrawnView {
     var value = "" { didSet { if value != oldValue { needsDisplay = true } } }
     var fraction: Double = 0 { didSet { if Int(fraction * 100) != Int(oldValue * 100) { needsDisplay = true } } }
     var barColor: NSColor = Theme.accent
+    var showsBar = true
     var showsRule = true
     var onClick: (() -> Void)?
     private var hovering = false { didSet { needsDisplay = true } }
@@ -303,7 +304,7 @@ final class ListRow: DrawnView {
         }
         let valueAttributes: [NSAttributedString.Key: Any] = [.font: Theme.figure(13, .medium), .foregroundColor: Theme.ink]
         let valueWidth = max(52, ceil((value as NSString).size(withAttributes: valueAttributes).width))
-        let barWidth: CGFloat = 52
+        let barWidth: CGFloat = showsBar ? 52 : 0
         let barX = bounds.width - valueWidth - 12 - barWidth
 
         let nameAttributes: [NSAttributedString.Key: Any] = [.font: Theme.sans(13), .foregroundColor: Theme.ink]
@@ -320,11 +321,13 @@ final class ListRow: DrawnView {
             tagText.draw(at: NSPoint(x: x + nameWidth + 8, y: (bounds.height - tagText.size().height) / 2 + 1))
         }
 
-        Theme.track.setFill()
-        NSBezierPath(roundedRect: NSRect(x: barX, y: bounds.midY - 1.5, width: barWidth, height: 3), xRadius: 1.5, yRadius: 1.5).fill()
-        barColor.setFill()
-        let filled = max(3, barWidth * CGFloat(min(1, max(0, fraction))))
-        NSBezierPath(roundedRect: NSRect(x: barX, y: bounds.midY - 1.5, width: filled, height: 3), xRadius: 1.5, yRadius: 1.5).fill()
+        if showsBar {
+            Theme.track.setFill()
+            NSBezierPath(roundedRect: NSRect(x: barX, y: bounds.midY - 1.5, width: barWidth, height: 3), xRadius: 1.5, yRadius: 1.5).fill()
+            barColor.setFill()
+            let filled = max(3, barWidth * CGFloat(min(1, max(0, fraction))))
+            NSBezierPath(roundedRect: NSRect(x: barX, y: bounds.midY - 1.5, width: filled, height: 3), xRadius: 1.5, yRadius: 1.5).fill()
+        }
 
         let size = (value as NSString).size(withAttributes: valueAttributes)
         (value as NSString).draw(at: NSPoint(x: bounds.width - size.width, y: (bounds.height - size.height) / 2), withAttributes: valueAttributes)
