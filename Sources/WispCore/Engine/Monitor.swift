@@ -218,7 +218,9 @@ public final class Monitor: @unchecked Sendable {
         let demand = plan.demand
         var snapshot = lock.withLock { latestSystem }
         snapshot.date = Date()
-        if !demand.isDisjoint(with: [.cpu, .cpuCores]) { snapshot.cpu = cpu.sample(perCore: demand.contains(.cpuCores)) ?? snapshot.cpu }
+        // Per-core counters cost a few microseconds more. Reading them every time
+        // means the dashboard's core map already has history when it opens.
+        if !demand.isDisjoint(with: [.cpu, .cpuCores]) { snapshot.cpu = cpu.sample(perCore: true) ?? snapshot.cpu }
         if demand.contains(.memory) { snapshot.memory = memory.sample() }
         if demand.contains(.disk) { snapshot.disk = disk.sample() }
         if demand.contains(.network) { snapshot.network = network.sample() }

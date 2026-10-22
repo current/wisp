@@ -23,6 +23,7 @@ public enum AppMetric: String, CaseIterable, Codable, Sendable {
 public final class HistoryStore: @unchecked Sendable {
     public static let minutes = 1440
     public static let recentSamples = 120
+    public static let recentCoreSamples = 32
 
     fileprivate struct Accumulator {
         var sum: Double = 0
@@ -53,6 +54,7 @@ public final class HistoryStore: @unchecked Sendable {
     private var systemPending: [SystemMetric: Accumulator] = [:]
     private var systemPendingMinute = 0
     private var recent: [SystemMetric: RecentRing] = [:]
+    private var recentCores: [RecentRing] = []
     private var apps: [String: AppHistory] = [:]
     private var lastHourFlushed = 0
     public var archive: HourlyArchive?
@@ -96,6 +98,12 @@ public final class HistoryStore: @unchecked Sendable {
                 var ring = recent[metric] ?? RecentRing(capacity: Self.recentSamples)
                 ring.append(Float(value))
                 recent[metric] = ring
+            }
+            if let cores = snapshot.cpu?.cores, !cores.isEmpty {
+                if recentCores.count != cores.count {
+                    recentCores = cores.map { _ in RecentRing(capacity: Self.recentCoreSamples) }
+                }
+                for (index, value) in cores.enumerated() { recentCores[index].append(Float(value)) }
             }
         }
     }
@@ -211,6 +219,11 @@ public final class HistoryStore: @unchecked Sendable {
 
     public func recent(_ metric: SystemMetric) -> [Float] {
         lock.withLock { recent[metric]?.values ?? [] }
+    }
+
+    /// The last few samples of each core, oldest first, in the order the CPU reports them.
+    public func cores() -> [[Float]] {
+        lock.withLock { recentCores.map(\.values) }
     }
 
     public func day(_ metric: SystemMetric, minutes count: Int = HistoryStore.minutes, now: Date = Date()) -> [Float] {

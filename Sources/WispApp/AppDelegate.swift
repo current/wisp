@@ -188,6 +188,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func settingsClosed() { settingsWindow = nil }
 
+    func closeDashboard() { dashboard.close() }
+
     func toggleDashboard(from button: NSStatusBarButton) {
         dashboard.toggle(relativeTo: button)
     }
