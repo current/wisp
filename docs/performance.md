@@ -16,19 +16,20 @@ Wisp shows CPU, memory and network in the menu bar. Nothing else is open.
 
 ## Wisp window open on Apps
 
-The window is in front and redraws every two seconds. Vitals and Stats were
-running in the background at the same time, so their rows look the same as
-above. With its own window open, Vitals measured 3.6 to 4.9% earlier the same
+The window is in front and redraws every two seconds, with per-app network on.
+Vitals and Stats ran in the background, so their rows look the same as above.
+The Wisp row comes from a second run after a fix to the Network column; the
+other rows are from the first. With its own window open, Vitals measured 3.6 to 4.9% earlier the same
 day.
 
 | App    | Mean  | Median | p95  | Max   | Memory |
 |--------|-------|--------|------|-------|--------|
-| Wisp   | 1.60% | 1.20%  | 5.6% | 6.2%  | 55 MB  |
+| Wisp   | 1.81% | 1.30%  | 5.8% | 11.3% | 51 MB  |
 | Vitals | 1.83% | 0.00%  | 7.2% | 16.6% | 212 MB |
 | Stats  | 1.34% | 1.30%  | 2.4% | 2.8%  | 187 MB |
 
 My target for the open window was 0.5%. Wisp does not reach it yet. Collecting
-the data costs about 3 ms per tick on a background queue. The rest is AppKit
+the data costs about 5 ms per tick on a background queue. The rest is AppKit
 drawing on the main thread, mostly the table layout when the rows are re-sorted.
 That happens at most every six seconds.
 

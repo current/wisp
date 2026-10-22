@@ -151,7 +151,7 @@ class DeveloperPage: NSViewController, Page, NSOutlineViewDataSource, NSOutlineV
         if index == 0 {
             let cell = (outlineView.makeView(withIdentifier: id, owner: nil) as? NameCell) ?? NameCell(identifier: id)
             cell.set(icon: item.icon, name: text, note: nil)
-            cell.textField?.font = item.children.isEmpty ? Style.body : NSFont.systemFont(ofSize: 12, weight: .semibold)
+            cell.font = item.children.isEmpty ? Style.body : NSFont.systemFont(ofSize: 12, weight: .semibold)
             return cell
         }
         let cell = (outlineView.makeView(withIdentifier: id, owner: nil) as? FigureCell) ?? FigureCell(identifier: id)

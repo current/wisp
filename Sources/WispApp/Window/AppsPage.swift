@@ -6,6 +6,9 @@ import WispCore
 /// and selection where the user left them.
 @MainActor
 final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutlineViewDelegate, NSSearchFieldDelegate {
+    /// The Network column needs per-app traffic, about 2 ms a tick while the page shows.
+    var demand: Demand { [.appNetwork] }
+
     final class Node {
         let key: String
         var app: AppGroup?
@@ -381,16 +384,34 @@ final class NameCell: NSTableCellView {
             addSubview(view)
         }
         icon.imageScaling = .scaleProportionallyUpOrDown
-        imageView = icon
-        textField = name
+        // Not assigned to textField: the table would then restyle the label after
+        // layout and the measured width would no longer fit the text.
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+    }
+
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet {
+            let emphasized = backgroundStyle == .emphasized
+            name.textColor = emphasized ? .alternateSelectedControlTextColor : .labelColor
+            note.textColor = emphasized ? .alternateSelectedControlTextColor : .tertiaryLabelColor
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    var font: NSFont {
+        get { name.font ?? Style.body }
+        set { if name.font != newValue { name.font = newValue; needsLayout = true } }
+    }
+
     func set(icon image: NSImage?, name text: String, note noteText: String?) {
         if icon.image !== image { icon.image = image }
         icon.isHidden = image == nil
-        if name.stringValue != text { name.stringValue = text }
+        if name.stringValue != text {
+            name.stringValue = text
+            setAccessibilityLabel(text)
+        }
         let noteValue = noteText ?? ""
         if note.stringValue != noteValue { note.stringValue = noteValue }
         needsLayout = true
@@ -404,12 +425,12 @@ final class NameCell: NSTableCellView {
             icon.frame = NSRect(x: x, y: (height - 18) / 2, width: 18, height: 18)
             x += 24
         }
-        let noteWidth = note.stringValue.isEmpty ? 0 : ceil(note.intrinsicContentSize.width)
-        let nameHeight = ceil(name.intrinsicContentSize.height)
-        let nameWidth = min(ceil(name.intrinsicContentSize.width), max(0, bounds.width - x - 4 - (noteWidth > 0 ? noteWidth + 6 : 0)))
+        let noteWidth = note.stringValue.isEmpty ? 0 : ceil(note.cell?.cellSize.width ?? 0)
+        let nameHeight = ceil(name.cell?.cellSize.height ?? 16)
+        let nameWidth = min(ceil(name.cell?.cellSize.width ?? 0), max(0, bounds.width - x - 4 - (noteWidth > 0 ? noteWidth + 6 : 0)))
         name.frame = NSRect(x: x, y: (height - nameHeight) / 2, width: nameWidth, height: nameHeight)
         if noteWidth > 0 {
-            let noteHeight = ceil(note.intrinsicContentSize.height)
+            let noteHeight = ceil(note.cell?.cellSize.height ?? 14)
             let baseline = name.frame.minY + name.baselineOffsetFromBottom - note.baselineOffsetFromBottom
             note.frame = NSRect(x: name.frame.maxX + 6, y: baseline, width: min(noteWidth, max(0, bounds.width - name.frame.maxX - 10)), height: noteHeight)
         } else {
