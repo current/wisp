@@ -85,5 +85,7 @@ enum Theme {
         ])
     }
 
-    static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    static var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || ProcessInfo.processInfo.environment["WISP_NO_MOTION"] != nil
+    }
 }

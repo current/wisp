@@ -76,9 +76,9 @@ final class TextLine: DrawnView {
     override func accessibilityValue() -> Any? { text.string }
 }
 
-/// A large figure with a quieter unit after it. When the value changes on screen
-/// it counts to the new value over a short ease-out, driven by the display link
-/// only for as long as the count runs.
+/// A large figure with a quieter unit after it. When the figure changes on
+/// screen the new one rolls in with a short Core Animation push, which the
+/// window server runs on the GPU; the app draws each value once.
 final class BigNumber: DrawnView {
     var font = Theme.figure(32, .regular)
     var unitFont = Theme.sans(15)
@@ -88,71 +88,51 @@ final class BigNumber: DrawnView {
 
     private(set) var value: Double?
     private var fixed: (String, String)?
-    private var shown: Double = 0
-    private var from: Double = 0
-    private var started: CFTimeInterval = 0
-    private var link: CADisplayLink?
-    private static let duration: CFTimeInterval = 0.45
+    private var drawn: (String, String) = ("", "")
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
 
     /// Shows text that is not a number, such as "Normal".
     func show(_ text: String, unit: String = "") {
-        if fixed.map({ $0 != (text, unit) }) ?? true {
-            fixed = (text, unit)
-            stop()
-            needsDisplay = true
-        }
+        fixed = (text, unit)
+        refresh()
     }
 
     func set(_ newValue: Double?) {
-        if fixed != nil {
-            fixed = nil
-            value = nil
-        }
-        guard newValue != value else { return }
-        let old = value
+        fixed = nil
         value = newValue
-        guard let newValue else {
-            stop()
-            needsDisplay = true
-            return
-        }
-        guard let old, window?.isVisible == true, !Theme.reduceMotion, abs(newValue - old) > 0.0001 else {
-            stop()
-            shown = newValue
-            needsDisplay = true
-            return
-        }
-        from = shown
-        started = CACurrentMediaTime()
-        if link == nil {
-            let link = displayLink(target: self, selector: #selector(step))
-            link.add(to: .main, forMode: .common)
-            self.link = link
-        }
+        refresh()
     }
 
-    @objc private func step(_ link: CADisplayLink) {
-        guard let value else { return stop() }
-        let t = min(1, (CACurrentMediaTime() - started) / Self.duration)
-        let eased = 1 - pow(1 - t, 3)
-        shown = from + (value - from) * eased
+    private var current: (String, String) {
+        fixed ?? (value.map(format) ?? ("–", ""))
+    }
+
+    private func refresh() {
+        let next = current
+        guard next != drawn else { return }
+        let rising = (Double(next.0.filter { $0.isNumber || $0 == "." }) ?? 0) >= (Double(drawn.0.filter { $0.isNumber || $0 == "." }) ?? 0)
+        let animate = !drawn.0.isEmpty && window?.isVisible == true && !Theme.reduceMotion && next.1 == drawn.1
+        drawn = next
+        if animate, let layer {
+            let push = CATransition()
+            push.type = .push
+            push.subtype = rising ? .fromBottom : .fromTop
+            push.duration = 0.28
+            push.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            layer.add(push, forKey: "figure")
+        }
         needsDisplay = true
-        if t >= 1 { stop() }
-    }
-
-    private func stop() {
-        link?.invalidate()
-        link = nil
-        if let value { shown = value }
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if window == nil { stop() }
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let (figure, unit) = fixed ?? (value == nil ? ("–", "") : format(shown))
+        let (figure, unit) = drawn.0.isEmpty ? current : drawn
         let figureText = NSAttributedString(string: figure, attributes: [.font: font, .foregroundColor: color, .kern: -0.6])
         let unitText = NSAttributedString(string: unit, attributes: [.font: unitFont, .foregroundColor: Theme.inkTertiary])
         let baseline = (bounds.height + font.ascender + font.descender) / 2
@@ -165,12 +145,7 @@ final class BigNumber: DrawnView {
 
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
-    override func accessibilityValue() -> Any? {
-        if let fixed { return fixed.0 + " " + fixed.1 }
-        guard let value else { return "–" }
-        let (figure, unit) = format(value)
-        return figure + " " + unit
-    }
+    override func accessibilityValue() -> Any? { current.0 + " " + current.1 }
 }
 
 /// A short capsule with uppercase text, for states like NORMAL or BUSY.

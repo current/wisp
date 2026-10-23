@@ -1,57 +1,111 @@
 import AppKit
 import WispCore
 
-/// The popover behind every status item. Built once; while closed it receives no updates.
+/// The panel behind every status item. A borderless window with a solid
+/// background rather than an NSPopover: the popover's blurred material has to
+/// re-render behind every animation and holds a large GPU buffer while open.
+/// Built once; while closed it receives no updates.
 @MainActor
-final class DashboardPopover: NSObject, NSPopoverDelegate {
+final class DashboardPopover: NSObject {
     private unowned let delegate: AppDelegate
-    private let popover = NSPopover()
+    private var panel: DashboardPanel?
     private var content: DashboardView?
+    private var monitors: [Any] = []
+    private let pinned = ProcessInfo.processInfo.environment["WISP_PIN"] != nil
 
     init(delegate: AppDelegate) {
         self.delegate = delegate
         super.init()
-        // WISP_PIN keeps the popover open for screenshots and UI tests.
-        popover.behavior = ProcessInfo.processInfo.environment["WISP_PIN"] == nil ? .transient : .applicationDefined
-        popover.animates = false
-        popover.delegate = self
-        popover.appearance = NSAppearance(named: .aqua)
         delegate.observeSystem { [weak self] snapshot in
-            guard let self, self.popover.isShown else { return }
+            guard let self, self.isShown else { return }
             self.content?.update(snapshot, history: delegate.monitor.history)
         }
         delegate.observeTable { [weak self] table in
-            guard let self, self.popover.isShown else { return }
+            guard let self, self.isShown else { return }
             self.content?.update(table)
         }
     }
 
+    var isShown: Bool { panel?.isVisible ?? false }
+
     func toggle(relativeTo button: NSStatusBarButton) {
-        if popover.isShown {
-            popover.performClose(nil)
-            return
-        }
+        if isShown { return close() }
         let view = content ?? DashboardView(delegate: delegate)
         content = view
-        if popover.contentViewController == nil {
-            let controller = NSViewController()
-            controller.view = view
-            popover.contentViewController = controller
-        }
+        let panel = self.panel ?? DashboardPanel(content: view)
+        self.panel = panel
         view.update(delegate.system, history: delegate.monitor.history)
         view.update(delegate.table)
-        popover.contentSize = view.frame.size
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        panel.fit()
+
+        if let window = button.window {
+            let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
+            let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+            var x = anchor.midX - panel.frame.width / 2
+            x = min(max(screen.minX + 8, x), screen.maxX - panel.frame.width - 8)
+            panel.setFrameOrigin(NSPoint(x: x, y: anchor.minY - 6 - panel.frame.height))
+        }
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Theme.reduceMotion ? 0 : 0.14
+            panel.animator().alphaValue = 1
+        }
         delegate.dashboardOpen = true
+        guard !pinned else { return }
+        // Close on a click anywhere else, in another app or in the menu bar.
+        monitors.append(NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.close()
+        } as Any)
+        monitors.append(NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            if event.keyCode == 53 { self?.close(); return nil }
+            return event
+        } as Any)
     }
 
     func close() {
-        if popover.isShown { popover.performClose(nil) }
+        guard let panel, panel.isVisible else { return }
+        monitors.forEach(NSEvent.removeMonitor)
+        monitors.removeAll()
+        panel.orderOut(nil)
+        content?.hideTooltip()
+        delegate.dashboardOpen = false
+    }
+}
+
+/// A rounded, shadowed panel that holds the dashboard and can take key focus
+/// without activating the app.
+final class DashboardPanel: NSPanel {
+    private let frameView = CardView()
+    private let view: DashboardView
+
+    init(content: DashboardView) {
+        view = content
+        super.init(contentRect: NSRect(origin: .zero, size: content.frame.size),
+                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        level = .popUpMenu
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        appearance = NSAppearance(named: .aqua)
+        isReleasedWhenClosed = false
+        frameView.fill = Theme.panel
+        frameView.radius = Theme.panelRadius
+        frameView.layer?.masksToBounds = true
+        frameView.addSubview(content)
+        contentView = frameView
+        setAccessibilityLabel("Wisp")
     }
 
-    func popoverDidClose(_ notification: Notification) {
-        delegate.dashboardOpen = false
-        content?.hideTooltip()
+    override var canBecomeKey: Bool { true }
+
+    func fit() {
+        let size = view.frame.size
+        if frame.size != size { setContentSize(size) }
+        frameView.frame = NSRect(origin: .zero, size: size)
+        view.frame.origin = .zero
     }
 }
 
@@ -115,7 +169,6 @@ final class DashboardView: DrawnView {
     init(delegate: AppDelegate) {
         self.delegate = delegate
         super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: 780))
-        wantsLayer = true
 
         for view in [title, chip, settingsButton, closeButton, cpuCard, mapCard, appsCard, moreButton, footerRule, status, openButton] as [NSView] {
             addSubview(view)
@@ -169,9 +222,6 @@ final class DashboardView: DrawnView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var wantsUpdateLayer: Bool { true }
-    override func updateLayer() { layer?.backgroundColor = Theme.panel.cgColor }
-
     // MARK: Layout
 
     private func layoutAll() {
@@ -179,7 +229,7 @@ final class DashboardView: DrawnView {
         let cardWidth = width - outer * 2
         let content = cardWidth - inner * 2
 
-        title.frame = NSRect(x: 18, y: 16, width: 60, height: 20)
+        title.frame = NSRect(x: 20, y: 16, width: 60, height: 20)
         closeButton.frame = NSRect(x: width - 14 - 26, y: 13, width: 26, height: 26)
         settingsButton.frame = NSRect(x: closeButton.frame.minX - 30, y: 13, width: 26, height: 26)
         let chipWidth = chip.naturalWidth
