@@ -10,6 +10,8 @@ public struct Container: Codable, Sendable, Equatable, Identifiable {
     /// "host:container/proto" for each published port.
     public var ports: [String]
     public var project: String?
+    /// The folder `docker compose` ran in, when it started the container.
+    public var folder: String? = nil
     /// Fraction of one core, as `docker stats` shows it.
     public var cpu: Double?
     public var memory: UInt64?
@@ -81,7 +83,7 @@ public enum Docker {
         return Container(id: String((json["Id"] as? String ?? "").prefix(12)), name: names.first ?? "?",
                          image: json["Image"] as? String ?? "", state: json["State"] as? String ?? "",
                          status: json["Status"] as? String ?? "", ports: Array(Set(ports)).sorted(),
-                         project: labels["com.docker.compose.project"])
+                         project: labels["com.docker.compose.project"], folder: labels["com.docker.compose.project.working_dir"])
     }
 
     private static func apply(_ json: [String: Any], to container: inout Container) {

@@ -15,7 +15,7 @@ enum PageID: String, CaseIterable {
         case .network: return "Network"
         case .gpu: return "GPU"
         case .sensors: return "Sensors"
-        case .ports: return "Dev Servers"
+        case .ports: return "Projects"
         case .docker: return "Docker"
         case .agents: return "Coding Agents"
         }
@@ -32,7 +32,7 @@ enum PageID: String, CaseIterable {
         case .network: return "network"
         case .gpu: return "cube.transparent"
         case .sensors: return "thermometer.medium"
-        case .ports: return "server.rack"
+        case .ports: return "folder"
         case .docker: return "shippingbox"
         case .agents: return "sparkles"
         }
@@ -173,7 +173,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case .energy: return EnergyPage(title: "Power", metric: .power, delegate: delegate, onSelect: select)
         case .sensors: return SensorsPage(delegate: delegate)
         case .ports:
-            let page = PortsPage(delegate: delegate)
+            let page = ProjectsPage(delegate: delegate)
             page.onSelect = select
             return page
         case .docker: return DockerPage(delegate: delegate)

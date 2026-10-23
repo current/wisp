@@ -32,7 +32,17 @@ public struct DevProject: Codable, Sendable, Equatable, Identifiable {
     public var path: String
     public var name: String
     public var servers: [DevServer]
+    /// Every process of this user whose working folder is inside the project,
+    /// servers included: watchers, test runners, language servers.
+    public var processes: [Int32] = []
+    public var cpu: Double = 0
+    public var memory: UInt64 = 0
+    public var watts: Double = 0
     public var id: String { path }
+
+    public var idleServers: [DevServer] {
+        servers.filter { $0.connections == 0 && ($0.idleSeconds ?? 0) >= DevServerScanner.idleAfter }
+    }
 }
 
 /// Finds processes of this user that listen on TCP ports and sorts them by the
@@ -51,6 +61,8 @@ public final class DevServerScanner: @unchecked Sendable {
     private var lastActive: [String: Date] = [:]
     private let watchStart = Date()
     private var folders: [String: String?] = [:]
+    /// Project folder of each process, by pid and start time; working folders rarely change.
+    private var roots: [String: String?] = [:]
     private let uid = getuid()
     private let lock = NSLock()
 
@@ -89,6 +101,24 @@ public final class DevServerScanner: @unchecked Sendable {
             let name = path.isEmpty ? "Other listeners" : (path as NSString).lastPathComponent
             projects[path, default: DevProject(path: path, name: name, servers: [])].servers.append(server)
         }
+
+        // Everything else running inside a project folder.
+        var liveKeys = Set<String>()
+        for row in table.processes where row.uid == uid && row.readable {
+            let key = "\(row.pid):\(row.startDate?.timeIntervalSince1970 ?? 0)"
+            liveKeys.insert(key)
+            if roots[key] == nil {
+                roots[key] = ProcessDetails.workingDirectory(pid: row.pid).flatMap { projectRoot(of: $0) }
+            }
+            guard let root = roots[key] ?? nil else { continue }
+            var project = projects[root] ?? DevProject(path: root, name: (root as NSString).lastPathComponent, servers: [])
+            project.processes.append(row.pid)
+            project.cpu += row.cpu
+            project.memory += row.memory
+            project.watts += row.watts
+            projects[root] = project
+        }
+        roots = roots.filter { liveKeys.contains($0.key) }
         return projects.values.sorted { a, b in
             if a.path.isEmpty != b.path.isEmpty { return b.path.isEmpty }
             return a.name.localizedStandardCompare(b.name) == .orderedAscending
