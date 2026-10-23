@@ -133,8 +133,16 @@ final class BigNumber: DrawnView {
 
     override func draw(_ dirtyRect: NSRect) {
         let (figure, unit) = drawn.0.isEmpty ? current : drawn
-        let figureText = NSAttributedString(string: figure, attributes: [.font: font, .foregroundColor: color, .kern: -0.6])
         let unitText = NSAttributedString(string: unit, attributes: [.font: unitFont, .foregroundColor: Theme.inkTertiary])
+        let room = bounds.width - (unit.isEmpty ? 0 : ceil(unitText.size().width) + 4)
+        // Long text, such as an app name, shrinks to fit rather than running out of the card.
+        var font = self.font
+        var figureText = NSAttributedString(string: figure, attributes: [.font: font, .foregroundColor: color, .kern: -0.6])
+        let width = figureText.size().width
+        if width > room, room > 0 {
+            font = NSFont(descriptor: font.fontDescriptor, size: max(12, floor(font.pointSize * room / width))) ?? font
+            figureText = NSAttributedString(string: figure, attributes: [.font: font, .foregroundColor: color, .kern: -0.4])
+        }
         let baseline = (bounds.height + font.ascender + font.descender) / 2
         figureText.draw(at: NSPoint(x: 0, y: baseline - font.ascender))
         if !unit.isEmpty {

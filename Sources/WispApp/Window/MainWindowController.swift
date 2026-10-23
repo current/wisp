@@ -16,7 +16,7 @@ enum PageID: String, CaseIterable {
         case .gpu: return "GPU"
         case .sensors: return "Sensors"
         case .ports: return "Projects"
-        case .docker: return "Docker"
+        case .docker: return "Containers"
         case .agents: return "Coding Agents"
         }
     }
@@ -176,7 +176,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             let page = ProjectsPage(delegate: delegate)
             page.onSelect = select
             return page
-        case .docker: return DockerPage(delegate: delegate)
+        case .docker: return ContainersPage(title: "Containers", metric: .cpu, delegate: delegate, onSelect: select)
         case .agents: return AgentsPage(delegate: delegate, onSelect: select)
         }
     }

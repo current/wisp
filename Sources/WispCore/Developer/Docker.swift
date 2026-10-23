@@ -18,12 +18,37 @@ public struct Container: Codable, Sendable, Equatable, Identifiable {
     public var memoryLimit: UInt64?
     public var networkReceived: UInt64?
     public var networkSent: UInt64?
+    /// Bytes per second over the last two readings.
+    public var networkRate: Double? = nil
+    public var diskRate: Double? = nil
+    public var diskBytes: UInt64? = nil
+}
+
+/// What Docker keeps on disk, and how much of it nothing uses.
+public struct DockerDiskUse: Codable, Sendable, Equatable {
+    public struct Part: Codable, Sendable, Equatable {
+        public var count: Int
+        public var inUse: Int
+        public var size: UInt64
+        public var reclaimable: UInt64
+    }
+    public var images: Part
+    public var containers: Part
+    public var volumes: Part
+    public var buildCache: Part
+    public var total: UInt64 { images.size + containers.size + volumes.size + buildCache.size }
+    public var reclaimable: UInt64 { images.reclaimable + containers.reclaimable + volumes.reclaimable + buildCache.reclaimable }
 }
 
 public struct DockerStatus: Codable, Sendable, Equatable {
     /// The socket that answered, or nil when no engine is running.
     public var socket: String?
     public var containers: [Container]
+
+    public init(socket: String?, containers: [Container]) {
+        self.socket = socket
+        self.containers = containers
+    }
 }
 
 /// Talks to the Docker Engine API over its Unix socket. No `docker` CLI process,
@@ -61,6 +86,7 @@ public enum Docker {
                         lock.withLock {
                             apply(json, to: &containers[index])
                             watcher?.cpu(json, for: &containers[index])
+                            watcher?.rates(for: &containers[index])
                         }
                     }
                 }
@@ -104,14 +130,17 @@ public enum Docker {
             container.networkReceived = UInt64(networks.values.reduce(0) { $0 + ($1["rx_bytes"] as? Double ?? 0) })
             container.networkSent = UInt64(networks.values.reduce(0) { $0 + ($1["tx_bytes"] as? Double ?? 0) })
         }
+        if let io = (json["blkio_stats"] as? [String: Any])?["io_service_bytes_recursive"] as? [[String: Any]] {
+            container.diskBytes = UInt64(io.reduce(0) { $0 + ($1["value"] as? Double ?? 0) })
+        }
     }
 
     /// A bare HTTP/1.1 GET over a Unix socket with a one-second timeout.
-    static func request(_ path: String, socket socketPath: String) -> Data? {
+    static func request(_ path: String, socket socketPath: String, method: String = "GET", timeout seconds: Int = 1) -> Data? {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
         defer { close(fd) }
-        var timeout = timeval(tv_sec: 1, tv_usec: 0)
+        var timeout = timeval(tv_sec: seconds, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         var noSigPipe: Int32 = 1
@@ -130,7 +159,7 @@ public enum Docker {
         }
         guard connected == 0 else { return nil }
 
-        let request = "GET \(path) HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n"
+        let request = "\(method) \(path) HTTP/1.1\r\nHost: docker\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         guard request.withCString({ send(fd, $0, strlen($0), 0) }) > 0 else { return nil }
         var response = Data()
         var buffer = [UInt8](repeating: 0, count: 16384)
@@ -141,6 +170,55 @@ public enum Docker {
             if response.count > 8_000_000 { return nil }
         }
         return body(of: response)
+    }
+
+    /// Stops or restarts a container. Returns false when the engine refused or is not running.
+    public static func perform(_ action: String, container id: String) -> Bool {
+        guard ["stop", "restart", "start"].contains(action) else { return false }
+        for socket in candidateSockets() {
+            if request("/containers/\(id)/\(action)", socket: socket, method: "POST", timeout: 15) != nil { return true }
+        }
+        return false
+    }
+
+    /// Disk use by images, containers, volumes and build cache. The engine adds
+    /// it up on request, which can take a few seconds; call it rarely.
+    public static func diskUse() -> DockerDiskUse? {
+        for socket in candidateSockets() {
+            guard let data = request("/system/df", socket: socket, timeout: 20),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            func number(_ value: Any?) -> UInt64 { UInt64(max(0, (value as? Double) ?? Double((value as? Int) ?? 0))) }
+            let images = json["Images"] as? [[String: Any]] ?? []
+            let imagesInUse = images.filter { (($0["Containers"] as? Int) ?? 0) > 0 }
+            let containers = json["Containers"] as? [[String: Any]] ?? []
+            let running = containers.filter { ($0["State"] as? String) == "running" }
+            let volumes = json["Volumes"] as? [[String: Any]] ?? []
+            let volumeSize: ([String: Any]) -> UInt64 = { number(($0["UsageData"] as? [String: Any])?["Size"]) }
+            let volumesInUse = volumes.filter { ((($0["UsageData"] as? [String: Any])?["RefCount"] as? Int) ?? 0) > 0 }
+            let cache = json["BuildCache"] as? [[String: Any]] ?? []
+            let cacheInUse = cache.filter { ($0["InUse"] as? Bool) == true }
+            let imageTotal = images.reduce(0) { $0 + number($1["Size"]) }
+            return DockerDiskUse(
+                images: .init(count: images.count, inUse: imagesInUse.count, size: imageTotal,
+                              reclaimable: imageTotal - min(imageTotal, imagesInUse.reduce(0) { $0 + number($1["Size"]) })),
+                containers: .init(count: containers.count, inUse: running.count, size: containers.reduce(0) { $0 + number($1["SizeRw"]) },
+                                  reclaimable: containers.filter { ($0["State"] as? String) != "running" }.reduce(0) { $0 + number($1["SizeRw"]) }),
+                volumes: .init(count: volumes.count, inUse: volumesInUse.count, size: volumes.reduce(0) { $0 + volumeSize($1) },
+                               reclaimable: volumes.filter { ((($0["UsageData"] as? [String: Any])?["RefCount"] as? Int) ?? 0) == 0 }
+                                   .reduce(0) { $0 + volumeSize($1) }),
+                buildCache: .init(count: cache.count, inUse: cacheInUse.count, size: cache.reduce(0) { $0 + number($1["Size"]) },
+                                  reclaimable: cache.filter { ($0["InUse"] as? Bool) != true }.reduce(0) { $0 + number($1["Size"]) }))
+        }
+        return nil
+    }
+
+    /// The engine's name for the socket that answered: Docker Desktop, OrbStack, Colima...
+    public static func engineName(_ socket: String) -> String {
+        if socket.contains("/.orbstack/") { return "OrbStack" }
+        if socket.contains("/.colima/") { return "Colima" }
+        if socket.contains("/.rd/") { return "Rancher Desktop" }
+        if socket.contains("/.lima/") { return "Lima" }
+        return "Docker"
     }
 
     static func body(of response: Data) -> Data? {
@@ -168,8 +246,20 @@ public enum Docker {
 /// turned into a rate, instead of asking the engine to sample for a second.
 public final class DockerWatcher: @unchecked Sendable {
     private var last: [String: (total: Double, system: Double)] = [:]
+    private var lastBytes: [String: (network: UInt64, disk: UInt64, at: Date)] = [:]
 
     public init() {}
+
+    func rates(for container: inout Container, now: Date = Date()) {
+        let network = (container.networkReceived ?? 0) + (container.networkSent ?? 0)
+        let disk = container.diskBytes ?? 0
+        defer { lastBytes[container.id] = (network, disk, now) }
+        guard let previous = lastBytes[container.id] else { return }
+        let span = now.timeIntervalSince(previous.at)
+        guard span > 0.2 else { return }
+        container.networkRate = network >= previous.network ? Double(network - previous.network) / span : nil
+        container.diskRate = disk >= previous.disk ? Double(disk - previous.disk) / span : nil
+    }
 
     func cpu(_ json: [String: Any], for container: inout Container) {
         guard let cpu = json["cpu_stats"] as? [String: Any],
