@@ -72,14 +72,17 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         }
         outline.dataSource = self
         outline.delegate = self
-        outline.style = .inset
-        outline.usesAlternatingRowBackgroundColors = true
+        outline.style = .plain
+        outline.usesAlternatingRowBackgroundColors = false
+        outline.backgroundColor = .clear
+        outline.gridStyleMask = []
+        outline.intercellSpacing = NSSize(width: 12, height: 0)
         outline.allowsColumnReordering = true
         outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         outline.autosaveName = "WispApps"
         outline.autosaveTableColumns = true
         outline.autosaveExpandedItems = false
-        outline.rowHeight = 24
+        outline.rowHeight = 30
         outline.sortDescriptors = [NSSortDescriptor(key: Column.cpu.rawValue, ascending: false)]
         outline.target = self
         outline.doubleAction = #selector(doubleClicked)
@@ -87,26 +90,43 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         let scroll = NSScrollView()
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        let card = CardView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.layer?.masksToBounds = true
+        card.addSubview(scroll)
 
         search.placeholderString = "Filter apps and processes"
         search.delegate = self
         search.translatesAutoresizingMaskIntoConstraints = false
         search.sendsSearchStringImmediately = true
 
-        let bar = Style.stack([search, summary], axis: .horizontal, spacing: Style.pad)
-        let root = NSView()
+        summary.font = Theme.mono(10)
+        summary.textColor = Theme.inkTertiary
+        let title = Style.label("Apps", font: Theme.sans(20, .medium), color: Theme.ink)
+        let bar = Style.stack([title, summary], axis: .horizontal, spacing: Style.pad)
+        bar.alignment = .firstBaseline
+        let root = GroundView()
         root.addSubview(bar)
-        root.addSubview(scroll)
+        root.addSubview(search)
+        root.addSubview(card)
         NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Style.section),
-            bar.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -Style.section),
-            bar.topAnchor.constraint(equalTo: root.topAnchor, constant: Style.pad),
+            bar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 22),
+            bar.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
+            search.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            search.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             search.widthAnchor.constraint(equalToConstant: 240),
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: Style.pad),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            bar.trailingAnchor.constraint(lessThanOrEqualTo: search.leadingAnchor, constant: -Style.pad),
+            card.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            card.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            card.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: 14),
+            card.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
+            scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 6),
+            scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -6),
+            scroll.topAnchor.constraint(equalTo: card.topAnchor, constant: 4),
+            scroll.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -4),
         ])
         view = root
     }
@@ -433,6 +453,17 @@ final class NameCell: NSTableCellView {
             note.frame = .zero
         }
     }
+}
+
+/// The grey ground behind pages that are not card canvases.
+final class GroundView: NSView {
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() { layer?.backgroundColor = Theme.ground.cgColor }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
 }
 
 /// A figure in tabular digits that draws itself. Setting new text only marks the
