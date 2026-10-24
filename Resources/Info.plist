@@ -26,6 +26,8 @@
 	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Wisp lists your paired Bluetooth devices and their battery levels.</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHighResolutionCapable</key>

@@ -2,7 +2,7 @@ import AppKit
 import WispCore
 
 enum PageID: String, CaseIterable {
-    case overview, apps, cpu, memory, energy, disk, network, gpu, sensors, ports, docker, agents
+    case overview, apps, cpu, memory, energy, disk, network, gpu, neural, sound, bluetooth, sensors, ports, docker, agents
 
     var title: String {
         switch self {
@@ -14,6 +14,9 @@ enum PageID: String, CaseIterable {
         case .disk: return "Disk"
         case .network: return "Network"
         case .gpu: return "GPU"
+        case .neural: return "Neural Engine"
+        case .sound: return "Sound"
+        case .bluetooth: return "Bluetooth"
         case .sensors: return "Sensors"
         case .ports: return "Projects"
         case .docker: return "Containers"
@@ -31,6 +34,9 @@ enum PageID: String, CaseIterable {
         case .disk: return "internaldrive"
         case .network: return "network"
         case .gpu: return "cube.transparent"
+        case .neural: return "brain"
+        case .sound: return "speaker.wave.2"
+        case .bluetooth: return "dot.radiowaves.left.and.right"
         case .sensors: return "thermometer.medium"
         case .ports: return "folder"
         case .docker: return "shippingbox"
@@ -40,7 +46,7 @@ enum PageID: String, CaseIterable {
 
     static let sections: [(String?, [PageID])] = [
         (nil, [.overview, .apps]),
-        ("Machine", [.cpu, .memory, .energy, .disk, .network, .gpu, .sensors]),
+        ("Machine", [.cpu, .memory, .gpu, .neural, .energy, .disk, .network, .sound, .bluetooth, .sensors]),
         ("Developer", [.ports, .docker, .agents]),
     ]
 }
@@ -171,7 +177,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case .network: return NetworkPage(title: "Network", metric: .networkIn, delegate: delegate, onSelect: select)
         case .gpu: return GPUPage(title: "GPU", metric: .gpu, delegate: delegate, onSelect: select)
         case .energy: return EnergyPage(title: "Power", metric: .power, delegate: delegate, onSelect: select)
-        case .sensors: return SensorsPage(delegate: delegate)
+        case .sensors: return SensorsCardPage(delegate: delegate)
+        case .neural: return NeuralPage(title: "Neural Engine", metric: .power, delegate: delegate, onSelect: select)
+        case .sound: return SoundPage(delegate: delegate)
+        case .bluetooth: return BluetoothPage(delegate: delegate)
         case .ports:
             let page = ProjectsPage(delegate: delegate)
             page.onSelect = select
