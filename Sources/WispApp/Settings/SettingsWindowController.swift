@@ -193,6 +193,10 @@ final class GeneralPane: Pane {
             delegate.change { $0.allowMCP = on }
         })
         note("Read only. Add it with: claude mcp add wisp -- /Applications/Wisp.app/Contents/Helpers/wisp mcp")
+        row("", checkbox("Show AI plan limits and tokens used today", s.planUsage) { [unowned self] on in
+            delegate.change { $0.planUsage = on }
+        })
+        note("Uses each tool's own sign-in, sent only to the company that issued it")
         gap()
         row("Startup:", checkbox("Open Wisp at login", SMAppService.mainApp.status == .enabled) { on in
             do {

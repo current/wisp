@@ -88,6 +88,8 @@ struct AppSettings: Codable, Equatable {
     var cpuOfMachine = false
     var alerts = AlertRules()
     var allowMCP = true
+    /// Read each AI plan's limits with the sign-in its own tool keeps. Off until asked for.
+    var planUsage = false
 
     static let key = "settings"
 
@@ -107,6 +109,7 @@ struct AppSettings: Codable, Equatable {
         cpuOfMachine = (try? c.decode(Bool.self, forKey: .cpuOfMachine)) ?? fallback.cpuOfMachine
         alerts = (try? c.decode(AlertRules.self, forKey: .alerts)) ?? fallback.alerts
         allowMCP = (try? c.decode(Bool.self, forKey: .allowMCP)) ?? fallback.allowMCP
+        planUsage = (try? c.decode(Bool.self, forKey: .planUsage)) ?? fallback.planUsage
     }
 
     static func load() -> AppSettings {

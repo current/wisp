@@ -2,6 +2,17 @@ import Foundation
 
 /// Number formatting shared by the app, the CLI and alert text.
 public enum Format {
+    /// A large count in short form: 950, 12.4K, 3.1M, 1.2B.
+    public static func count(_ value: Int) -> String {
+        let v = Double(value)
+        switch v {
+        case ..<1_000: return "\(value)"
+        case ..<1_000_000: return String(format: v < 10_000 ? "%.1fK" : "%.0fK", v / 1_000)
+        case ..<1_000_000_000: return String(format: v < 10_000_000 ? "%.1fM" : "%.0fM", v / 1_000_000)
+        default: return String(format: "%.1fB", v / 1_000_000_000)
+        }
+    }
+
     public static func percent(_ fraction: Double, digits: Int = 0) -> String {
         String(format: "%.\(digits)f%%", fraction * 100)
     }
