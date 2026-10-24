@@ -17,6 +17,25 @@ import Testing
         #expect(ring.value(at: 120) == 9)
     }
 
+    @Test func totalsUseTheArchiveBeforeThisRunBegan() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("wisp-total-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let archive = try #require(HourlyArchive(url: url))
+        let midnight = Date(timeIntervalSince1970: 3600 * 500_000)
+        // Two earlier hours at 100 B/s, written by a previous run.
+        archive.write(hour: 500_000, apps: [], system: [.networkIn: 100])
+        archive.write(hour: 500_001, apps: [], system: [.networkIn: 100])
+        let store = HistoryStore(archive: archive)
+        // This run starts at 02:00 and records two minutes at 10 B/s.
+        for second in stride(from: 0.0, to: 180, by: 10) {
+            var snapshot = SystemSnapshot(date: midnight.addingTimeInterval(7200 + second))
+            snapshot.network = NetworkReading(receivedBytesPerSecond: 10, sentBytesPerSecond: 0, totalReceived: 0, totalSent: 0)
+            store.record(system: snapshot, interval: 10)
+        }
+        let total = store.total(.networkIn, since: midnight, now: midnight.addingTimeInterval(7200 + 170))
+        #expect(total == 100 * 7200 + 10 * 120)
+    }
+
     @Test func recentRingIsOldestFirst() {
         var ring = RecentRing(capacity: 3)
         for value in [1, 2, 3, 4] as [Float] { ring.append(value) }

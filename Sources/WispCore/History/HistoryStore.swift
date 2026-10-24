@@ -57,6 +57,8 @@ public final class HistoryStore: @unchecked Sendable {
     private var recentCores: [RecentRing] = []
     private var apps: [String: AppHistory] = [:]
     private var lastHourFlushed = 0
+    /// The first minute this run recorded; the minute rings know nothing before it.
+    private var firstMinute: Int?
     public var archive: HourlyArchive?
 
     public init(archive: HourlyArchive? = nil) {
@@ -88,6 +90,7 @@ public final class HistoryStore: @unchecked Sendable {
 
         let minute = Self.minute(snapshot.date)
         lock.withLock {
+            if firstMinute == nil { firstMinute = minute }
             if minute != systemPendingMinute { flushSystem(newMinute: minute) }
             for (metric, value) in values {
                 var acc = systemPending[metric] ?? Accumulator()
@@ -226,15 +229,18 @@ public final class HistoryStore: @unchecked Sendable {
     public func total(_ metric: SystemMetric, since start: Date, now: Date = Date()) -> Double {
         let nowMinute = Self.minute(now)
         let startMinute = Self.minute(start)
-        let memoryFrom = max(startMinute, nowMinute - Self.minutes + 1)
+        // Memory covers the last day, but only since this run began; the archive covers the rest.
+        let began = lock.withLock { firstMinute } ?? nowMinute
+        let memoryFrom = min(nowMinute, max(startMinute, nowMinute - Self.minutes + 1, began))
         var sum = 0.0
         if let archive, startMinute < memoryFrom {
-            for (hour, value) in archive.system(metric, since: startMinute / 60)
-            where hour * 60 >= startMinute / 60 * 60 && hour * 60 + 59 < memoryFrom {
-                sum += value * 3600
+            for (hour, value) in archive.system(metric, since: startMinute / 60) {
+                // Hours are averages; take the part of each hour inside the range.
+                let from = max(hour * 60, startMinute), to = min(hour * 60 + 60, memoryFrom)
+                if to > from { sum += value * 60 * Double(to - from) }
             }
         }
-        let recent = day(metric, minutes: nowMinute - memoryFrom + 1, now: now)
+        let recent = day(metric, minutes: nowMinute - memoryFrom, now: now)
         sum += recent.reduce(0) { $1.isNaN ? $0 : $0 + Double($1) * 60 }
         return sum
     }
