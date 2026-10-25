@@ -1,37 +1,42 @@
 # Performance
 
 Measured on 3 November 2026 on an M3 Max MacBook Pro (36 GB, macOS 27.2) with a
-release build. Each row is 120 one-second samples from one shared `top` run, so
-all three apps were measured over the same seconds. CPU is percent of one core.
+release build. Each run takes one-second samples from one shared `top` run, so
+every app in a table was measured over the same seconds. CPU is percent of one
+core.
 
 ## Menu bar only
 
-Wisp shows CPU, memory and network in the menu bar. Nothing else is open.
+Wisp shows CPU and memory in the menu bar. Nothing else is open. Two runs on
+the same day, 120 and 90 samples; the spread between them is about what
+separate runs vary by.
 
-| App    | Mean  | Median | p95  | Max   | Memory |
-|--------|-------|--------|------|-------|--------|
-| Wisp   | 0.09% | 0.00%  | 0.5% | 0.7%  | 18 MB  |
-| Vitals | 1.79% | 0.00%  | 7.0% | 16.7% | 412 MB |
-| Stats  | 1.36% | 1.30%  | 2.5% | 2.8%  | 187 MB |
+| App    | Mean        | Median | p95       | Max        | Memory        |
+|--------|-------------|--------|-----------|------------|---------------|
+| Wisp   | 0.09–0.25%  | 0.00%  | 0.5–1.5%  | 0.7–1.8%   | 18 MB         |
+| Vitals | 1.31–1.79%  | 0.00–0.10% | 5.7–7.0% | 13.8–16.7% | 249–412 MB |
+| Stats  | 1.26–1.36%  | 1.20–1.30% | 2.3–2.5% | 2.5–2.8%   | 187 MB        |
 
-## Wisp window open on Apps
+## With something open
 
-The window is in front and redraws every two seconds, with per-app network on.
-Vitals and Stats ran in the background, so their rows look the same as above.
-The Wisp row comes from a second run after a fix to the Network column; the
-other rows are from the first. With its own window open, Vitals measured 3.6
-to 4.9% earlier the same day.
+Wisp only, 60 to 90 samples each, updating every two seconds. With its own
+window open, Vitals measured 3.6 to 4.9% the same day.
 
-| App    | Mean  | Median | p95  | Max   | Memory |
-|--------|-------|--------|------|-------|--------|
-| Wisp   | 1.81% | 1.30%  | 5.8% | 11.3% | 51 MB  |
-| Vitals | 1.83% | 0.00%  | 7.2% | 16.6% | 212 MB |
-| Stats  | 1.34% | 1.30%  | 2.4% | 2.8%  | 187 MB |
+| Wisp showing          | Mean  | Median | p95  | Memory |
+|-----------------------|-------|--------|------|--------|
+| Dashboard (menu bar)  | 2.35% | 3.55%  | 5.2% | 37 MB  |
+| Overview              | 1.95% | 2.80%  | 4.0% | 41 MB  |
+| CPU page              | 2.30% | 3.10%  | 5.1% | 44 MB  |
+| Coding Agents page    | 1.54% | 1.90%  | 3.4% | 56 MB  |
 
-My target for the open window was 0.5%. Wisp does not reach it yet. Collecting
-the data costs about 5 ms per tick on a background queue. The rest is AppKit
-drawing on the main thread, mostly the table layout when the rows are re-sorted.
-That happens at most every six seconds.
+The dashboard's cost is about a third the process scan behind its app list
+(one `proc_pid_rusage` call per process, around 6 ms for 740 processes), a
+third drawing, and a third Core Animation committing the changes.
+
+Animations go through Core Animation as position and opacity changes, which
+the window server runs. An earlier build rolled the numbers with
+`CATransition`, which renders snapshots inside the app through Metal: the
+dashboard then held 241 MB instead of 37 MB.
 
 ## What keeps it cheap
 
@@ -52,6 +57,10 @@ That happens at most every six seconds.
   one cell for redraw and does not re-lay out the window.
 - History is one ring buffer per app in memory. It is written to SQLite once an
   hour, which takes under a millisecond.
+- The card pages draw their own views and lay them out by frame. A new reading
+  redraws only the view whose value changed.
+- The dashboard is a plain borderless panel. An `NSPopover` with its vibrant
+  material held about 190 MB of graphics memory whenever anything in it moved.
 
 ## Running the benchmark
 

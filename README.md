@@ -5,7 +5,7 @@ use your CPU, memory, energy, disk and network. It keeps each app's last day
 minute by minute and a year of hourly totals. It also lists the dev servers,
 Docker containers and coding agents you have running.
 
-With only the menu bar showing, Wisp uses about 0.1% of one core and 18 MB of
+With only the menu bar showing, Wisp uses 0.1 to 0.25% of one core and 18 MB of
 memory. [docs/performance.md](docs/performance.md) has the measurements and how
 to repeat them.
 
