@@ -89,7 +89,6 @@ final class DashboardPanel: NSPanel {
         hasShadow = true
         level = .popUpMenu
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
-        appearance = NSAppearance(named: .aqua)
         isReleasedWhenClosed = false
         frameView.fill = Theme.panel
         frameView.radius = Theme.panelRadius
@@ -372,7 +371,7 @@ final class DashboardView: DrawnView {
                           color: Strain.battery(b) ? Theme.bad : Theme.good)
         } else if let t = s.thermal?.cpuCelsius {
             meters[5].caption = "Temperature"
-            meters[5].set(value: String(format: "%.0f", t), unit: "°C", fraction: t / 110,
+            meters[5].set(value: Format.temperature(t).0, unit: Format.temperature(t).1, fraction: t / 110,
                           color: Strain.temperature(s.thermal) ? Theme.bad : Theme.accent)
         }
 

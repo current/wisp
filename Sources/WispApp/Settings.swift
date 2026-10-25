@@ -62,6 +62,10 @@ struct MenuItemSetting: Codable, Equatable {
     var style: MenuStyle
 }
 
+enum Look: String, Codable, CaseIterable {
+    case light, dark, automatic
+}
+
 struct AppSettings: Codable, Equatable {
     var menuItems: [MenuItemSetting] = [
         MenuItemSetting(metric: .cpu, enabled: true, style: .number),
@@ -90,6 +94,13 @@ struct AppSettings: Codable, Equatable {
     var allowMCP = true
     /// Read each AI plan's limits with the sign-in its own tool keeps. Off until asked for.
     var planUsage = false
+    var look = Look.light
+    var fahrenheit = false
+    var bits = false
+    var showInDock = false
+    var openWindowAtLaunch = false
+    /// The page a newly opened window starts on.
+    var startPage = "overview"
 
     static let key = "settings"
 
@@ -110,6 +121,12 @@ struct AppSettings: Codable, Equatable {
         alerts = (try? c.decode(AlertRules.self, forKey: .alerts)) ?? fallback.alerts
         allowMCP = (try? c.decode(Bool.self, forKey: .allowMCP)) ?? fallback.allowMCP
         planUsage = (try? c.decode(Bool.self, forKey: .planUsage)) ?? fallback.planUsage
+        look = (try? c.decode(Look.self, forKey: .look)) ?? fallback.look
+        fahrenheit = (try? c.decode(Bool.self, forKey: .fahrenheit)) ?? fallback.fahrenheit
+        bits = (try? c.decode(Bool.self, forKey: .bits)) ?? fallback.bits
+        showInDock = (try? c.decode(Bool.self, forKey: .showInDock)) ?? fallback.showInDock
+        openWindowAtLaunch = (try? c.decode(Bool.self, forKey: .openWindowAtLaunch)) ?? fallback.openWindowAtLaunch
+        startPage = (try? c.decode(String.self, forKey: .startPage)) ?? fallback.startPage
     }
 
     static func load() -> AppSettings {

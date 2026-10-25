@@ -86,7 +86,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
         window.title = "Wisp"
-        window.appearance = NSAppearance(named: .aqua)
         window.backgroundColor = Theme.ground
         window.titlebarAppearsTransparent = false
         window.toolbarStyle = .unified

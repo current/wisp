@@ -2,6 +2,10 @@ import Foundation
 
 /// Number formatting shared by the app, the CLI and alert text.
 public enum Format {
+    /// Owner choices the app sets at launch and on change; the CLI keeps the defaults.
+    nonisolated(unsafe) public static var fahrenheit = false
+    nonisolated(unsafe) public static var bits = false
+
     /// A large count in short form: 950, 12.4K, 3.1M, 1.2B.
     public static func count(_ value: Int) -> String {
         let v = Double(value)
@@ -51,18 +55,28 @@ public enum Format {
     }
 
     public static func rate(_ bytesPerSecond: Double) -> String {
-        bytes(bytesPerSecond) + "/s"
-    }
-
-    /// Short form for the menu bar: "1.2M", "340K".
-    public static func compactRate(_ bytesPerSecond: Double) -> String {
-        let units = ["B", "K", "M", "G"]
-        var amount = bytesPerSecond
+        guard bits else { return bytes(bytesPerSecond) + "/s" }
+        let units = ["b", "Kb", "Mb", "Gb", "Tb"]
+        var amount = bytesPerSecond * 8
         var unit = 0
         while amount >= 1000, unit < units.count - 1 {
             amount /= 1000
             unit += 1
         }
+        if unit == 0 { return "\(Int(amount)) b/s" }
+        return String(format: amount < 10 ? "%.1f %@/s" : "%.0f %@/s", amount, units[unit])
+    }
+
+    /// Short form for the menu bar: "1.2M", "340K".
+    public static func compactRate(_ bytesPerSecond: Double) -> String {
+        let units = ["B", "K", "M", "G"]
+        var amount = bits ? bytesPerSecond * 8 : bytesPerSecond
+        var unit = 0
+        while amount >= 1000, unit < units.count - 1 {
+            amount /= 1000
+            unit += 1
+        }
+        if bits { return String(format: amount < 10 && unit > 0 ? "%.1f%@b" : "%.0f%@b", amount, unit == 0 ? "" : units[unit]) }
         return String(format: amount < 10 && unit > 0 ? "%.1f%@" : "%.0f%@", amount, units[unit])
     }
 
@@ -83,6 +97,11 @@ public enum Format {
     }
 
     public static func celsius(_ value: Double) -> String {
-        String(format: "%.0f°", value)
+        String(format: "%.0f°", fahrenheit ? value * 9 / 5 + 32 : value)
+    }
+
+    /// A temperature split into figure and unit, in the scale the owner chose.
+    public static func temperature(_ celsius: Double) -> (String, String) {
+        fahrenheit ? (String(format: "%.0f", celsius * 9 / 5 + 32), "°F") : (String(format: "%.0f", celsius), "°C")
     }
 }

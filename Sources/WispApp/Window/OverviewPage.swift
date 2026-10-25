@@ -150,7 +150,7 @@ final class OverviewPage: CardPage {
         power.figure.format = { (String(format: $0 >= 10 ? "%.0f" : "%.1f", $0), "W") }
         developer.figure.format = { (String(format: "%.0f", $0), "servers") }
         developer.bars.isHidden = true
-        thermal.figure.format = { (String(format: "%.0f", $0), "°C") }
+        thermal.figure.format = { Format.temperature($0) }
         canvas.addSubview(notices)
         notices.addSubview(noticesTitle)
         notices.addSubview(noticesEmpty)

@@ -20,7 +20,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         tabs.tabStyle = .toolbar
         tabs.addTabViewItem(item("Menu Bar", "menubar.rectangle", MenuBarPane(delegate: delegate)))
         tabs.addTabViewItem(item("General", "gearshape", GeneralPane(delegate: delegate)))
+        tabs.addTabViewItem(item("Display", "paintbrush", DisplayPane(delegate: delegate)))
         tabs.addTabViewItem(item("Alerts", "bell", AlertsPane(delegate: delegate)))
+        // WISP_TAB=1 opens on a given tab, for screenshots.
+        if let index = ProcessInfo.processInfo.environment["WISP_TAB"].flatMap(Int.init) { tabs.selectedTabViewItemIndex = index }
         window.contentViewController = tabs
         window.delegate = self
         window.center()
@@ -87,7 +90,7 @@ class Pane: NSViewController {
         let label = Style.secondary(text)
         label.lineBreakMode = .byWordWrapping
         label.preferredMaxLayoutWidth = 300
-        label.maximumNumberOfLines = 3
+        label.maximumNumberOfLines = 0
         grid.addRow(with: [NSGridCell.emptyContentView, label])
     }
 
@@ -178,10 +181,6 @@ final class GeneralPane: Pane {
         })
         note("Redrawing the menu bar is most of what Wisp costs when no window is open. With every window closed it also checks apps every \(Int(s.backgroundInterval)) seconds for history and alerts.")
         gap()
-        row("App CPU:", popup(["100% is one core", "100% is the whole Mac"], selected: s.cpuOfMachine ? 1 : 0) { [unowned self] i in
-            delegate.change { $0.cpuOfMachine = i == 1 }
-        })
-        gap()
         row("History:", checkbox("Keep a year of per-app history", s.keepHistory) { [unowned self] on in
             delegate.change { $0.keepHistory = on }
         })
@@ -225,5 +224,36 @@ final class AlertsPane: Pane {
         })
         gap()
         note("Each app is mentioned at most once every \(Int(rules.cooldownMinutes)) minutes per rule. Alerts are checked in the background even with every window closed.")
+    }
+}
+
+/// How Wisp looks and where it shows up.
+final class DisplayPane: Pane {
+    override func build() {
+        let s = delegate.settings
+        let looks = Look.allCases
+        row("Appearance:", popup(["Light", "Dark", "Match the system"], selected: looks.firstIndex(of: s.look) ?? 0) { [unowned self] i in
+            delegate.change { $0.look = looks[i] }
+        })
+        row("", checkbox("Show Wisp in the Dock", s.showInDock) { [unowned self] on in
+            delegate.change { $0.showInDock = on }
+        })
+        row("", checkbox("Open the window when Wisp starts", s.openWindowAtLaunch) { [unowned self] on in
+            delegate.change { $0.openWindowAtLaunch = on }
+        })
+        let pages = PageID.allCases
+        row("Start on:", popup(pages.map(\.title), selected: pages.firstIndex { $0.rawValue == s.startPage } ?? 0) { [unowned self] i in
+            delegate.change { $0.startPage = pages[i].rawValue }
+        })
+        gap()
+        row("App CPU:", popup(["100% is one core", "100% is the whole Mac"], selected: s.cpuOfMachine ? 1 : 0) { [unowned self] i in
+            delegate.change { $0.cpuOfMachine = i == 1 }
+        })
+        row("Temperature:", popup(["Celsius", "Fahrenheit"], selected: s.fahrenheit ? 1 : 0) { [unowned self] i in
+            delegate.change { $0.fahrenheit = i == 1 }
+        })
+        row("Network:", popup(["Bytes per second", "Bits per second"], selected: s.bits ? 1 : 0) { [unowned self] i in
+            delegate.change { $0.bits = i == 1 }
+        })
     }
 }

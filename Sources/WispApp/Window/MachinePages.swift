@@ -218,7 +218,7 @@ final class CPUPage: MachinePage {
         load.figure.set(c.loadAverage.first ?? 0)
         load.set(note: c.loadAverage.count == 3 ? String(format: "5 min %.1f · 15 min %.1f", c.loadAverage[1], c.loadAverage[2]) : "")
         if let t = s.thermal, let celsius = t.cpuCelsius {
-            temperature.set(text: String(format: "%.0f", celsius), unit: "°C")
+            temperature.set(text: Format.temperature(celsius).0, unit: Format.temperature(celsius).1)
             temperature.set(note: t.fans.isEmpty ? "No fans" : "Fans " + t.fans.map { "\(Int($0.rpm))" }.joined(separator: ", ") + " rpm")
         }
     }
@@ -588,7 +588,7 @@ final class GPUPage: MachinePage {
             peak.set(note: "In the chart above")
         }
         if let celsius = s.thermal?.gpuCelsius {
-            temperature.set(text: String(format: "%.0f", celsius), unit: "°C")
+            temperature.set(text: Format.temperature(celsius).0, unit: Format.temperature(celsius).1)
             temperature.set(note: "Hottest GPU sensor")
         }
         if let watts = s.power?.gpu {
@@ -738,7 +738,7 @@ final class EnergyPage: MachinePage {
             cycles.set(note: "Full charges used")
         }
         if let temp = b.temperature {
-            batteryTemp.set(text: String(format: "%.0f", temp), unit: "°C")
+            batteryTemp.set(text: Format.temperature(temp).0, unit: Format.temperature(temp).1)
             batteryTemp.set(note: b.adapterWatts.map { "\($0) W adapter" } ?? "")
         }
     }

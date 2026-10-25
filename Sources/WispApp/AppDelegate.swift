@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         center.addObserver(self, selector: #selector(displaysSlept), name: NSWorkspace.willSleepNotification, object: nil)
         center.addObserver(self, selector: #selector(displaysWoke), name: NSWorkspace.didWakeNotification, object: nil)
 
+        applyLooks()
         statusBar.rebuild(settings.menuItems)
         replan()
         monitor.start()
@@ -66,7 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let seconds = ProcessInfo.processInfo.environment["WISP_MENU_INTERVAL"].flatMap(Double.init) {
                 change { $0.menuInterval = seconds }
             }
-        default: break
+        default:
+            if settings.openWindowAtLaunch { showWindow() }
         }
     }
 
@@ -155,14 +157,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if menuChanged { statusBar.rebuild(settings.menuItems) }
         monitor.update(rules: settings.alerts)
         IPCServer.shared.assistantsAllowed = settings.allowMCP
+        applyLooks()
         replan()
+    }
+
+    /// Appearance, units and the Dock icon, from settings.
+    private func applyLooks() {
+        switch settings.look {
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        case .automatic: NSApp.appearance = nil
+        }
+        Format.fahrenheit = settings.fahrenheit
+        Format.bits = settings.bits
+        let policy: NSApplication.ActivationPolicy = settings.showInDock ? .regular : .accessory
+        if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
     }
 
     // MARK: Windows
 
     func showWindow(selecting appID: String? = nil) {
         dashboard.close()
-        if mainWindow == nil { mainWindow = MainWindowController(delegate: self) }
+        if mainWindow == nil {
+            mainWindow = MainWindowController(delegate: self)
+            if appID == nil, let page = PageID(rawValue: settings.startPage) { mainWindow?.show(page) }
+        }
         NSApp.activate()
         mainWindow?.showWindow(nil)
         mainWindow?.window?.makeKeyAndOrderFront(nil)
