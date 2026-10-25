@@ -138,6 +138,7 @@ final class ProjectsPage: CardPage {
         idleCard.stroke = Theme.warn.withAlphaComponent(0.25)
         for view in [idleTitle, idleList, stopAll] as [NSView] { idleCard.addSubview(view) }
         countCaption.text = Theme.caption("Projects")
+        for tile in [memory, cpu, processes, ports] { tile.tint = PageID.ports.tint }
     }
 
     override func arrange(width: CGFloat) -> CGFloat {

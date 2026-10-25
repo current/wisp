@@ -34,6 +34,8 @@ class CardPage: NSViewController, Page {
         canvas.wantsLayer = true
         scroll.documentView = canvas
         scroll.hasVerticalScroller = true
+        // No title bar to keep clear of; insets would start the page scrolled.
+        scroll.automaticallyAdjustsContentInsets = false
         scroll.autohidesScrollers = true
         scroll.drawsBackground = true
         scroll.backgroundColor = Theme.ground
@@ -102,10 +104,14 @@ final class Tile: CardView {
     let meter = TickMeter()
     var showsMeter = false { didSet { meter.isHidden = !showsMeter; needsLayout = true } }
     var onClick: (() -> Void)?
+    let name: String
+    /// The page's colour for the icon tile; pages set it after creating their tiles.
+    var tint: NSColor = Theme.accent { didSet { caption.text = Theme.header(name, symbol: Theme.symbol(for: name), tint: tint) } }
 
     init(_ name: String) {
+        self.name = name
         super.init()
-        caption.text = Theme.caption(name)
+        caption.text = Theme.header(name, symbol: Theme.symbol(for: name), tint: tint)
         figure.font = Theme.figure(24, .regular)
         figure.unitFont = Theme.sans(13)
         figure.format = { (String(format: "%.0f", $0), "") }
@@ -125,11 +131,11 @@ final class Tile: CardView {
     override func layout() {
         super.layout()
         let width = bounds.width - 32
-        caption.frame = NSRect(x: 16, y: 14, width: width, height: 14)
-        figure.frame = NSRect(x: 16, y: 34, width: width, height: 30)
+        caption.frame = NSRect(x: 16, y: 12, width: width, height: 22)
+        figure.frame = NSRect(x: 16, y: 38, width: width, height: 30)
         if showsMeter {
-            note.frame = NSRect(x: 16, y: bounds.height - 48, width: width, height: 14)
-            meter.frame = NSRect(x: 16, y: bounds.height - 26, width: width, height: 10)
+            note.frame = NSRect(x: 16, y: bounds.height - 40, width: width, height: 14)
+            meter.frame = NSRect(x: 16, y: bounds.height - 20, width: width, height: 8)
         } else {
             note.frame = NSRect(x: 16, y: bounds.height - 28, width: width, height: 14)
         }
@@ -150,14 +156,24 @@ final class ChartCard: CardView {
     let legend = TextLine()
     var onRange: ((Int) -> Void)?
 
+    var tint: NSColor = Theme.accent { didSet { setHeader() } }
+    let title: String
+    private var name: String { title }
+
+    private func setHeader() {
+        caption.text = Theme.header(name, symbol: Theme.symbol(for: name), tint: tint, size: 14, tile: 24, color: Theme.ink, weight: .semibold)
+        chart.primaryColor = tint
+    }
+
     init(_ name: String) {
+        self.title = name
         super.init()
-        caption.text = Theme.caption(name)
         figure.font = Theme.figure(40, .regular)
         figure.unitFont = Theme.sans(17)
         state.isHidden = true
         range.onChange = { [weak self] index in self?.onRange?(index) }
         for view in [caption, state, figure, meta, range, chart, legend] as [NSView] { addSubview(view) }
+        setHeader()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -165,7 +181,7 @@ final class ChartCard: CardView {
     override func layout() {
         super.layout()
         let width = bounds.width - 40
-        caption.frame = NSRect(x: 20, y: 18, width: caption.naturalWidth + 4, height: 16)
+        caption.frame = NSRect(x: 20, y: 14, width: caption.naturalWidth + 4, height: 26)
         state.frame = NSRect(x: caption.frame.maxX + 8, y: 17, width: state.naturalWidth, height: 18)
         let rangeWidth = range.naturalWidth
         range.frame = NSRect(x: 20 + width - rangeWidth, y: 14, width: rangeWidth, height: 26)

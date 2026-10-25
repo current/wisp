@@ -85,6 +85,40 @@ enum Theme {
         ])
     }
 
+    /// A card's title: a small icon tile in the page colour, then the name.
+    @MainActor
+    static func header(_ name: String, symbol: String, tint: NSColor, size: CGFloat = 12.5, tile: CGFloat = 20,
+                       color: NSColor = Theme.inkSecondary, weight: NSFont.Weight = .medium) -> NSAttributedString {
+        let font = sans(size, weight)
+        let attachment = NSTextAttachment()
+        attachment.image = IconTile.image(symbol, tint: tint, size: tile, appearance: NSApp.effectiveAppearance)
+        attachment.bounds = CGRect(x: 0, y: (font.capHeight - tile) / 2, width: tile, height: tile)
+        let text = NSMutableAttributedString(attachment: attachment)
+        text.append(NSAttributedString(string: "  " + name, attributes: [.font: font, .foregroundColor: color]))
+        return text
+    }
+
+    /// The symbol for a card or tile by its name; a dot when there is none.
+    static func symbol(for name: String) -> String {
+        let table: [String: String] = [
+            "CPU": "cpu", "Memory": "memorychip", "GPU": "cube.fill", "Disk": "internaldrive", "Network": "globe",
+            "Power": "bolt.fill", "Temperature": "thermometer.medium", "Developer": "chevron.left.forwardslash.chevron.right",
+            "User": "person.fill", "System": "gearshape.2.fill", "Load average": "gauge.with.dots.needle.50percent",
+            "Processes": "square.stack.3d.up.fill", "Busiest app": "crown.fill", "Pressure": "gauge.with.dots.needle.67percent",
+            "Available": "tray.fill", "Swap used": "arrow.left.arrow.right", "Compressed": "arrow.down.right.and.arrow.up.left",
+            "Largest app": "crown.fill", "Reading": "arrow.down.doc.fill", "Writing": "arrow.up.doc.fill",
+            "Read today": "calendar", "Written today": "calendar", "Busiest writer": "crown.fill",
+            "Downloaded today": "arrow.down.circle.fill", "Uploaded today": "arrow.up.circle.fill", "Last 7 days": "calendar",
+            "Last 30 days": "calendar", "Using most power": "crown.fill", "Average": "chart.bar.fill", "Peak": "arrow.up.to.line",
+            "GPU memory": "memorychip", "GPU power": "bolt.fill", "Power now": "bolt.fill", "Battery power": "battery.75percent",
+            "Battery temperature": "thermometer.medium", "Cycle count": "arrow.triangle.2.circlepath", "Maximum capacity": "battery.100percent",
+            "Open ports": "point.3.connected.trianglepath.dotted", "Published ports": "point.3.connected.trianglepath.dotted",
+            "Closest to its limit": "exclamationmark.triangle.fill", "Agents running": "sparkles", "Tokens today": "text.bubble.fill",
+            "Neural Engine": "brain", "Containers": "shippingbox.fill", "Projects": "folder.fill", "Coding Agents": "sparkles",
+        ]
+        return table[name] ?? "circle.fill"
+    }
+
     static var reduceMotion: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || ProcessInfo.processInfo.environment["WISP_NO_MOTION"] != nil
     }

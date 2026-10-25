@@ -98,8 +98,13 @@ final class TextLine: DrawnView {
 
     var naturalWidth: CGFloat { ceil(text.size().width) }
     var naturalHeight: CGFloat {
-        guard text.length > 0, let font = text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont else { return 14 }
-        return ceil(font.ascender - font.descender + font.leading)
+        guard text.length > 0 else { return 14 }
+        // The tallest font in the line; an icon attachment at the start has none.
+        var height: CGFloat = 0
+        text.enumerateAttribute(.font, in: NSRange(location: 0, length: text.length)) { value, _, _ in
+            if let font = value as? NSFont { height = max(height, ceil(font.ascender - font.descender + font.leading)) }
+        }
+        return height > 0 ? height : 14
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -111,8 +116,10 @@ final class TextLine: DrawnView {
         case .center: x = (bounds.width - width) / 2
         default: x = 0
         }
-        let y = (bounds.height - naturalHeight) / 2
-        text.draw(with: NSRect(x: x, y: y, width: bounds.width - x, height: naturalHeight),
+        // Icon attachments can be taller than the text; centre whichever is taller.
+        let height = max(naturalHeight, ceil(text.size().height))
+        let y = (bounds.height - height) / 2
+        text.draw(with: NSRect(x: x, y: y, width: bounds.width - x, height: height),
                   options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 

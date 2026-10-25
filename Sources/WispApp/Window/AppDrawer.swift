@@ -361,6 +361,8 @@ final class AppDrawer: NSView {
         scroll.documentView = content
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
+        // No title bar to keep clear of; insets would start the page scrolled.
+        scroll.automaticallyAdjustsContentInsets = false
         scroll.autohidesScrollers = true
         for view in [header, rule, scroll, footer] as [NSView] { body.addSubview(view) }
         for view in [memory, cpu, power, gpu, disk, network, inside, historyCard, factsCard, commandCard] as [NSView] { content.addSubview(view) }

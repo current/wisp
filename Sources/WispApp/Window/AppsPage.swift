@@ -88,6 +88,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         outline.doubleAction = #selector(doubleClicked)
 
         let scroll = NSScrollView()
+        scroll.automaticallyAdjustsContentInsets = false
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true

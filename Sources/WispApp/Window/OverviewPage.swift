@@ -67,9 +67,7 @@ final class SummaryCard: CardView {
 
     init(_ name: String, color: NSColor) {
         super.init()
-        let text = NSMutableAttributedString(string: "● ", attributes: [.font: Theme.mono(10), .foregroundColor: color])
-        text.append(Theme.caption(name, color: Theme.inkSecondary))
-        caption.text = text
+        caption.text = Theme.header(name, symbol: Theme.symbol(for: name), tint: color, size: 13.5, tile: 22, color: Theme.ink, weight: .semibold)
         figure.font = Theme.figure(34)
         figure.unitFont = Theme.sans(15)
         bars.color = color
@@ -92,8 +90,8 @@ final class SummaryCard: CardView {
     override func layout() {
         super.layout()
         let width = bounds.width - 40
-        caption.frame = NSRect(x: 20, y: 18, width: caption.naturalWidth + 4, height: 14)
-        state.frame = NSRect(x: caption.frame.maxX + 6, y: 16, width: state.naturalWidth, height: 18)
+        caption.frame = NSRect(x: 20, y: 15, width: caption.naturalWidth + 4, height: 24)
+        state.frame = NSRect(x: caption.frame.maxX + 8, y: 18, width: state.naturalWidth, height: 18)
         arrow.frame = NSRect(x: bounds.width - 30, y: 14, width: 12, height: 20)
         figure.frame = NSRect(x: 20, y: 40, width: width, height: 44)
         let column = width / 3
@@ -108,14 +106,14 @@ final class SummaryCard: CardView {
 /// The landing page: every subsystem as a card, plus what Wisp noticed recently.
 @MainActor
 final class OverviewPage: CardPage {
-    private let cpu = SummaryCard("CPU", color: Theme.series[0])
-    private let memory = SummaryCard("Memory", color: Theme.series[2])
-    private let gpu = SummaryCard("GPU", color: Theme.series[5])
-    private let disk = SummaryCard("Disk", color: Theme.series[1])
-    private let network = SummaryCard("Network", color: Theme.series[3])
-    private let power = SummaryCard("Power", color: Theme.series[4])
-    private let developer = SummaryCard("Developer", color: Theme.inkSecondary)
-    private let thermal = SummaryCard("Temperature", color: Theme.bad)
+    private let cpu = SummaryCard("CPU", color: PageID.cpu.tint)
+    private let memory = SummaryCard("Memory", color: PageID.memory.tint)
+    private let gpu = SummaryCard("GPU", color: PageID.gpu.tint)
+    private let disk = SummaryCard("Disk", color: PageID.disk.tint)
+    private let network = SummaryCard("Network", color: PageID.network.tint)
+    private let power = SummaryCard("Power", color: PageID.energy.tint)
+    private let developer = SummaryCard("Developer", color: PageID.ports.tint)
+    private let thermal = SummaryCard("Temperature", color: PageID.sensors.tint)
     private let notices = CardView()
     private let noticesTitle = TextLine()
     private let noticesEmpty = TextLine(Theme.caption("Nothing worth a look since Wisp started"))

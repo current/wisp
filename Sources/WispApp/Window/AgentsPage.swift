@@ -160,6 +160,7 @@ final class AgentsPage: CardPage {
         caption.text = Theme.caption("Looking for agents…")
         running.figure.format = { (String(format: "%.0f", $0), "") }
         tokens.set(text: "–")
+        for tile in [running, cpu, memory, tokens] { tile.tint = PageID.agents.tint }
         showPlanState()
     }
 

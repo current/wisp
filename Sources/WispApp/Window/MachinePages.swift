@@ -41,6 +41,9 @@ class MachinePage: CardPage {
         }
         table.onSelect = { [weak self] id in self?.onSelect(.app(id)) }
         setUp()
+        let tint = (PageID.allCases.first { $0.title == hero.title } ?? .cpu).tint
+        hero.tint = tint
+        for tile in tiles { tile.tint = tint }
     }
 
     /// Subclasses add tiles, extras and table columns here.
