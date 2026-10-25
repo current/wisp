@@ -6,8 +6,13 @@ import Testing
     @Test func cpuNeedsABaselineThenReportsFractions() throws {
         let cpu = CPUCollector()
         #expect(cpu.sample(perCore: true) == nil)
-        Thread.sleep(forTimeInterval: 0.2)
-        let reading = try #require(cpu.sample(perCore: true))
+        // The kernel's tick counters can sit still for a moment under load; give them up to a second.
+        var sampled: CPUReading?
+        for _ in 0..<5 where sampled == nil {
+            Thread.sleep(forTimeInterval: 0.2)
+            sampled = cpu.sample(perCore: true)
+        }
+        let reading = try #require(sampled)
         #expect((0...1).contains(reading.total))
         #expect(reading.cores.count == ProcessInfo.processInfo.activeProcessorCount)
     }
