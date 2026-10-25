@@ -1,14 +1,16 @@
 import Foundation
 import WispCore
 
-/// A read-only Model Context Protocol server over stdin and stdout, one JSON-RPC
-/// message per line. Nothing here can quit, change or start anything.
+/// A Model Context Protocol server over stdin and stdout, one JSON-RPC message per
+/// line. Every tool reads, except one that asks the owner to quit an app; Wisp
+/// shows the question and nothing quits unless they agree.
 final class MCPServer {
     private struct Tool {
         let name: String
         let description: String
         let properties: [String: Any]
         let required: [String]
+        var readOnly = true
         let request: ([String: Any]) -> LocalRequest
     }
 
@@ -37,6 +39,11 @@ final class MCPServer {
         Tool(name: "recent_alerts",
              description: "Alerts Wisp raised recently: apps that pinned the CPU, kept growing in memory, or wrote or downloaded heavily.",
              properties: [:], required: []) { _ in LocalRequest(command: "alerts") },
+        Tool(name: "ask_to_quit_app",
+             description: "Ask the user to quit an app, for example one using far too much memory. Wisp shows them the app, what it is using and your reason, and quits it normally only if they agree. Returns at once; check app_details later to see whether it quit.",
+             properties: ["name": ["type": "string", "description": "App name or bundle id"],
+                          "reason": ["type": "string", "description": "One sentence the user will read, e.g. \"Chrome holds 14 GB and the Mac is swapping.\""]],
+             required: ["name", "reason"], readOnly: false) { LocalRequest(command: "quit", argument: $0["name"] as? String, reason: $0["reason"] as? String) },
     ]
 
     func run() {
@@ -52,14 +59,14 @@ final class MCPServer {
                 reply(id, result: ["protocolVersion": requested ?? "2025-06-18",
                                    "capabilities": ["tools": [:] as [String: Any]],
                                    "serverInfo": ["name": "wisp", "version": Wisp.version],
-                                   "instructions": "Read-only view of this Mac's processes, apps, ports, coding agents and Docker containers, from the Wisp system monitor."])
+                                   "instructions": "This Mac's processes, apps, ports, coding agents and Docker containers, from the Wisp system monitor. Everything is read only, except that you can ask the user to quit an app."])
             case "ping":
                 reply(id, result: [:])
             case "tools/list":
                 reply(id, result: ["tools": tools.map { tool in
                     ["name": tool.name, "description": tool.description,
                      "inputSchema": ["type": "object", "properties": tool.properties, "required": tool.required],
-                     "annotations": ["readOnlyHint": true, "openWorldHint": false]] as [String: Any]
+                     "annotations": ["readOnlyHint": tool.readOnly, "destructiveHint": !tool.readOnly, "openWorldHint": false]] as [String: Any]
                 }])
             case "tools/call":
                 let params = message["params"] as? [String: Any] ?? [:]
@@ -74,7 +81,9 @@ final class MCPServer {
                 if !Self.allowed {
                     text = "{\"error\": \"Assistant access is turned off in Wisp's settings.\"}"
                 } else {
-                    let data = Local.ask(request) ?? Local.sampleAndAnswer(request)
+                    let data = Local.ask(request) ?? (request.command == "quit"
+                        ? Report.json(Responder.Failure(error: "Wisp is not running, so it cannot ask the user."))
+                        : Local.sampleAndAnswer(request))
                     text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
                 }
                 reply(id, result: ["content": [["type": "text", "text": text]], "isError": text.hasPrefix("{\"error\"")])

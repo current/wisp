@@ -132,9 +132,13 @@ public struct LocalRequest: Codable, Sendable {
     public var limit: Int?
     public var sort: String?
     public var fromAssistant: Bool?
+    /// Why an assistant wants something done, shown to the owner when Wisp asks.
+    public var reason: String?
 
-    public init(command: String, argument: String? = nil, limit: Int? = nil, sort: String? = nil, fromAssistant: Bool? = nil) {
+    public init(command: String, argument: String? = nil, limit: Int? = nil, sort: String? = nil, fromAssistant: Bool? = nil,
+                reason: String? = nil) {
         self.command = command
+        self.reason = reason
         self.argument = argument
         self.limit = limit
         self.sort = sort

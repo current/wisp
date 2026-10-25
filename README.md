@@ -12,25 +12,36 @@ to repeat them.
 ## What it shows
 
 - **Menu bar:** any mix of CPU, memory, network, disk, GPU, temperature, power
-  and battery, as text or a small graph. Click it for a dashboard and the five
+  and battery, as text or a small graph. Click it for a dashboard: CPU with a
+  live line, six meters, a heat map of every core or memory by kind, and the
   busiest apps.
+- **Overview:** one card per part of the machine with the last half hour as
+  bars, and a list of anything worth a look.
 - **Apps:** processes grouped into the app that owns them, with CPU, memory,
   power, disk and network per app. Select one to see its processes, code
   signature and the last hour.
-- **CPU, Memory, Energy, Disk, Network, GPU:** a 24-hour chart for the machine
-  and the apps that used the most over that time.
-- **Sensors:** temperatures, fans, battery and the charge of Bluetooth
-  accessories.
-- **Ports:** servers listening on a port, grouped by project folder. Wisp marks
-  the ones nobody has connected to for 30 minutes.
-- **Docker:** running containers with CPU, memory and ports. Wisp talks to the
-  engine socket directly and works with Docker Desktop, OrbStack, Colima and
-  Rancher Desktop.
-- **Agents:** Claude Code, Codex, Gemini CLI, Aider and other coding agents, with
-  the folder they work in and every process they started.
+- **CPU, Memory, GPU, Neural Engine, Power, Disk, Network:** a live, hourly or
+  daily chart, the figures behind it, and the apps that used the most. CPU has
+  the core map, Memory the breakdown by kind, Disk every volume, Network the
+  totals for today, the week and the month, and Power the battery and what is
+  keeping the Mac awake.
+- **Sound and Bluetooth:** output and input devices with their volume, the apps
+  playing or recording, and paired devices with their battery.
+- **Sensors:** temperatures and fans.
+- **Projects:** every project folder with something running in it, its servers
+  and ports, and the Docker containers that belong to it. Wisp marks servers
+  nobody has connected to for 30 minutes and can stop them.
+- **Containers:** CPU, memory, network and disk per container, what Docker
+  keeps on disk, and stop or restart. Wisp talks to the engine socket directly
+  and works with Docker Desktop, OrbStack, Colima, Rancher Desktop and Lima.
+- **Coding Agents:** Claude Code, Codex, Gemini CLI, Aider and other agents,
+  with the folder each works in and what it costs. If you turn it on, the
+  5-hour and weekly limits of each Claude and Codex account, and the tokens
+  Claude Code used today.
 - **Alerts:** a notification when an app holds a core for minutes, grows by a
-  gigabyte of memory in half an hour, or keeps writing to disk or the network.
-  You set the limits.
+  gigabyte of memory in half an hour, keeps writing to disk or the network, or
+  goes over a limit you set for it, and when the CPU runs hot. Settings keeps
+  the recent ones.
 
 ## Requirements
 
@@ -71,21 +82,28 @@ milliseconds. Without the app, `wisp` takes its own one-second sample.
 
 ## MCP server
 
-`wisp mcp` runs a read-only MCP server on stdin and stdout, so an assistant can
-ask what is slowing the machine down. For Claude Code:
+`wisp mcp` runs an MCP server on stdin and stdout, so an assistant can ask what
+is slowing the machine down. For Claude Code:
 
 ```sh
 claude mcp add wisp -- /usr/local/bin/wisp mcp
 ```
 
-It can read the same figures the CLI prints and cannot kill processes or change
+It reads the same figures the CLI prints. The one thing it can ask for is to
+quit an app: Wisp then shows you the app, what it uses and the assistant's
+reason, and quits it only if you click Quit. It cannot kill processes or change
 settings. To turn it off, clear Assistants in Settings, General.
 
 ## Privacy
 
 Wisp reads everything on your Mac and sends nothing anywhere. History lives in
-`~/Library/Application Support/Wisp`. It has no updater, no analytics and no
-network code beyond the Docker socket on your machine.
+`~/Library/Application Support/Wisp`. It has no updater and no analytics.
+
+The one exception is off until you turn it on: plan limits on the Coding Agents
+page. Wisp then reads the sign-in that Claude Code keeps in your Keychain (through
+the `security` tool, which Claude Code itself uses) and the one Codex keeps in
+`~/.codex/auth.json`, and sends each only to the company that issued it, every
+five minutes while the page is open. It never stores, refreshes or logs them.
 
 ## License
 

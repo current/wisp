@@ -34,6 +34,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.onSystem = { [weak self] snapshot in self?.received(snapshot) }
         monitor.onProcesses = { [weak self] table in self?.received(table) }
         monitor.onAlert = { [weak self] alert in self?.notifier.post(alert) }
+        // Insights outlive a restart; they are small and change only when one fires or is cleared.
+        let insights = Wisp.supportDirectory.appendingPathComponent("insights.json")
+        monitor.perform { monitor in
+            if let data = try? Data(contentsOf: insights), let saved = try? JSONDecoder().decode([Alert].self, from: data) {
+                monitor.alerts.restore(saved)
+            }
+            monitor.alerts.onChange = { recent in try? JSONEncoder().encode(recent).write(to: insights, options: .atomic) }
+        }
         notifier.onOpen = { [weak self] appID in self?.showWindow(selecting: appID) }
         monitor.update(rules: settings.alerts)
 

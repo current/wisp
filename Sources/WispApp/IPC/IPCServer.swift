@@ -68,6 +68,28 @@ final class IPCServer: @unchecked Sendable {
         }
     }
 
+    struct Asked: Encodable {
+        var asked = true
+        var app: String
+        var note = "Wisp is asking the user now. The app quits normally only if they agree."
+    }
+
+    /// Shows the owner the request and replies at once; the socket never waits on a person.
+    private func askToQuit(_ request: LocalRequest, table: ProcessTable) -> Data {
+        guard let query = request.argument, let app = Report.find(query, in: table) else {
+            return Report.json(Responder.Failure(error: "No running app matches \"\(request.argument ?? "")\"."), pretty: false)
+        }
+        guard app.kind == .app, let bundleID = app.bundleIdentifier, bundleID != Bundle.main.bundleIdentifier else {
+            return Report.json(Responder.Failure(error: "\(app.name) is not an app Wisp can offer to quit."), pretty: false)
+        }
+        let reason = String((request.reason ?? "").prefix(300))
+        let opened = DispatchQueue.main.sync { QuitPrompt.shared.ask(name: app.name, bundleID: bundleID, memory: app.memory, cpu: app.cpu, reason: reason) }
+        guard opened else {
+            return Report.json(Responder.Failure(error: "Another request is already waiting for the user."), pretty: false)
+        }
+        return Report.json(Asked(app: app.name), pretty: false)
+    }
+
     private func serve(_ client: Int32) {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
@@ -81,6 +103,8 @@ final class IPCServer: @unchecked Sendable {
         if let request = try? JSONDecoder().decode(LocalRequest.self, from: line), let monitor {
             if request.fromAssistant == true && !assistantsAllowed {
                 reply = Report.json(Responder.Failure(error: "Assistant access is turned off in Wisp's settings."), pretty: false)
+            } else if request.command == "quit" {
+                reply = askToQuit(request, table: monitor.currentTable)
             } else {
                 let now = monitor.fresh()
                 let responder = Responder(system: now.system, table: now.table, history: monitor.history, alerts: now.alerts,

@@ -117,6 +117,42 @@ import Testing
         #expect(engine.evaluate(HistoryTests.table(at: start, cpu: 1.2, memory: 1), history: nil, now: start + 130).isEmpty)
     }
 
+    @Test func appLimitFiresAfterAMinuteOver() {
+        var rules = AlertRules()
+        rules.cpuEnabled = false
+        rules.appLimits = [AppLimit(appID: "a", appName: "A", memoryBytes: 200)]
+        let engine = AlertEngine(rules: rules)
+        let start = Date()
+        #expect(engine.evaluate(HistoryTests.table(at: start, cpu: 0, memory: 300), history: nil, now: start).isEmpty)
+        let fired = engine.evaluate(HistoryTests.table(at: start, cpu: 0, memory: 300), history: nil, now: start + 61)
+        #expect(fired.map(\.kind) == [.appLimit])
+        // Under the limit again: the clock starts over.
+        _ = engine.evaluate(HistoryTests.table(at: start, cpu: 0, memory: 100), history: nil, now: start + 70)
+        #expect(engine.evaluate(HistoryTests.table(at: start, cpu: 0, memory: 300), history: nil, now: start + 80).isEmpty)
+    }
+
+    @Test func temperatureRuleIsOffByDefaultAndSustained() {
+        let off = AlertEngine()
+        #expect(off.evaluate(cpuCelsius: 110) == nil)
+        var rules = AlertRules()
+        rules.temperatureEnabled = true
+        rules.temperatureMinutes = 2
+        let engine = AlertEngine(rules: rules)
+        let start = Date()
+        #expect(engine.evaluate(cpuCelsius: 100, now: start) == nil)
+        #expect(engine.evaluate(cpuCelsius: 100, now: start + 121)?.kind == .temperature)
+        #expect(engine.recent.count == 1)
+        engine.clear()
+        #expect(engine.recent.isEmpty)
+    }
+
+    @Test func oldRulesStillDecode() throws {
+        let old = #"{"cpuEnabled":false,"cpuThreshold":0.9,"cpuMinutes":3}"#
+        let rules = try JSONDecoder().decode(AlertRules.self, from: Data(old.utf8))
+        #expect(rules.cpuEnabled == false)
+        #expect(rules.memoryEnabled && rules.appLimits.isEmpty && !rules.temperatureEnabled)
+    }
+
     @Test func memoryGrowthNeedsATrend() {
         let steady = (0..<30).map { Float(1e9 + Double($0) * 5e7) }
         #expect(AlertEngine.isGrowing(steady, by: 1e9))

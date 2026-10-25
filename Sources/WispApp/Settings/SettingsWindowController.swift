@@ -76,6 +76,20 @@ class Pane: NSViewController {
 
     func build() {}
 
+    /// Builds the rows again after a change that adds or removes some.
+    func rebuild() {
+        while grid.numberOfRows > 0 { grid.removeRow(at: 0) }
+        build()
+        if grid.numberOfColumns > 1 { grid.column(at: 0).xPlacement = .trailing }
+        let size = view.fittingSize
+        preferredContentSize = size
+        if let window = view.window {
+            var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: size))
+            frame.origin = NSPoint(x: window.frame.minX, y: window.frame.maxY - frame.height)
+            window.setFrame(frame, display: true, animate: true)
+        }
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         // The tab controller resizes the window to each pane's preferred size.
@@ -213,7 +227,7 @@ final class AlertsPane: Pane {
         row("CPU:", checkbox("An app keeps a core busy for \(Int(rules.cpuMinutes)) minutes", rules.cpuEnabled) { [unowned self] on in
             delegate.change { $0.alerts.cpuEnabled = on }
         })
-        row("Memory:", checkbox("An app grows by \(Format.memory(rules.memoryGrowthBytes)) in \(rules.memoryWindowMinutes) minutes", rules.memoryEnabled) { [unowned self] on in
+        row("Memory:", checkbox("An app grows by \(Format.bytes(rules.memoryGrowthBytes)) in \(rules.memoryWindowMinutes) minutes", rules.memoryEnabled) { [unowned self] on in
             delegate.change { $0.alerts.memoryEnabled = on }
         })
         row("Disk:", checkbox("An app writes \(Format.rate(rules.diskBytesPerSecond)) for \(Int(rules.diskMinutes)) minutes", rules.diskEnabled) { [unowned self] on in
@@ -222,9 +236,114 @@ final class AlertsPane: Pane {
         row("Network:", checkbox("An app moves \(Format.rate(rules.networkBytesPerSecond)) for \(Int(rules.networkMinutes)) minutes", rules.networkEnabled) { [unowned self] on in
             delegate.change { $0.alerts.networkEnabled = on }
         })
+        row("Temperature:", checkbox("The CPU stays above \(Format.celsius(rules.temperatureCelsius)) for \(Int(rules.temperatureMinutes)) minutes", rules.temperatureEnabled) { [unowned self] on in
+            delegate.change { $0.alerts.temperatureEnabled = on }
+        })
+        gap()
+        for (index, limit) in rules.appLimits.enumerated() {
+            row(index == 0 ? "App limits:" : "", limitRow(limit, index: index))
+        }
+        let add = NSButton(title: "Add Limit…", target: self, action: #selector(addLimit))
+        add.bezelStyle = .push
+        row(rules.appLimits.isEmpty ? "App limits:" : "", add)
+        note("Tell me when one app goes over a memory or CPU limit for a minute.")
+        gap()
+        let recent = delegate.monitor.perform { $0.alerts.recent }.suffix(6).reversed()
+        let time = DateFormatter()
+        time.dateFormat = Calendar.current.isDateInToday(recent.first?.date ?? Date()) ? "HH:mm" : "MMM d HH:mm"
+        let list = Style.secondary(recent.isEmpty ? "Nothing yet." : recent.map { time.string(from: $0.date) + "  " + $0.title }.joined(separator: "\n"))
+        list.maximumNumberOfLines = 0
+        list.preferredMaxLayoutWidth = 300
+        row("Recent:", list)
+        if !recent.isEmpty {
+            let clear = NSButton(title: "Clear", target: self, action: #selector(clearHistory))
+            clear.bezelStyle = .push
+            row("", clear)
+        }
         gap()
         note("Each app is mentioned at most once every \(Int(rules.cooldownMinutes)) minutes per rule. Alerts are checked in the background even with every window closed.")
     }
+
+    private func limitRow(_ limit: AppLimit, index: Int) -> NSView {
+        var parts: [String] = []
+        if let bytes = limit.memoryBytes { parts.append("over \(Format.memory(bytes)) of memory") }
+        if let cores = limit.cpu { parts.append("over \(Format.percent(cores)) CPU") }
+        let label = Style.label(limit.appName + ", " + parts.joined(separator: " or "))
+        let remove = ActionItemButton(symbol: "minus.circle", label: "Remove limit for \(limit.appName)") { [unowned self] in
+            delegate.change { $0.alerts.appLimits.remove(at: index) }
+            rebuild()
+        }
+        return Style.stack([label, remove], axis: .horizontal, spacing: 6, alignment: .centerY)
+    }
+
+    @objc private func addLimit() {
+        guard let window = view.window else { return }
+        let apps = delegate.table.apps.sorted { $0.memory > $1.memory }.prefix(40)
+        guard !apps.isEmpty else { return }
+        let appMenu = NSPopUpButton()
+        appMenu.addItems(withTitles: apps.map(\.name))
+        let kindMenu = NSPopUpButton()
+        kindMenu.addItems(withTitles: ["Memory over", "CPU over"])
+        let amount = NSTextField(string: "4")
+        amount.alignment = .right
+        amount.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        let unit = Style.label("GB")
+        kindMenu.target = ActionTarget.shared
+        ActionTarget.shared.run = { [weak kindMenu, weak amount, weak unit] in
+            let cpu = kindMenu?.indexOfSelectedItem == 1
+            unit?.stringValue = cpu ? "% of a core" : "GB"
+            amount?.stringValue = cpu ? "150" : "4"
+        }
+        kindMenu.action = #selector(ActionTarget.fire)
+        let line = Style.stack([kindMenu, amount, unit], axis: .horizontal, spacing: 6, alignment: .centerY)
+        let accessory = Style.stack([appMenu, line], axis: .vertical, spacing: 8, alignment: .leading)
+        accessory.frame.size = accessory.fittingSize
+        let alert = NSAlert()
+        alert.messageText = "Add an app limit"
+        alert.informativeText = "Wisp tells you when the app stays over it for a minute."
+        alert.accessoryView = accessory
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [unowned self] response in
+            guard response == .alertFirstButtonReturn, let value = Double(amount.stringValue.replacingOccurrences(of: ",", with: ".")), value > 0 else { return }
+            let app = apps[apps.startIndex + appMenu.indexOfSelectedItem]
+            var limit = AppLimit(appID: app.id, appName: app.name)
+            if kindMenu.indexOfSelectedItem == 1 { limit.cpu = value / 100 } else { limit.memoryBytes = value * 1_073_741_824 }
+            delegate.change { $0.alerts.appLimits.append(limit) }
+            rebuild()
+        }
+    }
+
+    @objc private func clearHistory() {
+        delegate.monitor.perform { $0.alerts.clear() }
+        rebuild()
+    }
+}
+
+/// A small borderless symbol button that runs a closure.
+final class ActionItemButton: NSButton {
+    private let body: () -> Void
+    init(symbol: String, label: String, _ body: @escaping () -> Void) {
+        self.body = body
+        super.init(frame: .zero)
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        isBordered = false
+        setAccessibilityLabel(label)
+        target = self
+        action = #selector(fire)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func fire() { body() }
+}
+
+/// Lets a control in a modal sheet call a closure.
+@MainActor
+final class ActionTarget: NSObject {
+    static let shared = ActionTarget()
+    var run: (() -> Void)?
+    @objc func fire() { run?() }
 }
 
 /// How Wisp looks and where it shows up.

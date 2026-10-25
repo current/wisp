@@ -258,7 +258,13 @@ public final class Monitor: @unchecked Sendable {
         let table = scanner.scan(network: wantsNetwork || alerts.needsNetwork)
         lock.withLock { latestTable = table }
         history.record(table: table)
-        let fired = alerts.evaluate(table, history: history)
+        var fired = alerts.evaluate(table, history: history)
+        if alerts.needsTemperature {
+            // Reuse a recent reading when the thermal job is running; otherwise read the CPU sensor now.
+            var celsius = lock.withLock { latestSystem.thermal?.cpuCelsius }
+            if !(activity >= .menuBar && plan.demand.contains(.thermal)) { celsius = thermal.sample(detail: false).cpuCelsius }
+            if let alert = alerts.evaluate(cpuCelsius: celsius) { fired.append(alert) }
+        }
         if !fired.isEmpty, let onAlert {
             DispatchQueue.main.async { fired.forEach(onAlert) }
         }
