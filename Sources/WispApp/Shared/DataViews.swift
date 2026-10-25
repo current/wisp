@@ -29,13 +29,13 @@ final class Heatmap: DrawnView {
         (bounds.width - labelWidth - valueWidth - 8 - CGFloat(columns - 1) * cellGap) / CGFloat(columns)
     }
 
-    private func color(_ value: Float) -> NSColor {
+    /// The 33 steps of the heat scale, built once per appearance.
+    private func ensurePalette() {
         let name = effectiveAppearance.name
         if palette.isEmpty || paletteAppearance != name {
             palette = (0...32).map { Theme.heat(Float($0) / 32, appearance: effectiveAppearance) }
             paletteAppearance = name
         }
-        return palette[Int((min(1, max(0, value)) * 32).rounded())]
     }
 
     func cellRect(row: Int, column: Int) -> NSRect {
@@ -49,7 +49,10 @@ final class Heatmap: DrawnView {
         let tagFont = Theme.mono(9.5, .regular)
         let valueFont = Theme.figure(10)
         let width = cellWidth
-        guard width > 1 else { return }
+        guard width > 1, let context = NSGraphicsContext.current?.cgContext else { return }
+        ensurePalette()
+        // One path per colour: a few dozen fills instead of one per cell.
+        let paths = (0...33).map { _ in CGMutablePath() }
         for (rowIndex, row) in rows.enumerated() {
             let y = CGFloat(rowIndex) * rowPitch
             let height = rowPitch - cellGap
@@ -62,20 +65,13 @@ final class Heatmap: DrawnView {
             }
             let shown = row.values.suffix(columns)
             for column in 0..<columns {
-                let rect = cellRect(row: rowIndex, column: column)
                 let index = shown.count - 1 - column
-                if index >= 0, !shown[shown.startIndex + index].isNaN {
-                    color(shown[shown.startIndex + index]).setFill()
-                } else {
-                    Theme.track.withAlphaComponent(0.5).setFill()
+                var bucket = 33
+                if index >= 0 {
+                    let value = shown[shown.startIndex + index]
+                    if !value.isNaN { bucket = Int((min(1, max(0, value)) * 32).rounded()) }
                 }
-                NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
-                if let hovered, hovered == (rowIndex, column) {
-                    Theme.ink.setStroke()
-                    let ring = NSBezierPath(roundedRect: rect.insetBy(dx: -1, dy: -1), xRadius: 2.5, yRadius: 2.5)
-                    ring.lineWidth = 1.5
-                    ring.stroke()
-                }
+                paths[bucket].addRoundedRect(in: cellRect(row: rowIndex, column: column), cornerWidth: 2, cornerHeight: 2)
             }
             if let last = shown.last, !last.isNaN {
                 let text = String(format: "%.0f%%", last * 100) as NSString
@@ -83,6 +79,17 @@ final class Heatmap: DrawnView {
                 let size = text.size(withAttributes: attributes)
                 text.draw(at: NSPoint(x: bounds.width - size.width, y: y + (height - size.height) / 2), withAttributes: attributes)
             }
+        }
+        for (bucket, path) in paths.enumerated() where !path.isEmpty {
+            context.addPath(path)
+            context.setFillColor((bucket == 33 ? Theme.track.withAlphaComponent(0.5) : palette[bucket]).cgColor)
+            context.fillPath()
+        }
+        if let hovered {
+            Theme.ink.setStroke()
+            let ring = NSBezierPath(roundedRect: cellRect(row: hovered.0, column: hovered.1).insetBy(dx: -1, dy: -1), xRadius: 2.5, yRadius: 2.5)
+            ring.lineWidth = 1.5
+            ring.stroke()
         }
     }
 

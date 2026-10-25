@@ -80,20 +80,31 @@ final class TextLine: DrawnView {
 /// screen the new one rolls in with a short Core Animation push, which the
 /// window server runs on the GPU; the app draws each value once.
 final class BigNumber: DrawnView {
-    var font = Theme.figure(32, .regular)
-    var unitFont = Theme.sans(15)
-    var color: NSColor = Theme.ink { didSet { needsDisplay = true } }
+    var font = Theme.figure(32, .regular) { didSet { render() } }
+    var unitFont = Theme.sans(15) { didSet { render() } }
+    var color: NSColor = Theme.ink { didSet { render() } }
     /// Turns a value into the figure and its unit.
     var format: (Double) -> (String, String) = { (String(format: "%.0f", $0), "") }
 
     private(set) var value: Double?
     private var fixed: (String, String)?
     private var drawn: (String, String) = ("", "")
+    // The figure is a bitmap on a layer. A change slides the old one out and the new
+    // one in with plain position and opacity animations, which the render server runs.
+    // A CATransition would snapshot the layer in-process and keep Metal buffers around.
+    private let front = CALayer()
+    private let back = CALayer()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layerContentsRedrawPolicy = .onSetNeedsDisplay
+        layer?.masksToBounds = true
+        for sub in [back, front] {
+            sub.anchorPoint = .zero
+            sub.contentsGravity = .topLeft
+            layer?.addSublayer(sub)
+        }
+        back.opacity = 0
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -120,36 +131,89 @@ final class BigNumber: DrawnView {
         let rising = (Double(next.0.filter { $0.isNumber || $0 == "." }) ?? 0) >= (Double(drawn.0.filter { $0.isNumber || $0 == "." }) ?? 0)
         let animate = !drawn.0.isEmpty && window?.isVisible == true && !Theme.reduceMotion && next.1 == drawn.1
         drawn = next
-        if animate, let layer {
-            let push = CATransition()
-            push.type = .push
-            push.subtype = rising ? .fromBottom : .fromTop
-            push.duration = 0.28
-            push.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            layer.add(push, forKey: "figure")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if animate {
+            back.contents = front.contents
+            back.opacity = 0
         }
-        needsDisplay = true
+        render()
+        CATransaction.commit()
+        guard animate else { return }
+        let distance = min(12, bounds.height / 3) * (rising ? 1 : -1)
+        slide(front, from: distance, to: 0, fade: (0, 1))
+        slide(back, from: 0, to: -distance, fade: (1, 0))
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        let (figure, unit) = drawn.0.isEmpty ? current : drawn
-        let unitText = NSAttributedString(string: unit, attributes: [.font: unitFont, .foregroundColor: Theme.inkTertiary])
-        let room = bounds.width - (unit.isEmpty ? 0 : ceil(unitText.size().width) + 4)
-        // Long text, such as an app name, shrinks to fit rather than running out of the card.
-        var font = self.font
-        var figureText = NSAttributedString(string: figure, attributes: [.font: font, .foregroundColor: color, .kern: -0.6])
-        let width = figureText.size().width
-        if width > room, room > 0 {
-            font = NSFont(descriptor: font.fontDescriptor, size: max(12, floor(font.pointSize * room / width))) ?? font
-            figureText = NSAttributedString(string: figure, attributes: [.font: font, .foregroundColor: color, .kern: -0.4])
-        }
-        let baseline = (bounds.height + font.ascender + font.descender) / 2
-        figureText.draw(at: NSPoint(x: 0, y: baseline - font.ascender))
-        if !unit.isEmpty {
-            let x = ceil(figureText.size().width) + 4
-            unitText.draw(at: NSPoint(x: x, y: baseline - unitFont.ascender))
-        }
+    private func slide(_ layer: CALayer, from: CGFloat, to: CGFloat, fade: (Float, Float)) {
+        let move = CABasicAnimation(keyPath: "transform.translation.y")
+        // The view is flipped, so a positive offset is lower on screen.
+        move.fromValue = from
+        move.toValue = to
+        let opacity = CABasicAnimation(keyPath: "opacity")
+        opacity.fromValue = fade.0
+        opacity.toValue = fade.1
+        let group = CAAnimationGroup()
+        group.animations = [move, opacity]
+        group.duration = 0.28
+        group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(group, forKey: "slide")
     }
+
+    override func layout() {
+        super.layout()
+        render()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        render()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        render()
+    }
+
+    /// Draws the figure into a bitmap the size of the view and puts it on the front layer.
+    private func render() {
+        let size = bounds.size
+        guard size.width > 0, size.height > 0 else { return }
+        let (figure, unit) = drawn.0.isEmpty ? current : drawn
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        let appearance = effectiveAppearance
+        let font = self.font, unitFont = self.unitFont, color = self.color
+        let image = NSImage(size: size, flipped: true) { bounds in
+            appearance.performAsCurrentDrawingAppearance {
+                let unitText = NSAttributedString(string: unit, attributes: [.font: unitFont, .foregroundColor: Theme.inkTertiary])
+                let room = bounds.width - (unit.isEmpty ? 0 : ceil(unitText.size().width) + 4)
+                // Long text, such as an app name, shrinks to fit rather than running out of the card.
+                var used = font
+                var figureText = NSAttributedString(string: figure, attributes: [.font: used, .foregroundColor: color, .kern: -0.6])
+                let width = figureText.size().width
+                if width > room, room > 0 {
+                    used = NSFont(descriptor: font.fontDescriptor, size: max(12, floor(font.pointSize * room / width))) ?? font
+                    figureText = NSAttributedString(string: figure, attributes: [.font: used, .foregroundColor: color, .kern: -0.4])
+                }
+                let baseline = (bounds.height + used.ascender + used.descender) / 2
+                figureText.draw(at: NSPoint(x: 0, y: baseline - used.ascender))
+                if !unit.isEmpty {
+                    unitText.draw(at: NSPoint(x: ceil(figureText.size().width) + 4, y: baseline - unitFont.ascender))
+                }
+            }
+            return true
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for sub in [front, back] {
+            sub.frame = CGRect(origin: .zero, size: size)
+            sub.contentsScale = scale
+        }
+        front.contents = image.layerContents(forContentsScale: scale)
+        CATransaction.commit()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {}
 
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
