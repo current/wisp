@@ -207,6 +207,13 @@ final class TimeChart: DrawnView {
 
     override func draw(_ dirtyRect: NSRect) {
         let rect = plot
+        // Nothing recorded yet (a fresh launch, or an app that just started): no axes to read.
+        guard primary.lazy.filter({ !$0.isNaN }).count > 1 || secondary.lazy.filter({ !$0.isNaN }).count > 1 else {
+            let text = Theme.caption("Collecting history", size: 9.5)
+            let size = text.size()
+            text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
+            return
+        }
         let top = self.top
         let axisFont = Theme.mono(9)
         // Grid at 0, half and top, with labels on the right.

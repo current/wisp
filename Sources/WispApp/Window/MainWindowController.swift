@@ -103,6 +103,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
         inspectorItem.minimumThickness = 260
         inspectorItem.maximumThickness = 380
+        // Below the toolbar like the page, so the strip above it matches the rest of the window.
+        inspectorItem.allowsFullHeightLayout = false
+        inspectorItem.titlebarSeparatorStyle = .none
         split.addSplitViewItem(sidebarItem)
         split.addSplitViewItem(contentItem)
         split.addSplitViewItem(inspectorItem)

@@ -494,6 +494,9 @@ final class Segmented: DrawnView {
 
 /// The capsule button used for the one main action on a surface.
 final class ActionButton: NSButton {
+    /// A white capsule with a hairline, for actions that are not the main one.
+    var secondary = false { didSet { needsDisplay = true } }
+
     init(title: String, target: AnyObject?, action: Selector?) {
         super.init(frame: .zero)
         self.title = title
@@ -507,13 +510,21 @@ final class ActionButton: NSButton {
     required init?(coder: NSCoder) { fatalError() }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: ceil((title as NSString).size(withAttributes: [.font: font as Any]).width) + 32, height: 30)
+        NSSize(width: ceil((title as NSString).size(withAttributes: [.font: font as Any]).width) + (secondary ? 24 : 32), height: secondary ? 26 : 30)
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        (isHighlighted ? Theme.actionPressed : Theme.action).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
-        let text = NSAttributedString(string: title, attributes: [.font: font as Any, .foregroundColor: NSColor.white])
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: bounds.height / 2, yRadius: bounds.height / 2)
+        if secondary {
+            (isHighlighted ? Theme.hover : Theme.card).setFill()
+            shape.fill()
+            Theme.cardBorder.setStroke()
+            shape.stroke()
+        } else {
+            (isHighlighted ? Theme.actionPressed : Theme.action).setFill()
+            shape.fill()
+        }
+        let text = NSAttributedString(string: title, attributes: [.font: font as Any, .foregroundColor: secondary ? Theme.ink : NSColor.white])
         let size = text.size()
         text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
     }
