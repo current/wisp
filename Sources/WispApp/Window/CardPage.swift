@@ -179,7 +179,7 @@ final class ChartCard: CardView {
 
 /// A time chart with one or two series, light grid lines, a time axis and a
 /// hover readout. Gaps (NaN) break the line instead of joining across them.
-final class TimeChart: DrawnView {
+final class TimeChart: BitmapView {
     var primary: [Float] = [] { didSet { needsDisplay = true } }
     var secondary: [Float] = [] { didSet { needsDisplay = true } }
     var primaryColor: NSColor = Theme.accent

@@ -10,6 +10,51 @@ class DrawnView: NSView {
     override var isFlipped: Bool { true }
 }
 
+/// A drawn view that renders into its own bitmap and hands it to its layer.
+/// AppKit switches views that redraw often (charts) to asynchronous drawing, which
+/// renders through Metal inside the app and keeps a buffer pool of about 190 MB.
+/// Drawing into a plain bitmap skips that path; the cost per frame is the same.
+class BitmapView: DrawnView {
+    override var wantsUpdateLayer: Bool { true }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func updateLayer() {
+        guard let layer, bounds.width >= 1, bounds.height >= 1 else { return }
+        let scale = window?.backingScaleFactor ?? 2
+        let width = Int((bounds.width * scale).rounded(.up)), height = Int((bounds.height * scale).rounded(.up))
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
+        // Flip to match the view, then draw with AppKit as usual.
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: scale, y: -scale)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        effectiveAppearance.performAsCurrentDrawingAppearance { draw(bounds) }
+        NSGraphicsContext.restoreGraphicsState()
+        layer.contentsScale = scale
+        layer.contentsGravity = .resize
+        layer.contents = context.makeImage()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        needsDisplay = true
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        needsDisplay = true
+    }
+}
+
 /// White card with a hairline border. Colours are applied in updateLayer, so the
 /// card costs nothing to redraw and follows light and dark.
 class CardView: NSView {
@@ -281,7 +326,7 @@ final class TickMeter: DrawnView {
 }
 
 /// A line of recent samples with a soft fill and a dot on the newest value.
-final class LiveLine: DrawnView {
+final class LiveLine: BitmapView {
     var values: [Float] = [] { didSet { needsDisplay = true } }
     var ceiling: Float?
     var color: NSColor = Theme.accent { didSet { needsDisplay = true } }

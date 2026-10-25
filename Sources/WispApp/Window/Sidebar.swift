@@ -33,11 +33,24 @@ enum IconTile {
     private static var cache: [String: NSImage] = [:]
 
     static func image(_ symbol: String, tint: NSColor, size: CGFloat = 22, solid: Bool = false, appearance: NSAppearance) -> NSImage {
-        let key = "\(symbol)|\(size)|\(solid)|\(appearance.name.rawValue)|\(tint.hash)"
+        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let key = "\(symbol)|\(size)|\(solid)|\(dark)|\(tint.hash)"
         if let image = cache[key] { return image }
-        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+        // Rasterised once into a bitmap. An image that redraws from a block on every use
+        // sends image views through Core Animation's in-process GPU drawing, which keeps
+        // a buffer pool of about 190 MB.
+        let image = NSImage(size: NSSize(width: size, height: size))
+        for scale in [2, 1] as [CGFloat] {
+            let pixels = Int(size * scale)
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8,
+                                             samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                             bytesPerRow: 0, bitsPerPixel: 0) else { continue }
+            rep.size = NSSize(width: size, height: size)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
             appearance.performAsCurrentDrawingAppearance {
-                (solid ? tint : tint.withAlphaComponent(0.14)).setFill()
+                let rect = NSRect(x: 0, y: 0, width: size, height: size)
+                (solid ? tint : tint.withAlphaComponent(dark ? 0.24 : 0.14)).setFill()
                 NSBezierPath(roundedRect: rect, xRadius: size * 0.28, yRadius: size * 0.28).fill()
                 let config = NSImage.SymbolConfiguration(pointSize: size * 0.52, weight: .semibold)
                     .applying(.init(paletteColors: [solid ? .white : tint]))
@@ -46,7 +59,8 @@ enum IconTile {
                     glyph.draw(in: NSRect(x: (size - s.width) / 2, y: (size - s.height) / 2, width: s.width, height: s.height))
                 }
             }
-            return true
+            NSGraphicsContext.restoreGraphicsState()
+            image.addRepresentation(rep)
         }
         cache[key] = image
         return image

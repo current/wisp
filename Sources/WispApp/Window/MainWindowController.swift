@@ -140,6 +140,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // WISP_DRAWER=<app id> opens the drawer once data has arrived, for screenshots.
         if let id = ProcessInfo.processInfo.environment["WISP_DRAWER"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.select(.app(id)) }
+            if ProcessInfo.processInfo.environment["WISP_DUMP_LAYERS"] != nil {
+                Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+                    guard let root = self?.window?.contentView?.superview?.layer else { return }
+                    var lines: [String] = []
+                    func walk(_ layer: CALayer, _ depth: Int) {
+                        if layer.drawsAsynchronously {
+                            var chain: [String] = []
+                            var l: CALayer? = layer
+                            while let current = l { chain.append(current.delegate.map { String(describing: type(of: $0)) } ?? String(describing: type(of: current))); l = current.superlayer }
+                            lines.append("\(layer.bounds.size) " + chain.prefix(8).joined(separator: " < "))
+                        }
+                        layer.sublayers?.forEach { walk($0, depth + 1) }
+                    }
+                    walk(root, 0)
+                    let entry = "\(Int(Date().timeIntervalSince1970) % 1000): " + lines.joined(separator: " | ") + "\n"
+                    if let handle = FileHandle(forWritingAtPath: "/tmp/wisp-layers.txt") {
+                        handle.seekToEndOfFile(); handle.write(Data(entry.utf8)); try? handle.close()
+                    } else {
+                        try? entry.write(toFile: "/tmp/wisp-layers.txt", atomically: true, encoding: .utf8)
+                    }
+                }
+            }
         }
     }
 

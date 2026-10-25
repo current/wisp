@@ -2,7 +2,7 @@ import AppKit
 import WispCore
 
 /// Recent samples as thin bars, newest on the right.
-final class BarHistory: DrawnView {
+final class BarHistory: BitmapView {
     var values: [Float] = [] { didSet { needsDisplay = true } }
     var ceiling: Float?
     var color: NSColor = Theme.accent

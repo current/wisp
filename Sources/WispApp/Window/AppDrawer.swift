@@ -347,7 +347,8 @@ final class AppDrawer: NSView {
         layer?.shadowOffset = CGSize(width: 0, height: -6)
         body.radius = 20
         body.fill = Theme.panel
-        body.layer?.masksToBounds = true
+        // No masksToBounds: clipping a layer tree to rounded corners makes Core Animation
+        // render it inside the app, about 190 MB of buffers. Nothing here reaches the corners.
         addSubview(body)
 
         icon.imageScaling = .scaleProportionallyUpOrDown
@@ -388,6 +389,9 @@ final class AppDrawer: NSView {
     override func layout() {
         super.layout()
         body.frame = bounds
+        // An explicit path: without one the shadow is worked out from every layer
+        // inside the drawer each time a figure moves, which renders it in-process.
+        layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: 20, cornerHeight: 20, transform: nil)
         let width = bounds.width
         header.frame = NSRect(x: 0, y: 0, width: width, height: 84)
         icon.frame = NSRect(x: 22, y: 20, width: 44, height: 44)

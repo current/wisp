@@ -2,7 +2,7 @@ import AppKit
 
 /// Rows of small cells coloured by value, newest on the right, with the latest
 /// value as a figure at the end of each row.
-final class Heatmap: DrawnView {
+final class Heatmap: BitmapView {
     struct Row {
         var label: String
         var tag: String
