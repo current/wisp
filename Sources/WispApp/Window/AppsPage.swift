@@ -41,7 +41,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
 
     private unowned let delegate: AppDelegate
     private let onSelect: (Selection?) -> Void
-    private let outline = NSOutlineView()
+    let outline = NSOutlineView()
     private let search = NSSearchField()
     private let summary = Style.secondary()
     private var nodes: [String: Node] = [:]
@@ -457,6 +457,7 @@ final class NameCell: NSTableCellView {
 
 /// The grey ground behind pages that are not card canvases.
 final class GroundView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
     override var wantsUpdateLayer: Bool { true }
     override func updateLayer() { layer?.backgroundColor = Theme.ground.cgColor }
     override init(frame: NSRect) {

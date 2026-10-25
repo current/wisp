@@ -14,6 +14,7 @@ class CardPage: NSViewController, Page {
     private var arrangedWidth: CGFloat = 0
 
     final class Canvas: DrawnView {
+        override var mouseDownCanMoveWindow: Bool { true }
         override var wantsUpdateLayer: Bool { true }
         override func updateLayer() { layer?.backgroundColor = Theme.ground.cgColor }
     }

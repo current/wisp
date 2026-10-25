@@ -66,79 +66,98 @@ extension Page {
     func update(table: ProcessTable) {}
 }
 
+/// The window's root: the grey ground everything floats on. Dragging empty
+/// ground moves the window, as there is no title bar.
+final class WindowGround: NSView {
+    override var isFlipped: Bool { true }
+    override var wantsUpdateLayer: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { true }
+    override func updateLayer() { layer?.backgroundColor = Theme.ground.cgColor }
+}
+
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     private unowned let delegate: AppDelegate
-    private let split = NSSplitViewController()
-    private let sidebar: SidebarController
-    private let container = NSViewController()
-    let inspector: InspectorController
-    private var inspectorItem: NSSplitViewItem!
+    private let root = WindowGround()
+    private let sidebar = Sidebar()
+    private let container = WindowGround()
+    let drawer: AppDrawer
+    private var drawerOpen = false
     private var pages: [PageID: Page] = [:]
     private var current: Page?
     private(set) var currentID: PageID = .apps
 
+    static let sidebarWidth: CGFloat = 228
+    static let drawerWidth: CGFloat = 400
+    static let inset: CGFloat = 8
+
     init(delegate: AppDelegate) {
         self.delegate = delegate
-        sidebar = SidebarController()
-        inspector = InspectorController(delegate: delegate)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 680),
+        drawer = AppDrawer(delegate: delegate)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 720),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
         window.title = "Wisp"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
         window.backgroundColor = Theme.ground
-        window.titlebarAppearsTransparent = false
-        window.toolbarStyle = .unified
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 820, height: 480)
+        window.minSize = NSSize(width: 900, height: 620)
         window.setFrameAutosaveName("WispMain")
         super.init(window: window)
 
-        container.view = NSView()
-        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
-        sidebarItem.minimumThickness = 180
-        sidebarItem.maximumThickness = 260
-        let contentItem = NSSplitViewItem(viewController: container)
-        contentItem.minimumThickness = 420
-        inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
-        inspectorItem.minimumThickness = 260
-        inspectorItem.maximumThickness = 380
-        // Below the toolbar like the page, so the strip above it matches the rest of the window.
-        inspectorItem.allowsFullHeightLayout = false
-        inspectorItem.titlebarSeparatorStyle = .none
-        split.addSplitViewItem(sidebarItem)
-        split.addSplitViewItem(contentItem)
-        split.addSplitViewItem(inspectorItem)
-        split.splitView.autosaveName = "WispSplit"
-        window.contentViewController = split
-        window.setContentSize(NSSize(width: 1120, height: 680))
-
-        let toolbar = NSToolbar(identifier: "main")
-        toolbar.displayMode = .iconOnly
-        window.toolbar = toolbar
+        root.wantsLayer = true
+        container.wantsLayer = true
+        root.addSubview(container)
+        root.addSubview(sidebar)
+        root.addSubview(drawer)
+        drawer.isHidden = true
+        drawer.onClose = { [weak self] in self?.select(nil) }
+        sidebar.onSelect = { [weak self] id in self?.show(id) }
+        sidebar.onSettings = { [weak delegate] in delegate?.showSettings() }
+        window.contentView = root
+        root.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(rootResized), name: NSView.frameDidChangeNotification, object: root)
         window.delegate = self
         if !window.setFrameUsingName("WispMain") { window.center() }
         // For screenshots while other apps are in use.
         if ProcessInfo.processInfo.environment["WISP_FLOAT"] != nil { window.level = .floating }
-
-        sidebar.onSelect = { [weak self] id in self?.show(id) }
-        inspectorItem.isCollapsed = true
+        place(animated: false)
         show(.overview)
+        sidebar.update(system: delegate.system)
 
         delegate.observeSystem { [weak self] snapshot in
             guard let self, self.isVisible else { return }
             self.current?.update(system: snapshot)
-            self.inspector.update(system: snapshot)
+            self.sidebar.update(system: snapshot)
         }
         delegate.observeTable { [weak self] table in
             guard let self, self.isVisible else { return }
             self.current?.update(table: table)
-            self.inspector.update(table: table)
+            if self.drawerOpen { self.drawer.update(table: table) }
         }
         delegate.windowVisible = true
+        // WISP_DRAWER=<app id> opens the drawer once data has arrived, for screenshots.
+        if let id = ProcessInfo.processInfo.environment["WISP_DRAWER"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.select(.app(id)) }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func rootResized() { place(animated: false) }
+
+    /// Sidebar on the left, the page in the middle, the drawer on the right when open.
+    private func place(animated: Bool) {
+        let bounds = root.bounds
+        let inset = Self.inset
+        sidebar.frame = NSRect(x: inset, y: inset, width: Self.sidebarWidth, height: bounds.height - inset * 2)
+        let left = inset + Self.sidebarWidth
+        let right = drawerOpen ? Self.drawerWidth + inset : 0
+        container.frame = NSRect(x: left, y: 0, width: max(200, bounds.width - left - right), height: bounds.height)
+        drawer.frame = NSRect(x: bounds.width - Self.drawerWidth - inset, y: inset, width: Self.drawerWidth, height: bounds.height - inset * 2)
+        current?.view.frame = container.bounds
+    }
 
     private var isVisible: Bool {
         guard let window else { return false }
@@ -154,18 +173,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if current != nil { select(nil) }
         current?.view.removeFromSuperview()
         current = page
-        page.view.translatesAutoresizingMaskIntoConstraints = false
-        container.view.addSubview(page.view)
-        NSLayoutConstraint.activate([
-            page.view.leadingAnchor.constraint(equalTo: container.view.leadingAnchor),
-            page.view.trailingAnchor.constraint(equalTo: container.view.trailingAnchor),
-            page.view.topAnchor.constraint(equalTo: container.view.safeAreaLayoutGuide.topAnchor),
-            page.view.bottomAnchor.constraint(equalTo: container.view.bottomAnchor),
-        ])
-        window?.subtitle = ""
+        page.view.translatesAutoresizingMaskIntoConstraints = true
+        page.view.autoresizingMask = [.width, .height]
+        page.view.frame = container.bounds
+        container.addSubview(page.view)
         delegate.windowDemand = page.demand
         page.update(system: delegate.system)
         page.update(table: delegate.table)
+        Motion.enter(page.view, from: CGPoint(x: 0, y: 8), duration: 0.22)
     }
 
     private func makePage(_ id: PageID) -> Page {
@@ -192,12 +207,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// The inspector folds away when nothing is selected, so tables get the width.
+    /// Opens the drawer for a selection, or closes it for nil. The page makes room
+    /// first, then the drawer slides in, so nothing re-lays out while it moves.
     private func select(_ selection: Selection?) {
-        inspector.show(selection)
-        if inspectorItem.isCollapsed != (selection == nil) {
-            inspectorItem.animator().isCollapsed = selection == nil
+        if let selection {
+            // A second click on what is already open closes it.
+            if drawerOpen, drawer.selection == selection { return select(nil) }
+            drawer.show(selection)
+            guard !drawerOpen else { return }
+            drawerOpen = true
+            // Per-app network is measured only while something shows it.
+            delegate.windowDemand = (current?.demand ?? []).union(.appNetwork)
+            place(animated: false)
+            drawer.isHidden = false
+            Motion.enter(drawer, from: CGPoint(x: 28, y: 0), duration: 0.28)
+        } else {
+            guard drawerOpen else { return }
+            drawerOpen = false
+            delegate.windowDemand = current?.demand ?? []
+            (current as? Deselecting)?.clearSelection()
+            Motion.leave(drawer, to: CGPoint(x: 28, y: 0), duration: 0.18) { [weak self] in
+                guard let self, !self.drawerOpen else { return }
+                self.drawer.isHidden = true
+                self.place(animated: false)
+            }
         }
+    }
+
+    /// Esc closes the drawer.
+    override func cancelOperation(_ sender: Any?) {
+        if drawerOpen { select(nil) }
     }
 
     func reveal(appID: String) {
@@ -214,8 +253,67 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) { delegate.mainWindowClosed() }
 }
 
+/// Pages that keep a selected row clear it when the drawer closes.
+@MainActor
+protocol Deselecting {
+    func clearSelection()
+}
+
+/// Entrances and exits, all on Core Animation: a short slide and a fade,
+/// nothing when Reduce Motion is on.
+@MainActor
+enum Motion {
+    static let ease = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
+
+    static func enter(_ view: NSView, from offset: CGPoint, duration: CFTimeInterval) {
+        guard !Theme.reduceMotion else { return }
+        view.wantsLayer = true
+        guard let layer = view.layer else { return }
+        let move = CABasicAnimation(keyPath: "transform")
+        move.fromValue = CATransform3DMakeTranslation(offset.x, offset.y, 0)
+        move.toValue = CATransform3DIdentity
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        let group = CAAnimationGroup()
+        group.animations = [move, fade]
+        group.duration = duration
+        group.timingFunction = ease
+        layer.add(group, forKey: "enter")
+    }
+
+    static func leave(_ view: NSView, to offset: CGPoint, duration: CFTimeInterval, then done: @escaping () -> Void) {
+        guard !Theme.reduceMotion, let layer = view.layer else { return done() }
+        CATransaction.begin()
+        CATransaction.setCompletionBlock(done)
+        let move = CABasicAnimation(keyPath: "transform")
+        move.fromValue = CATransform3DIdentity
+        move.toValue = CATransform3DMakeTranslation(offset.x, offset.y, 0)
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1
+        fade.toValue = 0
+        let group = CAAnimationGroup()
+        group.animations = [move, fade]
+        group.duration = duration
+        group.timingFunction = CAMediaTimingFunction(name: .easeIn)
+        group.fillMode = .forwards
+        group.isRemovedOnCompletion = false
+        layer.add(group, forKey: "leave")
+        CATransaction.commit()
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.05) { layer.removeAnimation(forKey: "leave") }
+    }
+}
+
 /// What the inspector is looking at.
 enum Selection: Equatable {
     case app(String)
     case process(Int32)
+}
+
+extension MachinePage: Deselecting {
+    func clearSelection() { table.selectedID = nil }
+}
+
+extension AppsPage: Deselecting {
+    func clearSelection() { outline.deselectAll(nil) }
 }

@@ -112,3 +112,13 @@ func probeVolumesAndSleep() {
     for volume in Volumes.list() { print("volume", volume.name, volume.path, volume.total / 1_000_000_000, "GB", volume.free / 1_000_000_000, "free") }
     for blocker in SleepBlockers.list() { print("awake", blocker.pid, blocker.process, blocker.reason, blocker.keepsDisplayOn, blocker.since as Any) }
 }
+
+@Test(.enabled(if: ProcessInfo.processInfo.environment["WISP_PROBE"] != nil))
+func probeGPUClients() {
+    let clients = GPUClients()
+    _ = clients.sample()
+    Thread.sleep(forTimeInterval: 1)
+    let start = Date()
+    let shares = clients.sample()
+    print("gpu clients \(shares.count) in \(Date().timeIntervalSince(start) * 1000) ms, top \(shares.sorted { $0.value > $1.value }.prefix(3))")
+}
