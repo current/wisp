@@ -135,7 +135,8 @@ final class NeuralPage: MachinePage {
 
     override func setUp() {
         hero.range.items = ["Live"]
-        hero.chart.format = { String(format: "%.2f W", $0) }
+        hero.chart.format = { String(format: $0 >= 1 || $0 == 0 ? "%.0f W" : "%.1f W", $0) }
+        hero.chart.minimumCeiling = 1
         hero.figure.format = { (String(format: $0 >= 1 ? "%.1f" : "%.2f", $0), "W") }
         tiles = [now, average, peak]
         table.isHidden = true

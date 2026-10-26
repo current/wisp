@@ -8,6 +8,7 @@ enum Theme {
     static let panel = dynamic(0xF8F8F9, 0x1C1C1F)
     static let card = dynamic(0xFFFFFF, 0x232327)
     static let cardBorder = dynamic(0xE6E6EA, 0x34343A)
+    static let cardBorderHover = dynamic(0xD2D2D9, 0x4A4A52)
     static let rule = dynamic(0xEDEDF0, 0x2E2E33)
     static let ink = dynamic(0x17171A, 0xF2F2F4)
     static let inkSecondary = dynamic(0x6E6E78, 0xA0A0AA)

@@ -337,6 +337,12 @@ final class AppDrawer: NSView {
         override var isFlipped: Bool { true }
     }
 
+    /// Brings the cards in from the top, for a newly opened app.
+    func revealContent() {
+        layoutSubtreeIfNeeded()
+        Motion.cascade(content.subviews, in: scroll.documentVisibleRect, offset: 8)
+    }
+
     init(delegate: AppDelegate) {
         self.delegate = delegate
         super.init(frame: .zero)

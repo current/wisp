@@ -141,7 +141,6 @@ final class Tile: CardView {
     let note = TextLine()
     let meter = TickMeter()
     var showsMeter = false { didSet { meter.isHidden = !showsMeter; needsLayout = true } }
-    var onClick: (() -> Void)?
     let name: String
     /// The page's colour for the icon tile; pages set it after creating their tiles.
     var tint: NSColor = Theme.accent { didSet { caption.text = Theme.header(name, symbol: Theme.symbol(for: name), tint: tint) } }
@@ -179,7 +178,6 @@ final class Tile: CardView {
         }
     }
 
-    override func mouseUp(with event: NSEvent) { onClick?() }
 }
 
 /// The big chart at the top of a machine page: caption and state, the current
@@ -239,6 +237,8 @@ final class TimeChart: BitmapView {
     var primaryColor: NSColor = Theme.accent
     var secondaryColor: NSColor = Theme.series[1]
     var ceiling: Float?
+    /// The lowest the scale goes, so a near-zero series does not fill the chart.
+    var minimumCeiling: Float = 0
     /// Seconds between samples, for the axis and the readout.
     var step: Double = 2
     var format: (Float) -> String = { String(format: "%.0f", $0) }
@@ -250,7 +250,7 @@ final class TimeChart: BitmapView {
     private var top: Float {
         if let ceiling { return ceiling }
         let peak = max(primary.filter { !$0.isNaN }.max() ?? 0, secondary.filter { !$0.isNaN }.max() ?? 0)
-        return Self.niceCeiling(peak)
+        return max(Self.niceCeiling(peak), minimumCeiling)
     }
 
     static func niceCeiling(_ value: Float) -> Float {

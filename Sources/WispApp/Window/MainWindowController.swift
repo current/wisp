@@ -202,7 +202,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         delegate.windowDemand = page.demand
         page.update(system: delegate.system)
         page.update(table: delegate.table)
-        Motion.enter(page.view, from: CGPoint(x: 0, y: 8), duration: 0.22)
+        if let cards = page as? CardPage {
+            // Lay out now so the cascade knows where each card sits.
+            cards.view.layoutSubtreeIfNeeded()
+            Motion.cascade(cards.canvas.subviews, in: cards.scroll.documentVisibleRect)
+        } else {
+            Motion.enter(page.view, from: CGPoint(x: 0, y: 8), duration: 0.22)
+        }
     }
 
     private func makePage(_ id: PageID) -> Page {
@@ -236,13 +242,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             // A second click on what is already open closes it.
             if drawerOpen, drawer.selection == selection { return select(nil) }
             drawer.show(selection)
-            guard !drawerOpen else { return }
+            guard !drawerOpen else { return drawer.revealContent() }
             drawerOpen = true
             // Per-app network is measured only while something shows it.
             delegate.windowDemand = (current?.demand ?? []).union(.appNetwork)
             place(animated: false)
             drawer.isHidden = false
             Motion.enter(drawer, from: CGPoint(x: 28, y: 0), duration: 0.28)
+            drawer.revealContent()
         } else {
             guard drawerOpen else { return }
             drawerOpen = false
@@ -302,6 +309,32 @@ enum Motion {
         group.duration = duration
         group.timingFunction = ease
         layer.add(group, forKey: "enter")
+    }
+
+    /// Brings a page's cards in one after another from top to bottom, only those
+    /// on screen. Each is a transform and opacity animation the render server runs.
+    static func cascade(_ views: [NSView], in visible: NSRect, offset: CGFloat = 10) {
+        guard !Theme.reduceMotion else { return }
+        let shown = views.filter { $0.frame.intersects(visible) && !$0.isHidden }
+            .sorted { ($0.frame.minY, $0.frame.minX) < ($1.frame.minY, $1.frame.minX) }
+            .prefix(12)
+        let now = CACurrentMediaTime()
+        for (index, view) in shown.enumerated() {
+            guard let layer = view.layer else { continue }
+            let move = CABasicAnimation(keyPath: "transform")
+            move.fromValue = CATransform3DMakeTranslation(0, offset, 0)
+            move.toValue = CATransform3DIdentity
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0
+            fade.toValue = 1
+            let group = CAAnimationGroup()
+            group.animations = [move, fade]
+            group.duration = 0.34
+            group.beginTime = now + Double(index) * 0.028
+            group.fillMode = .backwards
+            group.timingFunction = ease
+            layer.add(group, forKey: "enter")
+        }
     }
 
     static func leave(_ view: NSView, to offset: CGPoint, duration: CFTimeInterval, then done: @escaping () -> Void) {

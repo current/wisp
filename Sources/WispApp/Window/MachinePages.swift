@@ -396,7 +396,8 @@ final class DiskPage: MachinePage {
         hero.state.isHidden = !Strain.disk(d)
         hero.state.text = "Low space"
         hero.state.tone = .bad
-        hero.legend.text = legendText(("Read", Theme.accent), ("Write", Theme.series[1]))
+        hero.chart.secondaryColor = PageID.cpu.tint
+        hero.legend.text = legendText(("Read", pageTint), ("Write", PageID.cpu.tint))
         hero.needsLayout = true
     }
 
@@ -497,7 +498,8 @@ final class NetworkPage: MachinePage {
         guard let n = s.network else { return }
         hero.figure.set(n.receivedBytesPerSecond)
         hero.meta.text = Theme.caption("Download · upload \(Format.rate(n.sentBytesPerSecond))")
-        hero.legend.text = legendText(("Down", Theme.accent), ("Up", Theme.series[1]))
+        hero.chart.secondaryColor = PageID.cpu.tint
+        hero.legend.text = legendText(("Down", pageTint), ("Up", PageID.cpu.tint))
         hero.needsLayout = true
     }
 
@@ -556,6 +558,9 @@ final class NetworkPage: MachinePage {
 final class GPUPage: MachinePage {
     private let memoryTile = Tile("GPU memory"), average = Tile("Average"), peak = Tile("Peak")
     private let temperature = Tile("Temperature"), power = Tile("GPU power")
+    /// GPU time per app, read from the driver only while this page is on screen.
+    private let clients = GPUClients()
+    private var gpuShare: [String: Double] = [:]
 
     override func setUp() {
         hero.chart.ceiling = 1
@@ -563,9 +568,9 @@ final class GPUPage: MachinePage {
         hero.figure.format = { (String(format: "%.0f", $0 * 100), "%") }
         for tile in [average, peak] { tile.figure.format = { (String(format: "%.0f", $0 * 100), "%") }; tile.showsMeter = true }
         tiles = [memoryTile, average, peak, temperature, power]
-        table.columns = [.init(title: "App", width: 0), .init(title: "CPU", width: 150, bar: true), .init(title: "Memory", width: 80),
-                         .init(title: "Processes", width: 70)]
-        tableTitle.text = cardTitle("Apps", "by CPU · macOS does not report GPU time per app")
+        table.columns = [.init(title: "App", width: 0), .init(title: "GPU", width: 150, bar: true), .init(title: "CPU", width: 80),
+                         .init(title: "Memory", width: 80), .init(title: "Processes", width: 70)]
+        tableTitle.text = cardTitle("Apps", "by GPU time")
     }
 
     override func updateHero(_ s: SystemSnapshot) {
@@ -602,16 +607,32 @@ final class GPUPage: MachinePage {
         }
     }
 
+    override func update(table: ProcessTable) {
+        let shares = clients.sample()
+        var byApp: [String: Double] = [:]
+        for process in table.processes {
+            if let share = shares[process.pid] { byApp[process.groupID, default: 0] += share }
+        }
+        gpuShare = byApp
+        super.update(table: table)
+    }
+
+    override var barColumnValue: (AppGroup) -> Double { { [unowned self] in self.gpuShare[$0.id] ?? 0 } }
+
     override func sortValue(_ app: AppGroup, column: Int) -> Double {
         switch column {
-        case 2: return Double(app.memory)
-        case 3: return Double(app.processCount)
-        default: return app.cpu
+        case 2: return app.cpu
+        case 3: return Double(app.memory)
+        case 4: return Double(app.processCount)
+        default: return (gpuShare[app.id] ?? 0) + app.cpu * 1e-6
         }
     }
 
     override func cells(_ app: AppGroup, table: ProcessTable) -> [String] {
-        [app.name, appCPU(app, table), Format.memory(app.memory), "\(app.processCount)"]
+        let gpu = gpuShare[app.id].map { $0 >= 0.0005 ? String(format: "%.1f%%", $0 * 100) : "–" } ?? "–"
+        // Processes macOS keeps to itself (WindowServer) read as zero; show a dash.
+        return [app.name, gpu, app.memory == 0 ? "–" : appCPU(app, table), app.memory == 0 ? "–" : Format.memory(app.memory),
+                "\(app.processCount)"]
     }
 }
 

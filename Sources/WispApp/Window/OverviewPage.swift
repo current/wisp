@@ -62,7 +62,6 @@ final class SummaryCard: CardView {
     let stats = (0..<3).map { _ in Stat() }
     let bars = BarHistory()
     private let arrow = TextLine(NSAttributedString(string: "›", attributes: [.font: Theme.sans(16), .foregroundColor: Theme.inkTertiary]))
-    var onClick: (() -> Void)?
     private var statValues: [(String, String)] = []
 
     init(_ name: String, color: NSColor) {
@@ -99,7 +98,6 @@ final class SummaryCard: CardView {
         bars.frame = NSRect(x: 20, y: bounds.height - 44, width: width, height: 26)
     }
 
-    override func mouseUp(with event: NSEvent) { onClick?() }
     override func accessibilityPerformPress() -> Bool { onClick?(); return true }
 }
 

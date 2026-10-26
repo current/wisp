@@ -73,13 +73,89 @@ class CardView: NSView {
     override var isFlipped: Bool { true }
     override var wantsUpdateLayer: Bool { true }
 
+    /// Set on cards that open something. They answer the pointer: the border
+    /// darkens and a soft shadow comes up on hover, and the card gives a little
+    /// while pressed.
+    var onClick: (() -> Void)? { didSet { updateTrackingAreas() } }
+    private var hovering = false
+    private var tracking: NSTrackingArea?
+
     override func updateLayer() {
         guard let layer else { return }
         layer.backgroundColor = fill.cgColor
-        layer.borderColor = stroke.cgColor
+        layer.borderColor = (hovering ? Theme.cardBorderHover : stroke).cgColor
         layer.borderWidth = stroke == .clear ? 0 : 1
         layer.cornerRadius = radius
         layer.cornerCurve = .continuous
+        if onClick != nil {
+            layer.shadowColor = NSColor.black.cgColor
+            layer.shadowRadius = 10
+            layer.shadowOffset = CGSize(width: 0, height: -3)
+            // A path keeps the shadow off the offscreen pass.
+            layer.shadowPath = CGPath(roundedRect: bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        tracking = nil
+        guard onClick != nil else { return }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { setHover(true) }
+    override func mouseExited(with event: NSEvent) { setHover(false); press(false) }
+
+    private func setHover(_ on: Bool) {
+        guard onClick != nil, on != hovering, let layer else { return }
+        hovering = on
+        let from = layer.presentation()?.borderColor ?? layer.borderColor
+        let shadowFrom = layer.presentation()?.shadowOpacity ?? layer.shadowOpacity
+        updateLayer()
+        layer.shadowOpacity = on ? 0.07 : 0
+        guard !Theme.reduceMotion else { return }
+        let border = CABasicAnimation(keyPath: "borderColor")
+        border.fromValue = from
+        let shadow = CABasicAnimation(keyPath: "shadowOpacity")
+        shadow.fromValue = shadowFrom
+        for animation in [border, shadow] {
+            animation.duration = on ? 0.14 : 0.24
+            animation.timingFunction = Motion.ease
+            layer.add(animation, forKey: animation.keyPath)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard onClick != nil else { return super.mouseDown(with: event) }
+        press(true)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let onClick else { return super.mouseUp(with: event) }
+        press(false)
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick() }
+    }
+
+    private var pressed = false
+
+    /// Scales the card about its centre; AppKit leaves a view layer's transform alone.
+    private func press(_ down: Bool) {
+        guard down != pressed, let layer, !Theme.reduceMotion else { return }
+        pressed = down
+        let w = bounds.width / 2, h = bounds.height / 2
+        var target = CATransform3DMakeTranslation(w, h, 0)
+        if down { target = CATransform3DScale(target, 0.985, 0.985, 1) }
+        target = CATransform3DTranslate(target, -w, -h, 0)
+        let animation = CABasicAnimation(keyPath: "transform")
+        animation.fromValue = layer.presentation()?.transform ?? layer.transform
+        animation.toValue = target
+        animation.duration = down ? 0.1 : 0.3
+        animation.timingFunction = Motion.ease
+        layer.transform = down ? target : CATransform3DIdentity
+        layer.add(animation, forKey: "press")
     }
 }
 
@@ -246,13 +322,19 @@ final class BigNumber: DrawnView {
                 var figureText = NSAttributedString(string: figure, attributes: [.font: used, .foregroundColor: color, .kern: -0.6])
                 let width = figureText.size().width
                 if width > room, room > 0 {
-                    used = NSFont(descriptor: font.fontDescriptor, size: max(12, floor(font.pointSize * room / width))) ?? font
-                    figureText = NSAttributedString(string: figure, attributes: [.font: used, .foregroundColor: color, .kern: -0.4])
+                    used = NSFont(descriptor: font.fontDescriptor, size: max(15, floor(font.pointSize * room / width))) ?? font
+                    // Past the smallest size it still fits, the end gives way to an ellipsis.
+                    let style = NSMutableParagraphStyle()
+                    style.lineBreakMode = .byTruncatingTail
+                    figureText = NSAttributedString(string: figure, attributes: [.font: used, .foregroundColor: color, .kern: -0.4,
+                                                                                  .paragraphStyle: style])
                 }
                 let baseline = (bounds.height + used.ascender + used.descender) / 2
-                figureText.draw(at: NSPoint(x: 0, y: baseline - used.ascender))
+                let lineHeight = ceil(used.ascender - used.descender + used.leading)
+                figureText.draw(with: NSRect(x: 0, y: baseline - used.ascender, width: max(room, 1), height: lineHeight),
+                                options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
                 if !unit.isEmpty {
-                    unitText.draw(at: NSPoint(x: ceil(figureText.size().width) + 4, y: baseline - unitFont.ascender))
+                    unitText.draw(at: NSPoint(x: min(ceil(figureText.size().width), room) + 4, y: baseline - unitFont.ascender))
                 }
             }
             return true
