@@ -106,6 +106,7 @@ final class SummaryCard: CardView {
 /// The landing page: every subsystem as a card, plus what Wisp noticed recently.
 @MainActor
 final class OverviewPage: CardPage {
+    override var pageTint: NSColor { PageID.overview.tint }
     private let cpu = SummaryCard("CPU", color: PageID.cpu.tint)
     private let memory = SummaryCard("Memory", color: PageID.memory.tint)
     private let gpu = SummaryCard("GPU", color: PageID.gpu.tint)
@@ -152,7 +153,7 @@ final class OverviewPage: CardPage {
         canvas.addSubview(notices)
         notices.addSubview(noticesTitle)
         notices.addSubview(noticesEmpty)
-        noticesTitle.text = DashboardView.titleText("Worth a look", "")
+        noticesTitle.text = cardTitle("Worth a look", "")
     }
 
     override func arrange(width: CGFloat) -> CGFloat {

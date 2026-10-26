@@ -28,7 +28,7 @@ final class ContainersPage: MachinePage {
         limitTile.showsMeter = true
         tiles = [cpuTile, limitTile, networkTile, portsTile]
         for view in [diskTitle, diskTotal, diskWaffle, diskLegend] as [NSView] { diskCard.addSubview(view) }
-        diskTitle.text = DashboardView.titleText("Disk use", "")
+        diskTitle.text = cardTitle("Disk use", "")
         diskTotal.text = Theme.caption("Adding it up…")
         diskWaffle.cell = 8
         diskWaffle.gap = 3
@@ -40,7 +40,7 @@ final class ContainersPage: MachinePage {
                          .init(title: "Memory", width: 80), .init(title: "Network", width: 80), .init(title: "Disk", width: 80)]
         table.sortColumn = 4
         table.onSelect = { [weak self] id in self?.showActions(for: id) }
-        tableTitle.text = DashboardView.titleText("Containers", "")
+        tableTitle.text = cardTitle("Containers", "")
     }
 
     override func arrange(width: CGFloat) -> CGFloat {

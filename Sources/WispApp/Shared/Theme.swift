@@ -114,6 +114,11 @@ enum Theme {
             "Battery temperature": "thermometer.medium", "Cycle count": "arrow.triangle.2.circlepath", "Maximum capacity": "battery.100percent",
             "Open ports": "point.3.connected.trianglepath.dotted", "Published ports": "point.3.connected.trianglepath.dotted",
             "Closest to its limit": "exclamationmark.triangle.fill", "Agents running": "sparkles", "Tokens today": "text.bubble.fill",
+            "Apps": "square.grid.2x2.fill", "Cores": "cpu", "By kind": "chart.pie.fill", "Volumes": "internaldrive.fill",
+            "Battery": "battery.100percent", "Keeping this Mac awake": "cup.and.saucer.fill", "Worth a look": "lightbulb.fill",
+            "Temperatures": "thermometer.medium", "Fans": "fan.fill", "Accessories": "keyboard.fill", "Output": "speaker.wave.2.fill",
+            "Input": "mic.fill", "Apps with sound open": "music.note", "Devices": "dot.radiowaves.left.and.right",
+            "Disk use": "internaldrive", "Plan limits": "gauge.with.needle.fill", "Running": "sparkles",
             "Neural Engine": "brain", "Containers": "shippingbox.fill", "Projects": "folder.fill", "Coding Agents": "sparkles",
         ]
         return table[name] ?? "circle.fill"

@@ -202,9 +202,11 @@ final class BigNumber: DrawnView {
         // The view is flipped, so a positive offset is lower on screen.
         move.fromValue = from
         move.toValue = to
-        let opacity = CABasicAnimation(keyPath: "opacity")
-        opacity.fromValue = fade.0
-        opacity.toValue = fade.1
+        // The old figure is gone before the new one shows, so two names never
+        // sit on top of each other mid-change.
+        let opacity = CAKeyframeAnimation(keyPath: "opacity")
+        opacity.values = fade.0 < fade.1 ? [0, 0, 1] : [1, 0, 0]
+        opacity.keyTimes = fade.0 < fade.1 ? [0, 0.35, 1] : [0, 0.45, 1]
         let group = CAAnimationGroup()
         group.animations = [move, opacity]
         group.duration = 0.28

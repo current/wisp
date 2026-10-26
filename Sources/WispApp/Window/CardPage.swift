@@ -52,6 +52,7 @@ class CardPage: NSViewController, Page {
     /// Places every card again. Call when a card's height changes.
     func relayout() {
         let width = scroll.contentSize.width
+        let first = arrangedWidth == 0
         arrangedWidth = width
         let height = max(arrange(width: width), scroll.contentSize.height)
         if canvas.frame.size != NSSize(width: width, height: height) {
@@ -60,10 +61,35 @@ class CardPage: NSViewController, Page {
         // WISP_SCROLL=bottom shows the end of the page, for screenshots.
         if ProcessInfo.processInfo.environment["WISP_SCROLL"] == "bottom" {
             canvas.scroll(NSPoint(x: 0, y: max(0, height - scroll.contentSize.height)))
+        } else if first {
+            scrollToTop()
         }
     }
 
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        if ProcessInfo.processInfo.environment["WISP_SCROLL"] != "bottom" { scrollToTop() }
+    }
+
+    func scrollToTop() {
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
     func arrange(width: CGFloat) -> CGFloat { 0 }
+
+    /// The page's colour, for the icon tiles in card titles.
+    var pageTint: NSColor { Theme.accent }
+
+    /// A card title: the card's icon tile, its name, and a quieter detail after it.
+    func cardTitle(_ name: String, _ detail: String) -> NSAttributedString {
+        let text = NSMutableAttributedString(attributedString: Theme.header(name, symbol: Theme.symbol(for: name), tint: pageTint,
+                                                                            size: 14, tile: 20, color: Theme.ink, weight: .semibold))
+        if !detail.isEmpty {
+            text.append(NSAttributedString(string: "  " + detail, attributes: [.font: Theme.sans(13), .foregroundColor: Theme.inkTertiary]))
+        }
+        return text
+    }
 
     /// Places views left to right in equal columns, wrapping to new rows. Returns the bottom edge.
     @discardableResult
@@ -76,12 +102,17 @@ class CardPage: NSViewController, Page {
         let rowsNeeded = (views.count + fit - 1) / fit
         let columns = max(1, (views.count + rowsNeeded - 1) / rowsNeeded)
         let cell = (inner - gap * CGFloat(columns - 1)) / CGFloat(columns)
-        for (index, view) in views.enumerated() {
-            let x = margin + CGFloat(index % columns) * (cell + gap)
-            let y = top + CGFloat(index / columns) * (height + gap)
-            view.frame = NSRect(x: x, y: y, width: cell, height: height).integral
-        }
         let rows = (views.count + columns - 1) / columns
+        // A short last row stretches across the width instead of leaving a hole.
+        let lastCount = views.count - (rows - 1) * columns
+        let lastCell = (inner - gap * CGFloat(lastCount - 1)) / CGFloat(lastCount)
+        for (index, view) in views.enumerated() {
+            let row = index / columns
+            let width = row == rows - 1 ? lastCell : cell
+            let x = margin + CGFloat(index % columns) * (width + gap)
+            let y = top + CGFloat(row) * (height + gap)
+            view.frame = NSRect(x: x, y: y, width: width, height: height).integral
+        }
         return top + CGFloat(rows) * height + CGFloat(rows - 1) * gap
     }
 
@@ -92,6 +123,13 @@ class CardPage: NSViewController, Page {
         canvas.addSubview(titleLine)
         canvas.addSubview(caption)
         return (titleLine, caption)
+    }
+
+    /// Places a heading from `heading(_:)` at the top. Returns where the cards start.
+    func place(_ title: TextLine, _ caption: TextLine, width: CGFloat) -> CGFloat {
+        title.frame = NSRect(x: margin + 2, y: margin, width: width - margin * 2, height: 26)
+        caption.frame = NSRect(x: margin + 2, y: margin + 30, width: width - margin * 2, height: 14)
+        return margin + 58
     }
 }
 

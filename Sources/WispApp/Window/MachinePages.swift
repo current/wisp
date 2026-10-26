@@ -41,10 +41,12 @@ class MachinePage: CardPage {
         }
         table.onSelect = { [weak self] id in self?.onSelect(.app(id)) }
         setUp()
-        let tint = (PageID.allCases.first { $0.title == hero.title } ?? .cpu).tint
+        let tint = pageTint
         hero.tint = tint
         for tile in tiles { tile.tint = tint }
     }
+
+    override var pageTint: NSColor { (PageID.allCases.first { $0.title == hero.title } ?? .cpu).tint }
 
     /// Subclasses add tiles, extras and table columns here.
     func setUp() {}
@@ -178,7 +180,7 @@ final class CPUPage: MachinePage {
         extras = [(coresCard, 60 + 14 * 14 + 40)]
         table.columns = [.init(title: "App", width: 0), .init(title: "CPU", width: 150, bar: true),
                          .init(title: "Memory", width: 80), .init(title: "Power", width: 70), .init(title: "Processes", width: 70)]
-        tableTitle.text = DashboardView.titleText("Apps", "by CPU")
+        tableTitle.text = cardTitle("Apps", "by CPU")
     }
 
     override func arrange(width: CGFloat) -> CGFloat {
@@ -205,7 +207,7 @@ final class CPUPage: MachinePage {
         for (number, index) in (efficiency..<history.count).enumerated() { rows.append(.init(label: "P\(number + 1)", tag: "", values: history[index])) }
         for index in 0..<efficiency { rows.append(.init(label: "E\(index + 1)", tag: "", values: history[index])) }
         heatmap.rows = rows
-        coresTitle.text = DashboardView.titleText("Cores", "\(c.cores.count)")
+        coresTitle.text = cardTitle("Cores", "\(c.cores.count)")
         let busy = c.cores.filter { $0 >= 0.8 }.count
         coresMeta.text = Theme.caption("Last \(Int(Double(HistoryStore.recentCoreSamples) * delegate.settings.interval)) s · \(busy) busy now")
     }
@@ -271,13 +273,13 @@ final class MemoryPage: MachinePage {
         waffle.cell = 9
         waffle.gap = 3
         for view in [typesTitle, waffle, legend] as [NSView] { typesCard.addSubview(view) }
-        typesTitle.text = DashboardView.titleText("By kind", "")
+        typesTitle.text = cardTitle("By kind", "")
         waffle.onHover = { [weak self] hover in self?.legend.highlighted = hover?.0 }
         legend.onHover = { [weak self] index in self?.waffle.highlighted = index }
         extras = [(typesCard, 190)]
         table.columns = [.init(title: "App", width: 0), .init(title: "Memory", width: 160, bar: true),
                          .init(title: "CPU", width: 70), .init(title: "Processes", width: 70)]
-        tableTitle.text = DashboardView.titleText("Apps", "by memory")
+        tableTitle.text = cardTitle("Apps", "by memory")
     }
 
     override var barColumnValue: (AppGroup) -> Double { { Double($0.memory) } }
@@ -369,11 +371,11 @@ final class DiskPage: MachinePage {
         writer.onClick = { [weak self] in if let id = self?.writerID { self?.onSelect(.app(id)) } }
         tiles = [reading, writing, readToday, writtenToday, writer]
         volumesCard.addSubview(volumesTitle)
-        volumesTitle.text = DashboardView.titleText("Volumes", "")
+        volumesTitle.text = cardTitle("Volumes", "")
         extras = [(volumesCard, 120)]
         table.columns = [.init(title: "App", width: 0), .init(title: "Write", width: 150, bar: true), .init(title: "Read", width: 80),
                          .init(title: "CPU", width: 70), .init(title: "Memory", width: 80)]
-        tableTitle.text = DashboardView.titleText("Apps", "by disk writes")
+        tableTitle.text = cardTitle("Apps", "by disk writes")
     }
 
     override var barColumnValue: (AppGroup) -> Double { { $0.diskWritePerSecond } }
@@ -486,7 +488,7 @@ final class NetworkPage: MachinePage {
         tiles = [downToday, upToday, week, month, busiestTile]
         table.columns = [.init(title: "App", width: 0), .init(title: "Download", width: 150, bar: true), .init(title: "Upload", width: 80),
                          .init(title: "CPU", width: 70), .init(title: "Memory", width: 80)]
-        tableTitle.text = DashboardView.titleText("Apps", "by download")
+        tableTitle.text = cardTitle("Apps", "by download")
     }
 
     override var barColumnValue: (AppGroup) -> Double { { $0.networkInPerSecond } }
@@ -563,7 +565,7 @@ final class GPUPage: MachinePage {
         tiles = [memoryTile, average, peak, temperature, power]
         table.columns = [.init(title: "App", width: 0), .init(title: "CPU", width: 150, bar: true), .init(title: "Memory", width: 80),
                          .init(title: "Processes", width: 70)]
-        tableTitle.text = DashboardView.titleText("Apps", "by CPU · macOS does not report GPU time per app")
+        tableTitle.text = cardTitle("Apps", "by CPU · macOS does not report GPU time per app")
     }
 
     override func updateHero(_ s: SystemSnapshot) {
@@ -645,12 +647,12 @@ final class EnergyPage: MachinePage {
         batteryLine.primaryColor = Theme.good
         for view in [batteryTitle, batteryFigure, batteryNote, batteryLine] as [NSView] { batteryCard.addSubview(view) }
         for view in [awakeTitle, awakeEmpty] as [NSView] { awakeCard.addSubview(view) }
-        batteryTitle.text = DashboardView.titleText("Battery", "")
-        awakeTitle.text = DashboardView.titleText("Keeping this Mac awake", "")
+        batteryTitle.text = cardTitle("Battery", "")
+        awakeTitle.text = cardTitle("Keeping this Mac awake", "")
         extras = [(batteryCard, 230), (awakeCard, 230)]
         table.columns = [.init(title: "App", width: 0), .init(title: "Power", width: 150, bar: true), .init(title: "Wake-ups", width: 80),
                          .init(title: "CPU", width: 70), .init(title: "Memory", width: 80)]
-        tableTitle.text = DashboardView.titleText("Apps", "by power")
+        tableTitle.text = cardTitle("Apps", "by power")
     }
 
     override var barColumnValue: (AppGroup) -> Double { { $0.watts } }

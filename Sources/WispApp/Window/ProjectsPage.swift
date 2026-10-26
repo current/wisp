@@ -114,8 +114,7 @@ final class ProjectCard: CardView {
 /// else started in the folder, and the Docker containers of the same name.
 @MainActor
 final class ProjectsPage: CardPage {
-    private let count = BigNumber()
-    private let countCaption = TextLine()
+    private lazy var titleLines = heading("Projects")
     private let memory = Tile("Memory"), cpu = Tile("CPU"), processes = Tile("Processes"), ports = Tile("Open ports")
     private let idleCard = CardView()
     private let idleTitle = TextLine()
@@ -130,22 +129,18 @@ final class ProjectsPage: CardPage {
 
     override func loadView() {
         super.loadView()
-        count.font = Theme.figure(44)
-        count.unitFont = Theme.sans(22)
-        count.format = { (String(format: "%.0f", $0), $0 == 1 ? "project running" : "projects running") }
-        for view in [count, countCaption, memory, cpu, processes, ports, idleCard] as [NSView] { canvas.addSubview(view) }
+        titleLines.1.text = Theme.caption("Looking for projects…")
+        for view in [memory, cpu, processes, ports, idleCard] as [NSView] { canvas.addSubview(view) }
         idleCard.fill = Theme.warnWash
         idleCard.stroke = Theme.warn.withAlphaComponent(0.25)
         for view in [idleTitle, idleList, stopAll] as [NSView] { idleCard.addSubview(view) }
-        countCaption.text = Theme.caption("Projects")
         for tile in [memory, cpu, processes, ports] { tile.tint = PageID.ports.tint }
     }
 
     override func arrange(width: CGFloat) -> CGFloat {
         let inner = width - margin * 2
-        countCaption.frame = NSRect(x: margin + 2, y: margin + 4, width: 200, height: 14)
-        count.frame = NSRect(x: margin, y: margin + 22, width: inner, height: 54)
-        var y = grid([memory, cpu, processes, ports], top: count.frame.maxY + 14, width: width, columns: 4, height: 104) + gap
+        let top = place(titleLines.0, titleLines.1, width: width)
+        var y = grid([memory, cpu, processes, ports], top: top, width: width, columns: 4, height: 112) + gap
         if idleCard.isHidden == false {
             idleCard.frame = NSRect(x: margin, y: y, width: inner, height: 76)
             idleTitle.frame = NSRect(x: 20, y: 16, width: inner - 180, height: 20)
@@ -176,7 +171,9 @@ final class ProjectsPage: CardPage {
     }
 
     private func fill(_ table: ProcessTable) {
-        count.set(Double(projects.count))
+        let processCount = projects.reduce(0) { $0 + $1.processes.count }
+        titleLines.1.text = Theme.caption(projects.isEmpty ? "Nothing running in a project folder"
+                                          : "\(projects.count) running · \(processCount) processes")
         let totalMemory = projects.reduce(0) { $0 + $1.memory }
         let (memoryValue, memoryUnit) = DashboardView.split(Format.memory(totalMemory))
         memory.set(text: memoryValue, unit: memoryUnit)

@@ -117,6 +117,7 @@ final class PlanCard: CardView {
 /// owner turns it on, each AI plan's limits and the tokens used today.
 @MainActor
 final class AgentsPage: CardPage {
+    override var pageTint: NSColor { PageID.agents.tint }
     private let (titleLine, caption): (TextLine, TextLine)
     private let running = Tile("Agents running"), cpu = Tile("CPU"), memory = Tile("Memory"), tokens = Tile("Tokens today")
     private let planOff = CardView()
@@ -154,8 +155,8 @@ final class AgentsPage: CardPage {
         for view in [planOffTitle, planOffDetail, planButton] as [NSView] { planOff.addSubview(view) }
         planOffTitle.text = NSAttributedString(string: "Plan limits", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.ink])
         planOffDetail.text = Theme.caption("Uses the sign-in Claude Code and Codex keep on this Mac, sent only to their own company", color: Theme.inkSecondary)
-        plansTitle.text = DashboardView.titleText("Plan limits", "")
-        list.title.text = DashboardView.titleText("Running", "")
+        plansTitle.text = cardTitle("Plan limits", "")
+        list.title.text = cardTitle("Running", "")
         list.empty.text = Theme.caption("No coding agents running. Wisp knows Claude Code, Codex, Cursor Agent, Gemini CLI, Aider, OpenCode and more")
         caption.text = Theme.caption("Looking for agents…")
         running.figure.format = { (String(format: "%.0f", $0), "") }
@@ -247,7 +248,7 @@ final class AgentsPage: CardPage {
         memory.set(text: value, unit: unit)
         memory.set(note: "\(processes) processes between them")
         caption.text = Theme.caption(found.isEmpty ? "Nothing running" : "\(found.count) running · \(processes) processes")
-        list.title.text = DashboardView.titleText("Running", found.isEmpty ? "" : "\(found.count)")
+        list.title.text = cardTitle("Running", found.isEmpty ? "" : "\(found.count)")
         let home = NSHomeDirectory()
         let now = Date()
         let peak = max(found.map(\.cpu).max() ?? 0, 0.0001)
@@ -279,7 +280,7 @@ final class AgentsPage: CardPage {
             card.isHidden = index >= result.count
             if index < result.count { card.show(result[index], now: now) }
         }
-        plansTitle.text = DashboardView.titleText("Plan limits", result.isEmpty ? "" : "\(result.count)")
+        plansTitle.text = cardTitle("Plan limits", result.isEmpty ? "" : "\(result.count)")
         if result.isEmpty { caption.text = Theme.caption("No Claude Code or Codex sign-in found on this Mac") }
         relayout()
     }

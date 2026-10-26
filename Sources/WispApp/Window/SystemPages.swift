@@ -48,6 +48,7 @@ final class ListCard: CardView {
 
 @MainActor
 final class SensorsCardPage: CardPage {
+    override var pageTint: NSColor { PageID.sensors.tint }
     private let (titleLine, caption): (TextLine, TextLine)
     private let temperatures = ListCard()
     private let fans = ListCard()
@@ -65,9 +66,9 @@ final class SensorsCardPage: CardPage {
     override func loadView() {
         super.loadView()
         for view in [titleLine, caption, temperatures, fans, accessories] as [NSView] { canvas.addSubview(view) }
-        temperatures.title.text = DashboardView.titleText("Temperatures", "")
-        fans.title.text = DashboardView.titleText("Fans", "")
-        accessories.title.text = DashboardView.titleText("Accessories", "")
+        temperatures.title.text = cardTitle("Temperatures", "")
+        fans.title.text = cardTitle("Fans", "")
+        accessories.title.text = cardTitle("Accessories", "")
         temperatures.empty.text = Theme.caption("No temperature sensors found")
         fans.empty.text = Theme.caption("This Mac has no fans")
         accessories.empty.text = Theme.caption("No Bluetooth keyboard, mouse or trackpad reports a battery")
@@ -207,19 +208,21 @@ final class DeviceCard: CardView {
 
 @MainActor
 final class SoundPage: CardPage {
+    override var pageTint: NSColor { PageID.sound.tint }
     private let output = DeviceCard()
     private let input = DeviceCard()
     private let apps = ListCard()
-    private let caption = TextLine()
+    private lazy var titleLines = heading("Sound")
+    private var caption: TextLine { titleLines.1 }
     private var checkedAt = Date.distantPast
     private var devices: [AudioDevice] = []
 
     override func loadView() {
         super.loadView()
-        for view in [caption, output, input, apps] as [NSView] { canvas.addSubview(view) }
-        output.title.text = DashboardView.titleText("Output", "")
-        input.title.text = DashboardView.titleText("Input", "")
-        apps.title.text = DashboardView.titleText("Apps with sound open", "")
+        for view in [output, input, apps] as [NSView] { canvas.addSubview(view) }
+        output.title.text = cardTitle("Output", "")
+        input.title.text = cardTitle("Input", "")
+        apps.title.text = cardTitle("Apps with sound open", "")
         apps.empty.text = Theme.caption("No app has sound open")
         for (card, isInput) in [(output, false), (input, true)] {
             card.slider.target = self
@@ -233,10 +236,10 @@ final class SoundPage: CardPage {
     override func arrange(width: CGFloat) -> CGFloat {
         let inner = width - margin * 2
         let half = (inner - gap) / 2
-        output.frame = NSRect(x: margin, y: margin, width: half, height: 90)
-        input.frame = NSRect(x: margin + half + gap, y: margin, width: half, height: 90)
-        caption.frame = NSRect(x: margin + 2, y: output.frame.maxY + 12, width: inner, height: 14)
-        apps.frame = NSRect(x: margin, y: caption.frame.maxY + 10, width: inner, height: apps.wantedHeight)
+        let top = place(titleLines.0, titleLines.1, width: width)
+        output.frame = NSRect(x: margin, y: top, width: half, height: 90)
+        input.frame = NSRect(x: margin + half + gap, y: top, width: half, height: 90)
+        apps.frame = NSRect(x: margin, y: output.frame.maxY + gap, width: inner, height: apps.wantedHeight)
         return apps.frame.maxY + margin
     }
 
@@ -325,6 +328,7 @@ final class SoundPage: CardPage {
 
 @MainActor
 final class BluetoothPage: CardPage {
+    override var pageTint: NSColor { PageID.bluetooth.tint }
     private let header = CardView()
     private let headline = TextLine()
     private let detail = TextLine()
@@ -332,19 +336,21 @@ final class BluetoothPage: CardPage {
     private var asking = false
     private let list = ListCard()
     private var checkedAt = Date.distantPast
+    private lazy var titleLines = heading("Bluetooth")
 
     override func loadView() {
         super.loadView()
+        titleLines.1.text = Theme.caption("Paired devices and their batteries")
         canvas.addSubview(header)
         canvas.addSubview(list)
         for view in [headline, detail, settingsButton] as [NSView] { header.addSubview(view) }
-        list.title.text = DashboardView.titleText("Devices", "")
+        list.title.text = cardTitle("Devices", "")
         list.empty.text = Theme.caption(Bluetooth.allowed ? "No paired devices" : "Wisp needs Bluetooth access to list devices")
     }
 
     override func arrange(width: CGFloat) -> CGFloat {
         let inner = width - margin * 2
-        header.frame = NSRect(x: margin, y: margin, width: inner, height: 76)
+        header.frame = NSRect(x: margin, y: place(titleLines.0, titleLines.1, width: width), width: inner, height: 76)
         headline.frame = NSRect(x: 20, y: 16, width: inner - 220, height: 22)
         detail.frame = NSRect(x: 20, y: 42, width: inner - 220, height: 14)
         let size = settingsButton.intrinsicContentSize
