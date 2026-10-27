@@ -74,8 +74,8 @@ class CardView: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     /// Set on cards that open something. They answer the pointer: the border
-    /// darkens and a soft shadow comes up on hover, and the card gives a little
-    /// while pressed.
+    /// darkens on hover and the card gives a little while pressed. No shadow: a
+    /// shadow on every card makes Core Animation render them inside the app.
     var onClick: (() -> Void)? { didSet { updateTrackingAreas() } }
     private var hovering = false
     private var tracking: NSTrackingArea?
@@ -87,13 +87,6 @@ class CardView: NSView {
         layer.borderWidth = stroke == .clear ? 0 : 1
         layer.cornerRadius = radius
         layer.cornerCurve = .continuous
-        if onClick != nil {
-            layer.shadowColor = NSColor.black.cgColor
-            layer.shadowRadius = 10
-            layer.shadowOffset = CGSize(width: 0, height: -3)
-            // A path keeps the shadow off the offscreen pass.
-            layer.shadowPath = CGPath(roundedRect: bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
-        }
     }
 
     override func updateTrackingAreas() {
@@ -113,19 +106,13 @@ class CardView: NSView {
         guard onClick != nil, on != hovering, let layer else { return }
         hovering = on
         let from = layer.presentation()?.borderColor ?? layer.borderColor
-        let shadowFrom = layer.presentation()?.shadowOpacity ?? layer.shadowOpacity
         updateLayer()
-        layer.shadowOpacity = on ? 0.07 : 0
         guard !Theme.reduceMotion else { return }
         let border = CABasicAnimation(keyPath: "borderColor")
         border.fromValue = from
-        let shadow = CABasicAnimation(keyPath: "shadowOpacity")
-        shadow.fromValue = shadowFrom
-        for animation in [border, shadow] {
-            animation.duration = on ? 0.14 : 0.24
-            animation.timingFunction = Motion.ease
-            layer.add(animation, forKey: animation.keyPath)
-        }
+        border.duration = on ? 0.14 : 0.24
+        border.timingFunction = Motion.ease
+        layer.add(border, forKey: "borderColor")
     }
 
     override func mouseDown(with event: NSEvent) {
