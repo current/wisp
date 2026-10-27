@@ -62,6 +62,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
     override func loadView() {
         for column in Column.allCases {
             let tableColumn = NSTableColumn(identifier: .init(column.rawValue))
+            tableColumn.headerCell = AppHeaderCell(textCell: column.title)
             tableColumn.title = column.title
             tableColumn.width = column.width
             tableColumn.minWidth = column == .name ? 140 : 56
@@ -83,6 +84,11 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         outline.autosaveTableColumns = true
         outline.autosaveExpandedItems = false
         outline.rowHeight = 30
+        outline.style = .plain
+        outline.selectionHighlightStyle = .regular
+        outline.focusRingType = .none
+        let header = AppHeaderView(frame: NSRect(x: 0, y: 0, width: 600, height: 30))
+        outline.headerView = header
         outline.sortDescriptors = [NSSortDescriptor(key: Column.cpu.rawValue, ascending: false)]
         outline.target = self
         outline.doubleAction = #selector(doubleClicked)
@@ -106,23 +112,25 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
 
         summary.font = Theme.mono(10)
         summary.textColor = Theme.inkTertiary
+        summary.lineBreakMode = .byTruncatingTail
         let title = Style.label("Apps", font: Theme.sans(20, .medium), color: Theme.ink)
-        let bar = Style.stack([title, summary], axis: .horizontal, spacing: Style.pad)
-        bar.alignment = .firstBaseline
+        // The same heading as the card pages: the title, and a caption under it.
+        let bar = Style.stack([title, summary], axis: .vertical, spacing: 6)
+        bar.alignment = .leading
         let root = GroundView()
         root.addSubview(bar)
         root.addSubview(search)
         root.addSubview(card)
         NSLayoutConstraint.activate([
             bar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 22),
-            bar.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
+            bar.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
             search.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
             search.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             search.widthAnchor.constraint(equalToConstant: 240),
             bar.trailingAnchor.constraint(lessThanOrEqualTo: search.leadingAnchor, constant: -Style.pad),
             card.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             card.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            card.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: 14),
+            card.topAnchor.constraint(equalTo: root.topAnchor, constant: 78),
             card.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
             scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 6),
             scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -6),
@@ -209,7 +217,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
 
         // Counts move rarely; a label that changes every tick re-lays out the whole window.
         let text = "\(roots.count) apps, \(table.processes.count / 10 * 10)+ processes"
-        if summary.stringValue != text { summary.stringValue = text }
+        if summary.stringValue != text.uppercased() { summary.attributedStringValue = Theme.caption(text) }
     }
 
     private var lastOrder: [String] = []
@@ -312,6 +320,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         guard let first = outlineView.sortDescriptors.first, let column = Column(rawValue: first.key ?? "") else { return }
         sortColumn = column
         ascending = first.ascending
+        (outline.headerView as? AppHeaderView)?.sorted = (column.rawValue, ascending)
         forceSort = true
         rebuild()
     }
@@ -369,6 +378,33 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
             }
         }
         return (text, faint)
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+        (outlineView.makeView(withIdentifier: AppRowView.identifier, owner: nil) as? AppRowView) ?? AppRowView()
+    }
+
+    /// With the drawer open the page is narrow; the least used columns step aside
+    /// so CPU and memory stay in view.
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        let width = view.bounds.width
+        for column in outline.tableColumns {
+            switch Column(rawValue: column.identifier.rawValue) {
+            case .network?, .disk?: column.isHidden = width < 700
+            case .energy?: column.isHidden = width < 560
+            default: break
+            }
+        }
+        (outline.headerView as? AppHeaderView)?.sorted = (sortColumn.rawValue, ascending)
+        // The name column takes whatever the figures leave, so nothing runs off the card.
+        guard let nameColumn = outline.tableColumns.first(where: { $0.identifier.rawValue == Column.name.rawValue }),
+              let clip = outline.enclosingScrollView?.contentView else { return }
+        let visible = outline.tableColumns.filter { !$0.isHidden }
+        let others = visible.filter { $0 !== nameColumn }.reduce(0) { $0 + $1.width }
+        let spacing = outline.intercellSpacing.width * CGFloat(visible.count)
+        let fit = max(nameColumn.minWidth, floor(clip.bounds.width - others - spacing - 2))
+        if abs(nameColumn.width - fit) > 0.5 { nameColumn.width = fit }
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
@@ -454,6 +490,57 @@ final class NameCell: NSTableCellView {
             note.frame = .zero
         }
     }
+}
+
+/// Selection as a soft rounded wash in the accent colour, not the system's solid
+/// bar; the row text keeps its colours.
+final class AppRowView: NSTableRowView {
+    static let identifier = NSUserInterfaceItemIdentifier("WispRow")
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        identifier = Self.identifier
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isEmphasized: Bool { get { false } set {} }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard selectionHighlightStyle != .none else { return }
+        Theme.selectionWash.setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 8, yRadius: 8).fill()
+    }
+}
+
+/// Column titles in the app's caption style, with an arrow on the sorted one.
+final class AppHeaderView: NSTableHeaderView {
+    var sorted: (String, Bool) = ("", false) { didSet { if sorted != oldValue { needsDisplay = true } } }
+
+    override func draw(_ dirtyRect: NSRect) {
+        Theme.card.setFill()
+        bounds.fill()
+        guard let table = tableView else { return }
+        for (index, column) in table.tableColumns.enumerated() where !column.isHidden {
+            let rect = headerRect(ofColumn: index).insetBy(dx: 6, dy: 0)
+            let active = column.identifier.rawValue == sorted.0
+            let title = column.title + (active ? (sorted.1 ? " ↑" : " ↓") : "")
+            let text = NSMutableAttributedString(attributedString: Theme.caption(title, color: active ? Theme.ink : Theme.inkTertiary, size: 9.5))
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = index == 0 ? .left : .right
+            text.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: text.length))
+            let height = text.size().height
+            text.draw(in: NSRect(x: rect.minX, y: (bounds.height - height) / 2, width: rect.width, height: height))
+        }
+        Theme.rule.setFill()
+        NSRect(x: 8, y: bounds.height - 1, width: bounds.width - 16, height: 1).fill()
+    }
+}
+
+/// Header cells draw nothing on their own; the header view draws every title.
+final class AppHeaderCell: NSTableHeaderCell {
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {}
+    override func drawSortIndicator(withFrame cellFrame: NSRect, in controlView: NSView, ascending: Bool, priority: Int) {}
 }
 
 /// The grey ground behind pages that are not card canvases.
