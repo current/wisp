@@ -9,8 +9,10 @@ class CardPage: NSViewController, Page {
     unowned let delegate: AppDelegate
     let scroll = NSScrollView()
     let canvas = Canvas()
-    let margin: CGFloat = 20
+    let margin: CGFloat = 24
     let gap: CGFloat = 12
+    /// The toolbar floats over the top of the page; content starts under it and scrolls beneath.
+    static let topInset: CGFloat = Toolbar.height + 4 - 24
     private var arrangedWidth: CGFloat = 0
 
     final class Canvas: DrawnView {
@@ -36,6 +38,8 @@ class CardPage: NSViewController, Page {
         scroll.hasVerticalScroller = true
         // No title bar to keep clear of; insets would start the page scrolled.
         scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsets(top: Self.topInset, left: 0, bottom: 0, right: 0)
+        scroll.scrollerInsets = NSEdgeInsets(top: Toolbar.height - 8, left: 0, bottom: 0, right: 0)
         scroll.autohidesScrollers = true
         scroll.drawsBackground = true
         scroll.backgroundColor = Theme.ground
@@ -55,7 +59,7 @@ class CardPage: NSViewController, Page {
         let first = arrangedWidth == 0
         arrangedWidth = width
         let before = first ? [:] : Dictionary(uniqueKeysWithValues: canvas.subviews.map { (ObjectIdentifier($0), $0.frame.origin) })
-        let height = max(arrange(width: width), scroll.contentSize.height)
+        let height = max(arrange(width: width), scroll.contentSize.height - Self.topInset)
         glide(from: before)
         if canvas.frame.size != NSSize(width: width, height: height) {
             canvas.frame = NSRect(x: 0, y: 0, width: width, height: height)
@@ -74,7 +78,7 @@ class CardPage: NSViewController, Page {
     }
 
     func scrollToTop() {
-        scroll.contentView.scroll(to: .zero)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: -Self.topInset))
         scroll.reflectScrolledClipView(scroll.contentView)
     }
 
@@ -137,21 +141,20 @@ class CardPage: NSViewController, Page {
         return top + CGFloat(rows) * height + CGFloat(rows - 1) * gap
     }
 
-    /// Page heading: a title and a caption line under it.
+    /// Page heading: a title and a caption line under it. They live in the toolbar.
+    private(set) var headingLines: (TextLine, TextLine)?
+
     func heading(_ title: String) -> (TextLine, TextLine) {
-        let titleLine = TextLine(NSAttributedString(string: title, attributes: [.font: Theme.sans(20, .medium), .foregroundColor: Theme.ink]))
-        let caption = TextLine()
-        canvas.addSubview(titleLine)
-        canvas.addSubview(caption)
-        return (titleLine, caption)
+        let lines = (TextLine(Toolbar.title(title)), TextLine())
+        headingLines = lines
+        return lines
     }
 
-    /// Places a heading from `heading(_:)` at the top. Returns where the cards start.
-    func place(_ title: TextLine, _ caption: TextLine, width: CGFloat) -> CGFloat {
-        title.frame = NSRect(x: margin + 2, y: margin, width: width - margin * 2, height: 26)
-        caption.frame = NSRect(x: margin + 2, y: margin + 30, width: width - margin * 2, height: 14)
-        return margin + 58
-    }
+    var toolbarHeading: (NSView, NSView)? { headingLines.map { ($0.0, $0.1) } }
+    var toolbarItems: [NSView] { [] }
+
+    /// Headings sit in the toolbar now; the cards start at the top margin.
+    func place(_ title: TextLine, _ caption: TextLine, width: CGFloat) -> CGFloat { margin }
 }
 
 /// A small card with a caption, one figure and a line of context under it, and
@@ -241,7 +244,8 @@ final class ChartCard: CardView {
         caption.frame = NSRect(x: 20, y: 14, width: caption.naturalWidth + 4, height: 26)
         state.frame = NSRect(x: caption.frame.maxX + 8, y: 17, width: state.naturalWidth, height: 18)
         let rangeWidth = range.naturalWidth
-        range.frame = NSRect(x: 20 + width - rangeWidth, y: 14, width: rangeWidth, height: 26)
+        // The switch normally lives in the toolbar; place it only while it is still here.
+        if range.superview === self { range.frame = NSRect(x: 20 + width - rangeWidth, y: 14, width: rangeWidth, height: 26) }
         figure.frame = NSRect(x: 20, y: 40, width: width / 2, height: 50)
         meta.frame = NSRect(x: 20, y: 94, width: width, height: 14)
         legend.frame = NSRect(x: 20 + width / 2, y: 60, width: width / 2, height: 14)
@@ -264,9 +268,21 @@ final class TimeChart: BitmapView {
     var step: Double = 2
     var format: (Float) -> String = { String(format: "%.0f", $0) }
     var names = ("", "")
+    /// Bars: `primary` is the whole bar, `secondary` the part of it drawn on top in its own colour
+    /// (CPU total with the system share). Line: two lines, the primary filled.
+    enum Style { case line, bars }
+    var style: Style = .line { didSet { needsDisplay = true } }
+    /// The time labels under the plot; compact cards leave them off.
+    var showsTimeAxis = true { didSet { needsDisplay = true } }
+    /// The value at the bottom of the scale, for series that never reach zero (memory, temperature).
+    var bottom: Float = 0 { didSet { needsDisplay = true } }
+    /// Width of the label column on the right.
+    var axisWidth: CGFloat = 40
     private var hoverIndex: Int?
 
-    private var plot: NSRect { NSRect(x: 0, y: 6, width: bounds.width - 52, height: bounds.height - 30) }
+    private var plot: NSRect {
+        NSRect(x: 0, y: 6, width: bounds.width - axisWidth - 6, height: bounds.height - (showsTimeAxis ? 30 : 12))
+    }
 
     private var top: Float {
         if let ceiling { return ceiling }
@@ -291,19 +307,20 @@ final class TimeChart: BitmapView {
             return
         }
         let top = self.top
-        let axisFont = Theme.mono(9)
-        // Grid at 0, half and top, with labels on the right.
+        let bottom = min(self.bottom, top * 0.99)
+        let axisFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        // Grid at the bottom, half and top, with labels on the right.
         for fraction: CGFloat in [0, 0.5, 1] {
             let y = rect.maxY - fraction * rect.height
             let path = NSBezierPath()
             path.move(to: NSPoint(x: rect.minX, y: y + 0.5))
             path.line(to: NSPoint(x: rect.maxX, y: y + 0.5))
             if fraction > 0 { path.setLineDash([2, 3], count: 2, phase: 0) }
-            (fraction == 0 ? Theme.cardBorder : Theme.rule).setStroke()
+            Theme.rule.setStroke()
             path.lineWidth = 1
             path.stroke()
-            let label = format(top * Float(fraction)) as NSString
-            label.draw(at: NSPoint(x: rect.maxX + 8, y: y - 6), withAttributes: [.font: axisFont, .foregroundColor: Theme.inkTertiary])
+            let label = format(bottom + (top - bottom) * Float(fraction)) as NSString
+            label.draw(at: NSPoint(x: rect.maxX + 6, y: y - 7), withAttributes: [.font: axisFont, .foregroundColor: Theme.inkSecondary])
         }
         let count = max(primary.count, secondary.count)
         guard count > 1 else {
@@ -311,8 +328,11 @@ final class TimeChart: BitmapView {
             return
         }
         let dx = rect.width / CGFloat(count - 1)
-        func y(_ value: Float) -> CGFloat { rect.maxY - CGFloat(min(1, max(0, value / top))) * rect.height }
+        func y(_ value: Float) -> CGFloat { rect.maxY - CGFloat(min(1, max(0, (value - bottom) / (top - bottom)))) * rect.height }
 
+        if style == .bars {
+            drawBars(in: rect, y: y)
+        } else {
         for (values, color, fill) in [(secondary, secondaryColor, false), (primary, primaryColor, true)] where values.count > 1 {
             let offset = count - values.count
             var segment: [NSPoint] = []
@@ -326,7 +346,7 @@ final class TimeChart: BitmapView {
                     area.line(to: NSPoint(x: segment.last!.x, y: rect.maxY))
                     area.line(to: NSPoint(x: segment[0].x, y: rect.maxY))
                     area.close()
-                    NSGradient(starting: color.withAlphaComponent(0.14), ending: color.withAlphaComponent(0))?.draw(in: area, angle: -90)
+                    NSGradient(starting: color.withAlphaComponent(0.22), ending: color.withAlphaComponent(0.02))?.draw(in: area, angle: -90)
                 }
                 color.setStroke()
                 line.lineWidth = 1.5
@@ -340,13 +360,16 @@ final class TimeChart: BitmapView {
             }
             flush()
         }
+        }
 
         // Time axis: the oldest point and now.
-        let span = Double(count - 1) * step
-        let oldest = Theme.caption(Self.ago(span), size: 9)
-        oldest.draw(at: NSPoint(x: rect.minX, y: rect.maxY + 8))
-        let now = Theme.caption("Now", size: 9)
-        now.draw(at: NSPoint(x: rect.maxX - now.size().width, y: rect.maxY + 8))
+        if showsTimeAxis {
+            let span = Double(count - 1) * step
+            let oldest = Theme.caption(Self.ago(span), size: 9)
+            oldest.draw(at: NSPoint(x: rect.minX, y: rect.maxY + 8))
+            let now = Theme.caption("Now", size: 9)
+            now.draw(at: NSPoint(x: rect.maxX - now.size().width, y: rect.maxY + 8))
+        }
 
         if let index = hoverIndex, index < count {
             let x = rect.minX + CGFloat(index) * dx
@@ -372,6 +395,29 @@ final class TimeChart: BitmapView {
             Theme.tooltip.setFill()
             NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6).fill()
             text.draw(at: NSPoint(x: box.minX + 8, y: box.minY + (22 - size.height) / 2), withAttributes: attributes)
+        }
+    }
+
+    /// Stacked bars, newest on the right, as many as fit at a comfortable width.
+    private func drawBars(in rect: NSRect, y: (Float) -> CGFloat) {
+        let pitch: CGFloat = 12.5, width: CGFloat = 9
+        let slots = max(1, Int((rect.width + pitch - width) / pitch))
+        let totals = Array(primary.suffix(slots))
+        let tops = Array(secondary.suffix(totals.count))
+        let start = rect.maxX - CGFloat(totals.count - 1) * pitch - width
+        for (index, total) in totals.enumerated() where !total.isNaN {
+            let x = start + CGFloat(index) * pitch
+            let full = NSRect(x: x, y: y(total), width: width, height: max(2, rect.maxY - y(total)))
+            let share = index < tops.count && !tops[index].isNaN ? min(tops[index], total) : 0
+            let upper = NSRect(x: x, y: full.minY, width: width, height: max(0, rect.maxY - y(share)))
+            let lower = NSRect(x: x, y: upper.maxY, width: width, height: max(0, full.maxY - upper.maxY))
+            primaryColor.setFill()
+            NSBezierPath(roundedRect: lower, xRadius: 2, yRadius: 2).fill()
+            if upper.height > 0.5 {
+                secondaryColor.setFill()
+                NSBezierPath(roundedRect: upper, xRadius: 2, yRadius: 2).fill()
+                if lower.height > 2 { NSRect(x: x, y: upper.maxY - 2, width: width, height: 2).fill() }
+            }
         }
     }
 

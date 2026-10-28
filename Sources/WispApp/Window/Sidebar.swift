@@ -5,21 +5,21 @@ extension PageID {
     /// Each page's colour, used for its icon tile here and its accents on the page.
     var tint: NSColor {
         switch self {
-        case .overview: return Theme.dynamic(0x3A4ED6, 0x7383F0)
-        case .apps: return Theme.dynamic(0x5B6472, 0x9AA3B2)
-        case .cpu: return Theme.dynamic(0x2F6BF0, 0x5C8DF6)
-        case .memory: return Theme.dynamic(0x7B61E6, 0x9C88F2)
-        case .gpu: return Theme.dynamic(0xD9487A, 0xEB6F98)
-        case .neural: return Theme.dynamic(0x9B57D6, 0xB77CEB)
-        case .energy: return Theme.dynamic(0xE08A1E, 0xF0A84A)
-        case .disk: return Theme.dynamic(0xE0662A, 0xF0864E)
-        case .network: return Theme.dynamic(0x1F9D72, 0x4ACB98)
-        case .sound: return Theme.dynamic(0xE0457B, 0xF06A97)
-        case .bluetooth: return Theme.dynamic(0x2F7CF6, 0x5C9BF8)
-        case .sensors: return Theme.dynamic(0xE2553A, 0xF0785E)
-        case .ports: return Theme.dynamic(0x2E95D3, 0x5CB2E6)
-        case .docker: return Theme.dynamic(0x1FA2B4, 0x48C2D2)
-        case .agents: return Theme.dynamic(0x6E56E0, 0x9480F0)
+        case .overview: return Theme.blue
+        case .apps: return Theme.gray
+        case .cpu: return Theme.blue
+        case .memory: return Theme.indigo
+        case .gpu: return Theme.pink
+        case .neural: return Theme.purple
+        case .energy: return Theme.orange
+        case .disk: return Theme.cyan
+        case .network: return Theme.green
+        case .sound: return Theme.pink
+        case .bluetooth: return Theme.blue
+        case .sensors: return Theme.orange
+        case .ports: return Theme.blue
+        case .docker: return Theme.teal
+        case .agents: return Theme.purple
         }
     }
 
@@ -31,6 +31,35 @@ extension PageID {
 /// A small rounded square in a page's colour with its symbol on it.
 enum IconTile {
     private static var cache: [String: NSImage] = [:]
+
+    /// A bare SF Symbol in a colour, rasterised once like the tiles.
+    static func glyph(_ symbol: String, tint: NSColor, size: CGFloat = 16, appearance: NSAppearance) -> NSImage {
+        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let key = "glyph|\(symbol)|\(size)|\(dark)|\(tint.hash)"
+        if let image = cache[key] { return image }
+        let image = NSImage(size: NSSize(width: size, height: size))
+        for scale in [2, 1] as [CGFloat] {
+            let pixels = Int(size * scale)
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8,
+                                             samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                             bytesPerRow: 0, bitsPerPixel: 0) else { continue }
+            rep.size = NSSize(width: size, height: size)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            appearance.performAsCurrentDrawingAppearance {
+                let config = NSImage.SymbolConfiguration(pointSize: size * 0.82, weight: .regular)
+                    .applying(.init(paletteColors: [tint]))
+                if let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
+                    let s = glyph.size
+                    glyph.draw(in: NSRect(x: (size - s.width) / 2, y: (size - s.height) / 2, width: s.width, height: s.height))
+                }
+            }
+            NSGraphicsContext.restoreGraphicsState()
+            image.addRepresentation(rep)
+        }
+        cache[key] = image
+        return image
+    }
 
     static func image(_ symbol: String, tint: NSColor, size: CGFloat = 22, solid: Bool = false, appearance: NSAppearance) -> NSImage {
         let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
@@ -85,25 +114,28 @@ final class NavRow: DrawnView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// A figure worth noticing (memory under pressure, a hot sensor) shows in orange.
+    var valueWarns = false { didSet { if valueWarns != oldValue { needsDisplay = true } } }
+
     override func draw(_ dirtyRect: NSRect) {
         if hovering, !selected {
-            Theme.ink.withAlphaComponent(0.05).setFill()
+            Theme.ink.withAlphaComponent(0.04).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
         }
-        let tile = IconTile.image(page.symbol, tint: page.tint, solid: selected, appearance: effectiveAppearance)
-        tile.draw(in: NSRect(x: 8, y: (bounds.height - 22) / 2, width: 22, height: 22), from: .zero, operation: .sourceOver,
+        // Tahoe source list: a plain symbol in the accent colour, the name, the figure.
+        IconTile.glyph(page.symbol, tint: Theme.blue, size: 16, appearance: effectiveAppearance)
+            .draw(in: NSRect(x: 9, y: (bounds.height - 16) / 2, width: 16, height: 16), from: .zero, operation: .sourceOver,
                   fraction: 1, respectFlipped: true, hints: nil)
-        let valueAttributes: [NSAttributedString.Key: Any] = [.font: Theme.mono(10, .regular), .foregroundColor: Theme.inkTertiary]
+        let valueAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular),
+                                                              .foregroundColor: valueWarns ? Theme.warn : Theme.inkSecondary]
         let valueWidth = value.isEmpty ? 0 : ceil((value as NSString).size(withAttributes: valueAttributes).width)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
-        (page.title as NSString).draw(with: NSRect(x: 40, y: (bounds.height - 17) / 2, width: bounds.width - 52 - valueWidth, height: 17),
+        (page.title as NSString).draw(with: NSRect(x: 33, y: (bounds.height - 16) / 2, width: bounds.width - 45 - valueWidth, height: 16),
                                       options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                      attributes: [.font: Theme.sans(13, selected ? .semibold : .regular),
-                                                   .foregroundColor: selected ? Theme.ink : Theme.ink.withAlphaComponent(0.82),
-                                                   .paragraphStyle: paragraph])
+                                      attributes: [.font: Theme.sans(13), .foregroundColor: Theme.ink, .paragraphStyle: paragraph])
         if !value.isEmpty {
-            (value as NSString).draw(at: NSPoint(x: bounds.width - 10 - valueWidth, y: (bounds.height - 13) / 2), withAttributes: valueAttributes)
+            (value as NSString).draw(at: NSPoint(x: bounds.width - 8 - valueWidth, y: (bounds.height - 15) / 2), withAttributes: valueAttributes)
         }
     }
 
@@ -147,13 +179,13 @@ final class Sidebar: NSView {
     override init(frame: NSRect) {
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView()
-            glass.cornerRadius = 18
+            glass.cornerRadius = 16
             glass.style = .regular
             surface = glass
         } else {
             let card = CardView()
             card.fill = Theme.panel
-            card.radius = 18
+            card.radius = 16
             surface = card
         }
         super.init(frame: frame)
@@ -164,23 +196,16 @@ final class Sidebar: NSView {
             surface.addSubview(content)
         }
         content.wantsLayer = true
-        highlight.backgroundColor = NSColor.white.withAlphaComponent(0.92).cgColor
+        // The selection is a soft grey fill, as in a Tahoe source list.
         highlight.cornerRadius = 9
-        // A hairline instead of a shadow: a shadow on a layer that changes size
-        // would be worked out again inside the app on every frame of the move.
-        highlight.borderWidth = 0.5
-        highlight.borderColor = NSColor.black.withAlphaComponent(0.07).cgColor
         highlight.cornerCurve = .continuous
         highlight.opacity = 0
         content.layer?.addSublayer(highlight)
 
-        brand.text = NSAttributedString(string: "Wisp", attributes: [.font: Theme.sans(15, .semibold), .foregroundColor: Theme.ink])
-        machine.text = Theme.caption(Self.machineName(), size: 9)
-        content.addSubview(brand)
-        content.addSubview(machine)
         for (title, pages) in PageID.sections {
             if let title {
-                let header = TextLine(Theme.caption(title, size: 9.5))
+                let header = TextLine(NSAttributedString(string: title.prefix(1).uppercased() + title.dropFirst().lowercased(),
+                                                         attributes: [.font: Theme.sans(11, .semibold), .foregroundColor: Theme.inkSecondary]))
                 headers.append(header)
                 content.addSubview(header)
             } else {
@@ -216,24 +241,22 @@ final class Sidebar: NSView {
         surface.frame = bounds
         content.frame = surface.bounds
         let width = bounds.width
-        // Room for the window buttons, which sit over the sidebar.
-        brand.frame = NSRect(x: 18, y: 46, width: width - 36, height: 20)
-        machine.frame = NSRect(x: 18, y: 67, width: width - 36, height: 12)
-        var y: CGFloat = 92
+        // The first row sits under the window buttons, which live on the sidebar.
+        var y: CGFloat = 44
         var rowIndex = 0
         for (sectionIndex, (title, pages)) in PageID.sections.enumerated() {
             if title != nil {
-                y += 10
-                headers[sectionIndex].frame = NSRect(x: 18, y: y, width: width - 36, height: 14)
-                y += 20
+                y += 12
+                headers[sectionIndex].frame = NSRect(x: 19, y: y, width: width - 38, height: 14)
+                y += 18
             }
             for _ in pages {
-                rows[rowIndex].frame = NSRect(x: 8, y: y, width: width - 16, height: 30)
-                y += 30
+                rows[rowIndex].frame = NSRect(x: 10, y: y, width: width - 20, height: 28)
+                y += 28
                 rowIndex += 1
             }
         }
-        settingsRow.frame = NSRect(x: 8, y: bounds.height - 44, width: width - 16, height: 32)
+        settingsRow.frame = NSRect(x: 10, y: bounds.height - 38, width: width - 20, height: 28)
         // A short window hides the settings row rather than draw it over the pages.
         settingsRow.isHidden = y > bounds.height - 44
         placeHighlight(animated: false)
@@ -254,7 +277,7 @@ final class Sidebar: NSView {
         highlight.frame = to
         highlight.opacity = 1
         highlight.backgroundColor = (effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor.white.withAlphaComponent(0.12) : NSColor.white.withAlphaComponent(0.92)).cgColor
+            ? NSColor.white.withAlphaComponent(0.1) : NSColor.black.withAlphaComponent(0.075)).cgColor
         CATransaction.commit()
         guard animated, !Theme.reduceMotion, from.height > 0, abs(from.minY - to.minY) > 1 else { return }
         stretch(from: from, to: to)
@@ -304,7 +327,14 @@ final class Sidebar: NSView {
         if let net = s.network { values[.network] = Format.rate(net.receivedBytesPerSecond + net.sentBytesPerSecond) }
         if let disk = s.disk { values[.disk] = Format.rate(disk.readBytesPerSecond + disk.writeBytesPerSecond) }
         if let celsius = s.thermal?.cpuCelsius { values[.sensors] = Format.celsius(celsius) }
-        for row in rows { row.value = values[row.page] ?? "" }
+        for row in rows {
+            row.value = values[row.page] ?? ""
+            switch row.page {
+            case .memory: row.valueWarns = (s.memory?.pressure ?? .normal) != .normal
+            case .sensors: row.valueWarns = (s.thermal?.cpuCelsius ?? 0) >= 90
+            default: row.valueWarns = false
+            }
+        }
     }
 }
 
@@ -331,11 +361,11 @@ final class NavRowButton: DrawnView {
             Theme.ink.withAlphaComponent(0.05).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
         }
-        IconTile.image(symbol, tint: Theme.inkSecondary, appearance: effectiveAppearance)
-            .draw(in: NSRect(x: 8, y: (bounds.height - 22) / 2, width: 22, height: 22), from: .zero, operation: .sourceOver,
+        IconTile.glyph(symbol, tint: Theme.blue, size: 16, appearance: effectiveAppearance)
+            .draw(in: NSRect(x: 9, y: (bounds.height - 16) / 2, width: 16, height: 16), from: .zero, operation: .sourceOver,
                   fraction: 1, respectFlipped: true, hints: nil)
-        (title as NSString).draw(at: NSPoint(x: 40, y: (bounds.height - 17) / 2),
-                                 withAttributes: [.font: Theme.sans(13), .foregroundColor: Theme.ink.withAlphaComponent(0.82)])
+        (title as NSString).draw(at: NSPoint(x: 33, y: (bounds.height - 16) / 2),
+                                 withAttributes: [.font: Theme.sans(13), .foregroundColor: Theme.ink])
     }
 
     override func updateTrackingAreas() {

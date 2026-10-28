@@ -44,6 +44,9 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
     let outline = NSOutlineView()
     private let search = NSSearchField()
     private let summary = Style.secondary()
+    private let titleLabel = Style.label("Apps")
+    var toolbarHeading: (NSView, NSView)? { (titleLabel, summary) }
+    var toolbarItems: [NSView] { [search] }
     private var nodes: [String: Node] = [:]
     private var roots: [Node] = []
     private var sortColumn: Column = .cpu
@@ -107,30 +110,26 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
 
         search.placeholderString = "Filter apps and processes"
         search.delegate = self
-        search.translatesAutoresizingMaskIntoConstraints = false
+        search.translatesAutoresizingMaskIntoConstraints = true
         search.sendsSearchStringImmediately = true
 
-        summary.font = Theme.mono(10)
-        summary.textColor = Theme.inkTertiary
+        summary.font = Theme.sans(11)
+        summary.textColor = Theme.inkSecondary
         summary.lineBreakMode = .byTruncatingTail
-        let title = Style.label("Apps", font: Theme.sans(20, .medium), color: Theme.ink)
-        // The same heading as the card pages: the title, and a caption under it.
-        let bar = Style.stack([title, summary], axis: .vertical, spacing: 6)
-        bar.alignment = .leading
+        titleLabel.attributedStringValue = Toolbar.title("Apps")
+        // The toolbar places these by frame.
+        for view in [titleLabel, summary] as [NSView] { view.translatesAutoresizingMaskIntoConstraints = true }
+        search.isBordered = false
+        search.focusRingType = .none
+        (search.cell as? NSSearchFieldCell)?.isBezeled = false
+        (search.cell as? NSSearchFieldCell)?.drawsBackground = false
+        search.font = Theme.sans(13)
         let root = GroundView()
-        root.addSubview(bar)
-        root.addSubview(search)
         root.addSubview(card)
         NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 22),
-            bar.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
-            search.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            search.centerYAnchor.constraint(equalTo: title.centerYAnchor),
-            search.widthAnchor.constraint(equalToConstant: 240),
-            bar.trailingAnchor.constraint(lessThanOrEqualTo: search.leadingAnchor, constant: -Style.pad),
-            card.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
-            card.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            card.topAnchor.constraint(equalTo: root.topAnchor, constant: 78),
+            card.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
+            card.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
+            card.topAnchor.constraint(equalTo: root.topAnchor, constant: Toolbar.height + 4),
             card.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
             scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 6),
             scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -6),
@@ -217,7 +216,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
 
         // Counts move rarely; a label that changes every tick re-lays out the whole window.
         let text = "\(roots.count) apps, \(table.processes.count / 10 * 10)+ processes"
-        if summary.stringValue != text.uppercased() { summary.attributedStringValue = Theme.caption(text) }
+        if summary.stringValue != text { summary.stringValue = text }
     }
 
     private var lastOrder: [String] = []

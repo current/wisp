@@ -54,9 +54,10 @@ final class SensorsCardPage: CardPage {
     private let fans = ListCard()
     private let accessories = ListCard()
     private var accessoriesAt = Date.distantPast
+    override var toolbarHeading: (NSView, NSView)? { (titleLine, caption) }
 
     override init(delegate: AppDelegate) {
-        let title = TextLine(NSAttributedString(string: "Sensors", attributes: [.font: Theme.sans(20, .medium), .foregroundColor: Theme.ink]))
+        let title = TextLine(Toolbar.title("Sensors"))
         (titleLine, caption) = (title, TextLine())
         super.init(delegate: delegate)
     }
@@ -65,7 +66,7 @@ final class SensorsCardPage: CardPage {
 
     override func loadView() {
         super.loadView()
-        for view in [titleLine, caption, temperatures, fans, accessories] as [NSView] { canvas.addSubview(view) }
+        for view in [temperatures, fans, accessories] as [NSView] { canvas.addSubview(view) }
         temperatures.title.text = cardTitle("Temperatures", "")
         fans.title.text = cardTitle("Fans", "")
         accessories.title.text = cardTitle("Accessories", "")
@@ -78,7 +79,7 @@ final class SensorsCardPage: CardPage {
         let inner = width - margin * 2
         titleLine.frame = NSRect(x: margin + 2, y: margin, width: 200, height: 26)
         caption.frame = NSRect(x: margin + 2, y: margin + 30, width: inner, height: 14)
-        var y = margin + 58
+        var y = margin
         let half = (inner - gap) / 2
         temperatures.frame = NSRect(x: margin, y: y, width: width > 900 ? half : inner, height: temperatures.wantedHeight)
         if width > 900 {

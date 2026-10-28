@@ -84,7 +84,7 @@ class CardView: NSView {
         guard let layer else { return }
         layer.backgroundColor = fill.cgColor
         layer.borderColor = (hovering ? Theme.cardBorderHover : stroke).cgColor
-        layer.borderWidth = stroke == .clear ? 0 : 1
+        layer.borderWidth = stroke == .clear ? 0 : 0.5
         layer.cornerRadius = radius
         layer.cornerCurve = .continuous
     }
@@ -464,6 +464,13 @@ final class BigNumber: DrawnView {
 
     private var laidOutSize = CGSize.zero
 
+    /// Width of the figure and its unit as drawn, for placing something after it.
+    var naturalWidth: CGFloat {
+        let text = drawn.0.isEmpty ? current : drawn
+        let unit = text.1.isEmpty ? 0 : ceil(NSAttributedString(string: text.1, attributes: [.font: unitFont]).size().width) + 4
+        return width(text.0, fit(text).font) + unit
+    }
+
     override func layout() {
         super.layout()
         // Only a new size needs a new bitmap; a parent's layout pass must not cut a pop short.
@@ -497,28 +504,41 @@ final class Pill: DrawnView {
     var text = "" { didSet { if text != oldValue { needsDisplay = true } } }
     var dot = false
 
-    var naturalWidth: CGFloat { ceil(Theme.caption(text).size().width) + (dot ? 26 : 16) }
+    /// A leading symbol, such as the warning triangle.
+    var symbol: String? { didSet { needsDisplay = true } }
+
+    private var label: NSAttributedString {
+        NSAttributedString(string: text, attributes: [.font: Theme.sans(11, .semibold), .foregroundColor: colors.0])
+    }
+
+    var naturalWidth: CGFloat { ceil(label.size().width) + 16 + (symbol != nil || dot ? 15 : 0) }
 
     private var colors: (NSColor, NSColor) {
         switch tone {
         case .good: return (Theme.good, Theme.goodWash)
         case .warn: return (Theme.warn, Theme.warnWash)
         case .bad: return (Theme.bad, Theme.badWash)
-        case .neutral: return (Theme.inkSecondary, Theme.rule)
+        case .neutral: return (Theme.inkSecondary, Theme.fill)
         }
     }
 
+    /// A Tahoe badge: a capsule in a wash of its colour with semibold text.
     override func draw(_ dirtyRect: NSRect) {
         let (ink, wash) = colors
         wash.setFill()
         NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
         var x: CGFloat = 8
-        if dot {
+        if let symbol {
+            IconTile.glyph(symbol, tint: ink, size: 12, appearance: effectiveAppearance)
+                .draw(in: NSRect(x: 7, y: (bounds.height - 12) / 2, width: 12, height: 12), from: .zero, operation: .sourceOver,
+                      fraction: 1, respectFlipped: true, hints: nil)
+            x = 22
+        } else if dot {
             ink.setFill()
             NSBezierPath(ovalIn: NSRect(x: 9, y: bounds.midY - 3, width: 6, height: 6)).fill()
-            x = 19
+            x = 21
         }
-        let label = Theme.caption(text, color: ink)
+        let label = self.label
         let height = label.size().height
         label.draw(at: NSPoint(x: x, y: (bounds.height - height) / 2))
     }
@@ -623,7 +643,7 @@ final class Segmented: DrawnView {
         override func draw(_ dirtyRect: NSRect) {
             guard let owner else { return }
             for (index, rect) in owner.frames().enumerated() {
-                let label = Theme.caption(owner.items[index], color: index == owner.selected ? Theme.ink : Theme.inkTertiary)
+                let label = Segmented.label(owner.items[index], on: index == owner.selected)
                 let size = label.size()
                 label.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
             }
@@ -635,12 +655,7 @@ final class Segmented: DrawnView {
         self.items = items
         super.init(frame: .zero)
         wantsLayer = true
-        knob.cornerRadius = 9
         knob.cornerCurve = .continuous
-        knob.borderWidth = 1
-        knob.shadowOpacity = 0.08
-        knob.shadowRadius = 2
-        knob.shadowOffset = CGSize(width: 0, height: -1)
         layer?.addSublayer(knob)
         labels.owner = self
         addSubview(labels)
@@ -648,8 +663,20 @@ final class Segmented: DrawnView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Set when the control sits on a glass capsule, which draws the track.
+    var onGlass = false { didSet { needsDisplay = true } }
+
+    static func label(_ text: String, on: Bool) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [.font: Theme.sans(12.5, on ? .semibold : .regular),
+                                                     .foregroundColor: Theme.ink])
+    }
+
+    private static func itemWidth(_ text: String) -> CGFloat {
+        ceil(label(text, on: true).size().width) + 26
+    }
+
     var naturalWidth: CGFloat {
-        items.reduce(8) { $0 + ceil(Theme.caption($1).size().width) + 22 }
+        items.reduce(6) { $0 + Self.itemWidth($1) }
     }
 
     func select(_ index: Int, animated: Bool) {
@@ -661,9 +688,9 @@ final class Segmented: DrawnView {
     }
 
     fileprivate func frames() -> [NSRect] {
-        var x: CGFloat = 4
+        var x: CGFloat = 3
         return items.map { item in
-            let width = ceil(Theme.caption(item).size().width) + 22
+            let width = Self.itemWidth(item)
             defer { x += width }
             return NSRect(x: x, y: 3, width: width, height: bounds.height - 6)
         }
@@ -672,13 +699,15 @@ final class Segmented: DrawnView {
     private func placeKnob(animated: Bool) {
         let rects = frames()
         guard rects.indices.contains(selected) else { return }
+        // Tabs sliding: 0.25 s on a smooth-out curve.
         CATransaction.begin()
         CATransaction.setDisableActions(!animated || Theme.reduceMotion)
-        CATransaction.setAnimationDuration(0.22)
-        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        CATransaction.setAnimationDuration(0.25)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1))
         // The layer is not flipped; mirror the y origin.
         let r = rects[selected]
         knob.frame = CGRect(x: r.minX, y: bounds.height - r.maxY, width: r.width, height: r.height)
+        knob.cornerRadius = r.height / 2
         CATransaction.commit()
     }
 
@@ -700,16 +729,14 @@ final class Segmented: DrawnView {
 
     private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            knob.backgroundColor = Theme.card.cgColor
-            knob.borderColor = Theme.cardBorder.cgColor
+            knob.backgroundColor = Theme.ink.withAlphaComponent(0.08).cgColor
         }
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: bounds.height / 2, yRadius: bounds.height / 2)
-        Theme.cardBorder.setStroke()
-        outline.lineWidth = 1
-        outline.stroke()
+        guard !onGlass else { return }
+        Theme.ink.withAlphaComponent(0.045).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
     }
 
     override func mouseDown(with event: NSEvent) {

@@ -139,7 +139,7 @@ final class AgentsPage: CardPage {
     private let onSelect: (Selection?) -> Void
 
     init(delegate: AppDelegate, onSelect: @escaping (Selection?) -> Void) {
-        let title = TextLine(NSAttributedString(string: "Coding Agents", attributes: [.font: Theme.sans(20, .medium), .foregroundColor: Theme.ink]))
+        let title = TextLine(Toolbar.title("Coding Agents"))
         (titleLine, caption) = (title, TextLine())
         self.onSelect = onSelect
         super.init(delegate: delegate)
@@ -148,10 +148,11 @@ final class AgentsPage: CardPage {
     required init?(coder: NSCoder) { fatalError() }
 
     private var plansOn: Bool { delegate.settings.planUsage }
+    override var toolbarHeading: (NSView, NSView)? { (titleLine, caption) }
 
     override func loadView() {
         super.loadView()
-        for view in [titleLine, caption, running, cpu, memory, tokens, planOff, plansTitle, list] as [NSView] { canvas.addSubview(view) }
+        for view in [running, cpu, memory, tokens, planOff, plansTitle, list] as [NSView] { canvas.addSubview(view) }
         for view in [planOffTitle, planOffDetail, planButton] as [NSView] { planOff.addSubview(view) }
         planOffTitle.text = NSAttributedString(string: "Plan limits", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.ink])
         planOffDetail.text = Theme.caption("Uses the sign-in Claude Code and Codex keep on this Mac, sent only to their own company", color: Theme.inkSecondary)
@@ -167,9 +168,7 @@ final class AgentsPage: CardPage {
 
     override func arrange(width: CGFloat) -> CGFloat {
         let inner = width - margin * 2
-        titleLine.frame = NSRect(x: margin + 2, y: margin, width: inner, height: 26)
-        caption.frame = NSRect(x: margin + 2, y: margin + 30, width: inner, height: 14)
-        var y = grid([running, cpu, memory, tokens], top: margin + 58, width: width, columns: 4, height: 104) + gap
+        var y = grid([running, cpu, memory, tokens], top: margin, width: width, columns: 4, height: 104) + gap
         if plansOn {
             planOff.isHidden = true
             plansTitle.isHidden = planCards.isEmpty

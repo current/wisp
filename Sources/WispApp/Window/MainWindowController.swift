@@ -1,4 +1,5 @@
 import AppKit
+import IOKit
 import WispCore
 
 enum PageID: String, CaseIterable {
@@ -56,11 +57,17 @@ enum PageID: String, CaseIterable {
 protocol Page: NSViewController {
     /// Readings this page needs on top of the system basics and the process table.
     var demand: Demand { get }
+    var toolbarHeading: (NSView, NSView)? { get }
+    var toolbarItems: [NSView] { get }
     func update(system: SystemSnapshot)
     func update(table: ProcessTable)
 }
 
 extension Page {
+    /// The page's own heading for the toolbar (title and subtitle views), if it keeps one.
+    var toolbarHeading: (NSView, NSView)? { nil }
+    /// Controls the page puts in the toolbar, each on its own glass capsule.
+    var toolbarItems: [NSView] { [] }
     var demand: Demand { [] }
     func update(system: SystemSnapshot) {}
     func update(table: ProcessTable) {}
@@ -81,13 +88,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let root = WindowGround()
     private let sidebar = Sidebar()
     private let container = WindowGround()
+    private let toolbar = Toolbar()
     let drawer: AppDrawer
     private var drawerOpen = false
     private var pages: [PageID: Page] = [:]
     private var current: Page?
     private(set) var currentID: PageID = .apps
 
-    static let sidebarWidth: CGFloat = 228
+    static let sidebarWidth: CGFloat = 248
     static let drawerWidth: CGFloat = 400
     static let inset: CGFloat = 8
 
@@ -109,6 +117,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         root.wantsLayer = true
         container.wantsLayer = true
         root.addSubview(container)
+        root.addSubview(toolbar)
         root.addSubview(sidebar)
         root.addSubview(drawer)
         drawer.isHidden = true
@@ -122,6 +131,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if !window.setFrameUsingName("WispMain") { window.center() }
         // For screenshots while other apps are in use.
         if ProcessInfo.processInfo.environment["WISP_FLOAT"] != nil { window.level = .floating }
+        // WISP_SIZE=1440x900 sets the window size, for screenshots.
+        if let size = ProcessInfo.processInfo.environment["WISP_SIZE"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2 {
+            window.setContentSize(NSSize(width: size[0], height: size[1]))
+            window.center()
+        }
         place(animated: false)
         show(.overview)
         sidebar.update(system: delegate.system)
@@ -191,8 +205,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         container.frame = NSRect(x: left, y: 0, width: max(200, bounds.width - left - room), height: bounds.height)
         drawer.frame = NSRect(x: bounds.width - room, y: inset, width: Self.drawerWidth, height: bounds.height - inset * 2)
         current?.view.frame = container.bounds
+        toolbar.frame = NSRect(x: container.frame.minX, y: 0, width: container.frame.width, height: Toolbar.height)
         placeWindowButtons()
     }
+
+    /// "MacBook Pro · Apple M3 Max · 36 GB", under each page's title.
+    static let machineSubtitle: String = {
+        // "MacBook Pro (14-inch, Nov 2023)" from the device tree, without the brackets.
+        var family = "Mac"
+        let expert = IORegistryEntryFromPath(kIOMainPortDefault, "IODeviceTree:/product")
+        if expert != 0 {
+            if let data = IORegistryEntryCreateCFProperty(expert, "product-name" as CFString, kCFAllocatorDefault, 0)?
+                .takeRetainedValue() as? Data,
+               let name = String(data: data, encoding: .utf8)?.trimmingCharacters(in: CharacterSet(charactersIn: "\0")) {
+                family = name.components(separatedBy: " (").first ?? name
+            }
+            IOObjectRelease(expert)
+        }
+        return family + " · Apple " + Sidebar.machineName()
+    }()
 
     /// The window buttons sit inside the floating sidebar, on its padding, rather
     /// than in the window corner where AppKit puts them.
@@ -209,10 +240,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let height: CGFloat = 50
         let containerFrame = NSRect(x: 0, y: window.frame.height - height, width: window.frame.width, height: height)
         if container.frame != containerFrame { container.frame = containerFrame }
-        let left = Self.inset + 16
+        let left = Self.inset + 20
         for (index, button) in [close, mini, zoom].enumerated() {
             let origin = NSPoint(x: left + CGFloat(index) * spacing,
-                                 y: titlebar.bounds.height - (Self.inset + 18) - button.frame.height / 2)
+                                 y: titlebar.bounds.height - (Self.inset + 22) - button.frame.height / 2)
             if button.frame.origin != origin { button.setFrameOrigin(origin) }
         }
     }
@@ -286,6 +317,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         page.view.frame = container.bounds
         container.addSubview(page.view)
         delegate.windowDemand = page.demand
+        toolbar.show(title: id.title, subtitle: Self.machineSubtitle, heading: page.toolbarHeading, items: page.toolbarItems)
         page.update(system: delegate.system)
         page.update(table: delegate.table)
         if let cards = page as? CardPage {
@@ -300,7 +332,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func makePage(_ id: PageID) -> Page {
         let select: (Selection?) -> Void = { [weak self] selection in self?.select(selection) }
         switch id {
-        case .overview: return OverviewPage(delegate: delegate, open: { [weak self] page in self?.show(page) })
+        case .overview: return OverviewPage(delegate: delegate, open: { [weak self] page in self?.show(page) }, select: select)
         case .apps: return AppsPage(delegate: delegate, onSelect: select)
         case .cpu: return CPUPage(title: "CPU", metric: .cpu, delegate: delegate, onSelect: select)
         case .memory: return MemoryPage(title: "Memory", metric: .memory, delegate: delegate, onSelect: select)

@@ -4,54 +4,65 @@ import AppKit
 /// hairline border, small uppercase mono captions and large plain figures.
 /// Every colour has a dark value so a later dark mode only needs the switch.
 enum Theme {
-    static let ground = dynamic(0xF4F4F6, 0x161618)
-    static let panel = dynamic(0xF8F8F9, 0x1C1C1F)
-    static let card = dynamic(0xFFFFFF, 0x232327)
-    static let cardBorder = dynamic(0xE6E6EA, 0x34343A)
-    static let selectionWash = dynamic(0xE6EAFB, 0x2C3350)
-    static let cardBorderHover = dynamic(0xD2D2D9, 0x4A4A52)
-    static let rule = dynamic(0xEDEDF0, 0x2E2E33)
-    static let ink = dynamic(0x17171A, 0xF2F2F4)
-    static let inkSecondary = dynamic(0x6E6E78, 0xA0A0AA)
-    static let inkTertiary = dynamic(0xA2A2AB, 0x6C6C75)
-    static let track = dynamic(0xE7E7EB, 0x34343A)
-    static let hover = dynamic(0xF3F3F5, 0x2A2A2F)
+    // Tahoe: a light grey content area, white cards with a hairline edge, system
+    // colours and SF Pro throughout. Every colour has a dark value.
+    static let ground = dynamic(0xF5F5F7, 0x1D1D1F)
+    static let panel = dynamic(0xFFFFFF, 0x252527)
+    static let card = dynamic(0xFFFFFF, 0x2A2A2D)
+    static let cardBorder = dynamic(0xE2E2E5, 0x3A3A3E)
+    static let selectionWash = dynamic(0xE5F1FF, 0x1E3550)
+    static let cardBorderHover = dynamic(0xC9C9CE, 0x55555B)
+    static let rule = dynamic(0xE8E8EA, 0x36363A)
+    static let ink = dynamic(0x262626, 0xEDEDEF)
+    static let inkSecondary = dynamic(0x808080, 0x98989D)
+    static let inkTertiary = dynamic(0xB0B0B4, 0x636366)
+    static let track = dynamic(0xEBEBED, 0x3A3A3E)
+    static let hover = dynamic(0xF0F0F2, 0x323236)
+    static let fill = dynamic(0xF5F5F7, 0x323236)
 
-    static let accent = dynamic(0x3A4ED6, 0x7383F0)
-    static let accentLow = dynamic(0xE3E6FB, 0x2A2F55)
-    static let good = dynamic(0x1F9D55, 0x4ACB7E)
-    static let goodWash = dynamic(0xE7F6EC, 0x1D3527)
-    static let warn = dynamic(0xC7860A, 0xE8B04A)
-    static let warnWash = dynamic(0xFBF1DD, 0x3A2F1A)
-    static let bad = dynamic(0xD63F2C, 0xF0705E)
-    static let badWash = dynamic(0xFBE6E2, 0x41221E)
-    static let action = dynamic(0xE85A2C, 0xF06A3C)
-    static let actionPressed = dynamic(0xCF4A1F, 0xD85A2C)
+    static let accent = dynamic(0x0088FF, 0x0A91FF)
+    static let accentLow = dynamic(0xDCEDFF, 0x1C3550)
+    static let good = dynamic(0x28A745, 0x34C759)
+    static let goodWash = dynamic(0xE3F7E8, 0x1D3527)
+    static let warn = dynamic(0xD96C00, 0xFF9F0A)
+    static let warnWash = dynamic(0xFFF0DE, 0x3A2C17)
+    static let bad = dynamic(0xE5302F, 0xFF453A)
+    static let badWash = dynamic(0xFFE3E2, 0x44201F)
+    static let action = dynamic(0x0088FF, 0x0A91FF)
+    static let actionPressed = dynamic(0x0070D6, 0x0077DD)
     static let tooltip = NSColor(srgbRed: 0.07, green: 0.07, blue: 0.08, alpha: 0.96)
 
-    /// Category colours, in the order charts use them.
-    static let series: [NSColor] = [
-        dynamic(0x3A4ED6, 0x7383F0),  // indigo
-        dynamic(0xE0912A, 0xF0A84A),  // amber
-        dynamic(0x8B7BE8, 0xA597F2),  // violet
-        dynamic(0x55B9D3, 0x6FCBE2),  // teal
-        dynamic(0x6CC48B, 0x84D6A0),  // green
-        dynamic(0xD9668A, 0xE884A3),  // rose
-    ]
+    /// Apple's system colours, as Tahoe uses them.
+    static let blue = dynamic(0x0088FF, 0x0A91FF)
+    static let cyan = dynamic(0x00C0E8, 0x3CD3FE)
+    static let green = dynamic(0x34C759, 0x30D158)
+    static let orange = dynamic(0xFF8D28, 0xFF9F0A)
+    static let red = dynamic(0xFF383C, 0xFF453A)
+    static let pink = dynamic(0xFF2D55, 0xFF375F)
+    static let purple = dynamic(0xCB30E0, 0xDA8FFF)
+    static let indigo = dynamic(0x6155F5, 0x7D7AFF)
+    static let yellow = dynamic(0xFFCC00, 0xFFD60A)
+    static let teal = dynamic(0x00C3D0, 0x40CBE0)
+    static let gray = dynamic(0x8E8E93, 0x98989D)
 
-    static let radius: CGFloat = 12
-    static let panelRadius: CGFloat = 16
+    /// Category colours, in the order charts use them.
+    static let series: [NSColor] = [blue, cyan, indigo, orange, green, pink]
+
+    static let radius: CGFloat = 18
+    static let panelRadius: CGFloat = 18
 
     static func sans(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
         .systemFont(ofSize: size, weight: weight)
     }
 
-    static func figure(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
-        .monospacedDigitSystemFont(ofSize: size, weight: weight)
+    /// Figures: SF Pro semibold with tabular digits.
+    static func figure(_ size: CGFloat, _ weight: NSFont.Weight = .semibold) -> NSFont {
+        .monospacedDigitSystemFont(ofSize: size, weight: weight == .regular ? .semibold : weight)
     }
 
+    /// Small figures and labels. Tahoe keeps SF Pro here too, with tabular digits.
     static func mono(_ size: CGFloat = 10, _ weight: NSFont.Weight = .medium) -> NSFont {
-        .monospacedSystemFont(ofSize: size, weight: weight)
+        .monospacedDigitSystemFont(ofSize: size + 1, weight: weight == .medium ? .regular : weight)
     }
 
     static func dynamic(_ light: UInt32, _ dark: UInt32) -> NSColor {
@@ -80,23 +91,26 @@ enum Theme {
                        blue: low.blueComponent + (high.blueComponent - low.blueComponent) * k, alpha: 1)
     }
 
-    /// Uppercase caption text with the wide tracking the mono labels use.
-    static func caption(_ text: String, color: NSColor = Theme.inkTertiary, size: CGFloat = 10) -> NSAttributedString {
-        NSAttributedString(string: text.uppercased(), attributes: [
-            .font: mono(size), .foregroundColor: color, .kern: 0.6,
+    /// Caption text: SF Pro 11 in the secondary label colour, sentence case.
+    static func caption(_ text: String, color: NSColor = Theme.inkSecondary, size: CGFloat = 10) -> NSAttributedString {
+        let sentence = text.prefix(1).uppercased() + text.dropFirst()
+        return NSAttributedString(string: sentence, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: size + 1, weight: .regular),
+            .foregroundColor: color == Theme.inkTertiary ? Theme.inkSecondary : color,
         ])
     }
 
-    /// A card's title: a small icon tile in the page colour, then the name.
+    /// A card's title, Tahoe style: the symbol and the name, both in the card's colour.
     @MainActor
-    static func header(_ name: String, symbol: String, tint: NSColor, size: CGFloat = 12.5, tile: CGFloat = 20,
-                       color: NSColor = Theme.inkSecondary, weight: NSFont.Weight = .medium) -> NSAttributedString {
-        let font = sans(size, weight)
+    static func header(_ name: String, symbol: String, tint: NSColor, size: CGFloat = 13, tile: CGFloat = 16,
+                       color: NSColor = Theme.inkSecondary, weight: NSFont.Weight = .semibold) -> NSAttributedString {
+        let font = sans(13, .semibold)
+        let glyph: CGFloat = 16
         let attachment = NSTextAttachment()
-        attachment.image = IconTile.image(symbol, tint: tint, size: tile, appearance: NSApp.effectiveAppearance)
-        attachment.bounds = CGRect(x: 0, y: (font.capHeight - tile) / 2, width: tile, height: tile)
+        attachment.image = IconTile.glyph(symbol, tint: tint, size: glyph, appearance: NSApp.effectiveAppearance)
+        attachment.bounds = CGRect(x: 0, y: (font.capHeight - glyph) / 2, width: glyph, height: glyph)
         let text = NSMutableAttributedString(attachment: attachment)
-        text.append(NSAttributedString(string: "  " + name, attributes: [.font: font, .foregroundColor: color]))
+        text.append(NSAttributedString(string: " " + name, attributes: [.font: font, .foregroundColor: tint]))
         return text
     }
 

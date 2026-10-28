@@ -48,6 +48,9 @@ class MachinePage: CardPage {
 
     override var pageTint: NSColor { (PageID.allCases.first { $0.title == hero.title } ?? .cpu).tint }
 
+    /// The Live / Hour / Day switch sits in the toolbar on its glass capsule.
+    override var toolbarItems: [NSView] { hero.range.items.count > 1 ? [hero.range] : [] }
+
     /// Subclasses add tiles, extras and table columns here.
     func setUp() {}
 

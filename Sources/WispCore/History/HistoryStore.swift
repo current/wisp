@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SystemMetric: String, CaseIterable, Codable, Sendable {
-    case cpu, memory, diskRead, diskWrite, networkIn, networkOut, gpu, cpuTemperature, power, battery
+    case cpu, memory, diskRead, diskWrite, networkIn, networkOut, gpu, cpuTemperature, power, battery, cpuSystem
 }
 
 public enum AppMetric: String, CaseIterable, Codable, Sendable {
@@ -71,7 +71,10 @@ public final class HistoryStore: @unchecked Sendable {
 
     public func record(system snapshot: SystemSnapshot, interval: Double) {
         var values: [(SystemMetric, Double)] = []
-        if let cpu = snapshot.cpu { values.append((.cpu, cpu.total)) }
+        if let cpu = snapshot.cpu {
+            values.append((.cpu, cpu.total))
+            values.append((.cpuSystem, cpu.system))
+        }
         if let memory = snapshot.memory { values.append((.memory, Double(memory.used))) }
         if let disk = snapshot.disk {
             values.append((.diskRead, disk.readBytesPerSecond))
