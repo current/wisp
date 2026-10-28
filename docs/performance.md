@@ -29,6 +29,20 @@ window open, Vitals measured 3.6 to 4.9% the same day.
 | CPU page              | 2.30% | 3.10%  | 5.1% | 44 MB  |
 | Coding Agents page    | 1.54% | 1.90%  | 3.4% | 56 MB  |
 
+After the custom window (floating glass sidebar, app drawer, per-app GPU time),
+40 to 60 samples each with the machine busy (CPU 50 to 60% from other apps):
+
+| Wisp showing                  | Mean  | Median | p95  | Memory |
+|-------------------------------|-------|--------|------|--------|
+| Overview                      | 2.5–2.8% | 3.1–4.0% | 5.5–6.1% | 50 MB |
+| Apps page                     | 4.8%  | 5.3%   | 12%  | 62 MB  |
+| CPU page with the app drawer  | 4.2%  | 5.5%   | 8.4% | 65 MB  |
+| Same, motion turned off       | 3.5%  | 4.5%   | 6.9% | 62 MB  |
+
+The drawer re-reads the app's processes, their command lines (cached by pid)
+and the GPU time of each driver client every tick, about 1.5 ms. The digit
+pop-ins cost about 0.7% of a core while the drawer is open.
+
 The dashboard's cost is about a third the process scan behind its app list
 (one `proc_pid_rusage` call per process, around 6 ms for 740 processes), a
 third drawing, and a third Core Animation committing the changes.
@@ -59,6 +73,18 @@ dashboard then held 241 MB instead of 37 MB.
   hour, which takes under a millisecond.
 - The card pages draw their own views and lay them out by frame. A new reading
   redraws only the view whose value changed.
+- Anything that makes Core Animation render a layer tree inside the app costs
+  about 190 MB of Metal buffers. Found so far: `CATransition`, `masksToBounds`
+  on a rounded view with content, a shadow without a `shadowPath` (on every
+  clickable card it held 300 MB and tripled the overview's CPU), and AppKit
+  switching a view that redraws often to asynchronous drawing. Charts therefore
+  draw into their own bitmap (`BitmapView`), and hover feedback is a border
+  colour, not a shadow. `WISP_DRAWER=<app> WISP_DUMP_LAYERS=1` lists any layer
+  that still draws asynchronously.
+- Motion is transform and opacity animations on small bitmaps: a number change
+  pops only the digits that changed, then folds them back into one bitmap. The
+  drawer and the page move together one layout per screen refresh for 0.3 s and
+  nothing runs once they settle.
 - The dashboard is a plain borderless panel. An `NSPopover` with its vibrant
   material held about 190 MB of graphics memory whenever anything in it moved.
 

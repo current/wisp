@@ -17,11 +17,17 @@ to repeat them.
   busiest apps.
 - **Overview:** one card per part of the machine with the last half hour as
   bars, and a list of anything worth a look.
+- **Window:** a floating sidebar on Liquid Glass with a live figure beside each
+  page, and a drawer that slides in from the right when you click any app.
+  The drawer shows the app's memory, CPU, power, GPU, disk and network, what
+  is inside it (for a browser: tabs, GPU process, extensions, network service),
+  the last hour, its command line, and Quit or Force Quit. Esc, the close
+  button or a second click on the app closes it.
 - **Apps:** processes grouped into the app that owns them, with CPU, memory,
-  power, disk and network per app. Select one to see its processes, code
-  signature and the last hour.
+  power, disk and network per app. Select one to open its drawer.
 - **CPU, Memory, GPU, Neural Engine, Power, Disk, Network:** a live, hourly or
-  daily chart, the figures behind it, and the apps that used the most. CPU has
+  daily chart, the figures behind it, and the apps that used the most (GPU
+  lists each app's share of GPU time, read from the graphics driver). CPU has
   the core map, Memory the breakdown by kind, Disk every volume, Network the
   totals for today, the week and the month, and Power the battery and what is
   keeping the Mac awake.
