@@ -410,7 +410,10 @@ final class AppDrawer: NSView {
         let footerHeight: CGFloat = buttons.isEmpty ? 0 : 68
         footer.frame = NSRect(x: 0, y: bounds.height - footerHeight, width: width, height: footerHeight)
         layoutFooter()
-        scroll.frame = NSRect(x: 0, y: 85, width: width, height: bounds.height - 85 - footerHeight)
+        // The content runs under the footer; the buttons float over it on their glass.
+        scroll.frame = NSRect(x: 0, y: 85, width: width, height: bounds.height - 85)
+        scroll.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: footerHeight, right: 0)
+        scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: footerHeight, right: 0)
         arrangeContent()
     }
 

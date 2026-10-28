@@ -54,7 +54,9 @@ class CardPage: NSViewController, Page {
         let width = scroll.contentSize.width
         let first = arrangedWidth == 0
         arrangedWidth = width
+        let before = first ? [:] : Dictionary(uniqueKeysWithValues: canvas.subviews.map { (ObjectIdentifier($0), $0.frame.origin) })
         let height = max(arrange(width: width), scroll.contentSize.height)
+        glide(from: before)
         if canvas.frame.size != NSSize(width: width, height: height) {
             canvas.frame = NSRect(x: 0, y: 0, width: width, height: height)
         }
@@ -77,6 +79,25 @@ class CardPage: NSViewController, Page {
     }
 
     func arrange(width: CGFloat) -> CGFloat { 0 }
+
+    /// Cards that jumped to a new row or column (the grid changed its column count)
+    /// glide there from where they were instead of snapping. A transform animation
+    /// on each moved card; small, continuous moves are left alone.
+    private func glide(from before: [ObjectIdentifier: NSPoint]) {
+        guard !before.isEmpty, !Theme.reduceMotion, view.window?.isVisible == true else { return }
+        for card in canvas.subviews {
+            guard let old = before[ObjectIdentifier(card)], let layer = card.layer, !card.isHidden else { continue }
+            let dx = old.x - card.frame.minX, dy = old.y - card.frame.minY
+            guard hypot(dx, dy) > 40 else { continue }
+            let move = CABasicAnimation(keyPath: "transform.translation")
+            move.fromValue = NSValue(size: NSSize(width: dx, height: dy))
+            move.toValue = NSValue(size: .zero)
+            move.isAdditive = true
+            move.duration = 0.32
+            move.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+            layer.add(move, forKey: "glide")
+        }
+    }
 
     /// The page's colour, for the icon tiles in card titles.
     var pageTint: NSColor { Theme.accent }

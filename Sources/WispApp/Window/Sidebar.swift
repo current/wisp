@@ -166,10 +166,11 @@ final class Sidebar: NSView {
         content.wantsLayer = true
         highlight.backgroundColor = NSColor.white.withAlphaComponent(0.92).cgColor
         highlight.cornerRadius = 9
-        highlight.shadowColor = NSColor.black.cgColor
-        highlight.shadowOpacity = 0.08
-        highlight.shadowRadius = 3
-        highlight.shadowOffset = CGSize(width: 0, height: -1)
+        // A hairline instead of a shadow: a shadow on a layer that changes size
+        // would be worked out again inside the app on every frame of the move.
+        highlight.borderWidth = 0.5
+        highlight.borderColor = NSColor.black.withAlphaComponent(0.07).cgColor
+        highlight.cornerCurve = .continuous
         highlight.opacity = 0
         content.layer?.addSublayer(highlight)
 
@@ -246,18 +247,45 @@ final class Sidebar: NSView {
 
     private func placeHighlight(animated: Bool) {
         guard let page = selectedPage, let row = rows.first(where: { $0.page == page }) else { return }
+        let from = highlight.presentation()?.frame ?? highlight.frame
+        let to = row.frame
         CATransaction.begin()
-        if animated && !Theme.reduceMotion {
-            CATransaction.setAnimationDuration(0.26)
-            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1))
-        } else {
-            CATransaction.setDisableActions(true)
-        }
-        highlight.frame = row.frame
+        CATransaction.setDisableActions(true)
+        highlight.frame = to
         highlight.opacity = 1
         highlight.backgroundColor = (effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             ? NSColor.white.withAlphaComponent(0.12) : NSColor.white.withAlphaComponent(0.92)).cgColor
         CATransaction.commit()
+        guard animated, !Theme.reduceMotion, from.height > 0, abs(from.minY - to.minY) > 1 else { return }
+        stretch(from: from, to: to)
+    }
+
+    /// The highlight stretches toward the new row: its leading edge gets there
+    /// first, the trailing edge follows and the pill settles back to one row.
+    private func stretch(from: CGRect, to: CGRect) {
+        let down = to.minY > from.minY
+        let distance = abs(to.minY - from.minY)
+        let duration = min(0.46, 0.3 + Double(distance) / 2400)
+        let steps = 24
+        var positions: [NSValue] = []
+        var sizes: [NSValue] = []
+        for step in 0...steps {
+            let t = Double(step) / Double(steps)
+            let lead = CGFloat(Motion.smoothOut(min(1, t / 0.62)))
+            let trail = CGFloat(Motion.smoothOut(max(0, (t - 0.14) / 0.86)))
+            let top = from.minY + (to.minY - from.minY) * (down ? trail : lead)
+            let bottom = from.maxY + (to.maxY - from.maxY) * (down ? lead : trail)
+            positions.append(NSValue(point: NSPoint(x: to.midX, y: (top + bottom) / 2)))
+            sizes.append(NSValue(size: NSSize(width: to.width, height: bottom - top)))
+        }
+        let position = CAKeyframeAnimation(keyPath: "position")
+        position.values = positions
+        let size = CAKeyframeAnimation(keyPath: "bounds.size")
+        size.values = sizes
+        let group = CAAnimationGroup()
+        group.animations = [position, size]
+        group.duration = duration
+        highlight.add(group, forKey: "move")
     }
 
     override func viewDidChangeEffectiveAppearance() {

@@ -137,6 +137,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             if self.drawerOpen { self.drawer.update(table: table) }
         }
         delegate.windowVisible = true
+        // WISP_DEMO=<app id> walks pages and the drawer on a timer, for recording the motion.
+        if let id = ProcessInfo.processInfo.environment["WISP_DEMO"] {
+            let steps: [(Double, (MainWindowController) -> Void)] = [
+                (6, { $0.show(.cpu) }), (7.5, { $0.show(.sensors) }), (9, { $0.show(.memory) }),
+                (10.5, { $0.select(.app(id)) }), (12.5, { $0.select(nil) }),
+            ]
+            for (delay, step) in steps {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in if let self { step(self) } }
+            }
+        }
         // WISP_DRAWER=<app id> opens the drawer once data has arrived, for screenshots.
         if let id = ProcessInfo.processInfo.environment["WISP_DRAWER"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.select(.app(id)) }
@@ -175,10 +185,86 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let inset = Self.inset
         sidebar.frame = NSRect(x: inset, y: inset, width: Self.sidebarWidth, height: bounds.height - inset * 2)
         let left = inset + Self.sidebarWidth
-        let right = drawerOpen ? Self.drawerWidth + inset : 0
-        container.frame = NSRect(x: left, y: 0, width: max(200, bounds.width - left - right), height: bounds.height)
-        drawer.frame = NSRect(x: bounds.width - Self.drawerWidth - inset, y: inset, width: Self.drawerWidth, height: bounds.height - inset * 2)
+        // `drawerProgress` runs 0 to 1 as the drawer opens: the page gives up its
+        // right edge at the same rate the drawer slides in, so they move as one.
+        let room = (Self.drawerWidth + inset) * drawerProgress
+        container.frame = NSRect(x: left, y: 0, width: max(200, bounds.width - left - room), height: bounds.height)
+        drawer.frame = NSRect(x: bounds.width - room, y: inset, width: Self.drawerWidth, height: bounds.height - inset * 2)
         current?.view.frame = container.bounds
+        placeWindowButtons()
+    }
+
+    /// The window buttons sit inside the floating sidebar, on its padding, rather
+    /// than in the window corner where AppKit puts them.
+    private var buttonSpacing: CGFloat?
+
+    private func placeWindowButtons() {
+        guard let window, !window.styleMask.contains(.fullScreen),
+              let close = window.standardWindowButton(.closeButton),
+              let mini = window.standardWindowButton(.miniaturizeButton),
+              let zoom = window.standardWindowButton(.zoomButton),
+              let titlebar = close.superview, let container = titlebar.superview else { return }
+        if buttonSpacing == nil { buttonSpacing = max(18, mini.frame.minX - close.frame.minX) }
+        let spacing = buttonSpacing ?? 20
+        let height: CGFloat = 50
+        let containerFrame = NSRect(x: 0, y: window.frame.height - height, width: window.frame.width, height: height)
+        if container.frame != containerFrame { container.frame = containerFrame }
+        let left = Self.inset + 16
+        for (index, button) in [close, mini, zoom].enumerated() {
+            let origin = NSPoint(x: left + CGFloat(index) * spacing,
+                                 y: titlebar.bounds.height - (Self.inset + 18) - button.frame.height / 2)
+            if button.frame.origin != origin { button.setFrameOrigin(origin) }
+        }
+    }
+
+    func windowDidResize(_ notification: Notification) { placeWindowButtons() }
+    func windowDidBecomeKey(_ notification: Notification) { placeWindowButtons() }
+    func windowDidResignKey(_ notification: Notification) { placeWindowButtons() }
+    func windowDidExitFullScreen(_ notification: Notification) { placeWindowButtons() }
+
+    /// 0 when the drawer is shut, 1 when it is open; in between while it moves.
+    private var drawerProgress: CGFloat = 0
+    private var drawerMotion: (from: CGFloat, to: CGFloat, start: CFTimeInterval, duration: CFTimeInterval)?
+    private var displayLink: CADisplayLink?
+
+    /// Moves the drawer and the page together, one layout per screen refresh.
+    /// About 0.3 s of relayout per open or close; nothing runs once it settles.
+    private func moveDrawer(to target: CGFloat, done: (() -> Void)? = nil) {
+        drawerDone = done
+        guard !Theme.reduceMotion, window?.isVisible == true else {
+            drawerProgress = target
+            place(animated: false)
+            finishDrawer()
+            return
+        }
+        drawerMotion = (drawerProgress, target, CACurrentMediaTime(), target > drawerProgress ? 0.36 : 0.28)
+        if displayLink == nil {
+            displayLink = root.displayLink(target: self, selector: #selector(drawerFrame(_:)))
+            displayLink?.add(to: .main, forMode: .common)
+        }
+    }
+
+    private var drawerDone: (() -> Void)?
+
+    @objc private func drawerFrame(_ link: CADisplayLink) {
+        guard let motion = drawerMotion else { return finishDrawer() }
+        let t = min(1, (CACurrentMediaTime() - motion.start) / motion.duration)
+        // Smooth out: quick to start, long soft landing (0.22, 1, 0.36, 1).
+        let eased = CGFloat(Motion.smoothOut(t))
+        drawerProgress = motion.from + (motion.to - motion.from) * eased
+        drawer.alphaValue = min(1, drawerProgress * 2.5)
+        place(animated: false)
+        if t >= 1 { finishDrawer() }
+    }
+
+    private func finishDrawer() {
+        displayLink?.invalidate()
+        displayLink = nil
+        drawerMotion = nil
+        drawer.alphaValue = drawerProgress > 0 ? 1 : 0
+        let done = drawerDone
+        drawerDone = nil
+        done?()
     }
 
     private var isVisible: Bool {
@@ -235,8 +321,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// Opens the drawer for a selection, or closes it for nil. The page makes room
-    /// first, then the drawer slides in, so nothing re-lays out while it moves.
+    /// Opens the drawer for a selection, or closes it for nil. The drawer slides in
+    /// while the page narrows beside it, and the reverse on close.
     private func select(_ selection: Selection?) {
         if let selection {
             // A second click on what is already open closes it.
@@ -246,19 +332,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             drawerOpen = true
             // Per-app network is measured only while something shows it.
             delegate.windowDemand = (current?.demand ?? []).union(.appNetwork)
-            place(animated: false)
             drawer.isHidden = false
-            Motion.enter(drawer, from: CGPoint(x: 28, y: 0), duration: 0.28)
             drawer.revealContent()
+            moveDrawer(to: 1)
         } else {
             guard drawerOpen else { return }
             drawerOpen = false
             delegate.windowDemand = current?.demand ?? []
             (current as? Deselecting)?.clearSelection()
-            Motion.leave(drawer, to: CGPoint(x: 28, y: 0), duration: 0.18) { [weak self] in
+            moveDrawer(to: 0) { [weak self] in
                 guard let self, !self.drawerOpen else { return }
                 self.drawer.isHidden = true
-                self.place(animated: false)
             }
         }
     }
@@ -293,6 +377,19 @@ protocol Deselecting {
 @MainActor
 enum Motion {
     static let ease = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
+
+    /// cubic-bezier(0.22, 1, 0.36, 1) evaluated at time t, for motion driven frame by frame.
+    static func smoothOut(_ t: Double) -> Double {
+        let (x1, y1, x2, y2) = (0.22, 1.0, 0.36, 1.0)
+        func bezier(_ s: Double, _ a: Double, _ b: Double) -> Double { 3 * a * s * (1 - s) * (1 - s) + 3 * b * s * s * (1 - s) + s * s * s }
+        // Solve x(s) = t by bisection; a dozen steps is well under a pixel.
+        var low = 0.0, high = 1.0, s = t
+        for _ in 0..<14 {
+            s = (low + high) / 2
+            if bezier(s, x1, x2) < t { low = s } else { high = s }
+        }
+        return bezier(s, y1, y2)
+    }
 
     static func enter(_ view: NSView, from offset: CGPoint, duration: CFTimeInterval) {
         guard !Theme.reduceMotion else { return }

@@ -191,35 +191,43 @@ final class TextLine: DrawnView {
     override func accessibilityValue() -> Any? { text.string }
 }
 
-/// A large figure with a quieter unit after it. When the figure changes on
-/// screen the new one rolls in with a short Core Animation push, which the
-/// window server runs on the GPU; the app draws each value once.
+/// A large figure with a quieter unit after it. When a number changes on screen,
+/// only the digits that changed pop in, one after another, rising for a higher
+/// value and dropping for a lower one; the digits the two numbers share stay
+/// still. Text that is not a number cross-fades in place. Every piece is a small
+/// bitmap moved by Core Animation, so the window server does the motion.
 final class BigNumber: DrawnView {
-    var font = Theme.figure(32, .regular) { didSet { render() } }
-    var unitFont = Theme.sans(15) { didSet { render() } }
-    var color: NSColor = Theme.ink { didSet { render() } }
+    var font = Theme.figure(32, .regular) { didSet { if font != oldValue { render() } } }
+    var unitFont = Theme.sans(15) { didSet { if unitFont != oldValue { render() } } }
+    var color: NSColor = Theme.ink { didSet { if color != oldValue { render() } } }
     /// Turns a value into the figure and its unit.
     var format: (Double) -> (String, String) = { (String(format: "%.0f", $0), "") }
 
     private(set) var value: Double?
     private var fixed: (String, String)?
     private var drawn: (String, String) = ("", "")
-    // The figure is a bitmap on a layer. A change slides the old one out and the new
-    // one in with plain position and opacity animations, which the render server runs.
-    // A CATransition would snapshot the layer in-process and keep Metal buffers around.
-    private let front = CALayer()
-    private let back = CALayer()
+    // At rest the whole figure is one bitmap on `base`. While digits pop in, `base`
+    // holds only what stayed, each new digit has its own small layer, and `outgoing`
+    // carries the digits that left.
+    private let base = CALayer()
+    private let outgoing = CALayer()
+    private var pieces: [CALayer] = []
+    private var settle: DispatchWorkItem?
+
+    private static let pop = CAMediaTimingFunction(controlPoints: 0.34, 1.45, 0.64, 1)
+    private static let duration: CFTimeInterval = 0.3
+    private static let stagger: CFTimeInterval = 0.035
+    private static let distance: CGFloat = 7
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.masksToBounds = true
-        for sub in [back, front] {
+        for sub in [base, outgoing] {
             sub.anchorPoint = .zero
             sub.contentsGravity = .topLeft
             layer?.addSublayer(sub)
         }
-        back.opacity = 0
+        outgoing.opacity = 0
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -243,42 +251,224 @@ final class BigNumber: DrawnView {
     private func refresh() {
         let next = current
         guard next != drawn else { return }
-        let rising = (Double(next.0.filter { $0.isNumber || $0 == "." }) ?? 0) >= (Double(drawn.0.filter { $0.isNumber || $0 == "." }) ?? 0)
-        let animate = !drawn.0.isEmpty && window?.isVisible == true && !Theme.reduceMotion && next.1 == drawn.1
+        let old = drawn
         drawn = next
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        if animate {
-            back.contents = front.contents
-            back.opacity = 0
+        let animate = !old.0.isEmpty && window?.isVisible == true && !Theme.reduceMotion
+        guard animate else { return render() }
+        let numeric = { (text: String) in text.contains(where: \.isNumber) && !text.contains(where: \.isLetter) }
+        if numeric(old.0), numeric(next.0), old.1 == next.1, fit(next).fits, fit(old).fits {
+            popDigits(from: old.0, to: next.0, unit: next.1)
+        } else {
+            crossFade(from: old)
         }
-        render()
-        CATransaction.commit()
-        guard animate else { return }
-        let distance = min(12, bounds.height / 3) * (rising ? 1 : -1)
-        slide(front, from: distance, to: 0, fade: (0, 1))
-        slide(back, from: 0, to: -distance, fade: (1, 0))
     }
 
-    private func slide(_ layer: CALayer, from: CGFloat, to: CGFloat, fade: (Float, Float)) {
-        let move = CABasicAnimation(keyPath: "transform.translation.y")
-        // The view is flipped, so a positive offset is lower on screen.
-        move.fromValue = from
-        move.toValue = to
-        // The old figure is gone before the new one shows, so two names never
-        // sit on top of each other mid-change.
-        let opacity = CAKeyframeAnimation(keyPath: "opacity")
-        opacity.values = fade.0 < fade.1 ? [0, 0, 1] : [1, 0, 0]
-        opacity.keyTimes = fade.0 < fade.1 ? [0, 0.35, 1] : [0, 0.45, 1]
-        let group = CAAnimationGroup()
-        group.animations = [move, opacity]
-        group.duration = 0.28
-        group.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        layer.add(group, forKey: "slide")
+    // MARK: Drawing
+
+    private var scale: CGFloat { window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2 }
+
+    private func attributes(_ font: NSFont, kern: CGFloat = -0.6) -> [NSAttributedString.Key: Any] {
+        [.font: font, .foregroundColor: color, .kern: kern]
     }
+
+    private func width(_ text: String, _ font: NSFont) -> CGFloat {
+        ceil(NSAttributedString(string: text, attributes: attributes(font)).size().width)
+    }
+
+    /// The font the figure fits in, and whether it fits without shrinking.
+    private func fit(_ text: (String, String)) -> (font: NSFont, fits: Bool) {
+        let unitWidth = text.1.isEmpty ? 0 : ceil(NSAttributedString(string: text.1, attributes: [.font: unitFont]).size().width) + 4
+        let room = bounds.width - unitWidth
+        let full = width(text.0, font)
+        guard full > room, room > 0 else { return (font, true) }
+        let size = max(15, floor(font.pointSize * room / full))
+        return (NSFont(descriptor: font.fontDescriptor, size: size) ?? font, false)
+    }
+
+    private func baseline(_ font: NSFont) -> CGFloat { (bounds.height + font.ascender + font.descender) / 2 }
+
+    /// A bitmap of the given size drawn in the current appearance.
+    private func bitmap(_ size: CGSize, _ draw: @escaping () -> Void) -> Any? {
+        guard size.width > 0, size.height > 0 else { return nil }
+        let appearance = effectiveAppearance
+        let image = NSImage(size: size, flipped: true) { _ in
+            appearance.performAsCurrentDrawingAppearance(draw)
+            return true
+        }
+        return image.layerContents(forContentsScale: scale)
+    }
+
+    /// Draws `figure` (all of it, or only its first `keep` characters) and the unit.
+    private func drawFigure(_ text: (String, String), keep: Int? = nil) {
+        let (used, fits) = fit(text)
+        let top = baseline(used) - used.ascender
+        let shown = keep.map { String(text.0.prefix($0)) } ?? text.0
+        let unitText = NSAttributedString(string: text.1, attributes: [.font: unitFont, .foregroundColor: Theme.inkTertiary])
+        let room = bounds.width - (text.1.isEmpty ? 0 : ceil(unitText.size().width) + 4)
+        if fits {
+            NSAttributedString(string: shown, attributes: attributes(used)).draw(at: NSPoint(x: 0, y: top))
+        } else {
+            // Past the smallest size it still fits, the end gives way to an ellipsis.
+            let style = NSMutableParagraphStyle()
+            style.lineBreakMode = .byTruncatingTail
+            var attrs = attributes(used, kern: -0.4)
+            attrs[.paragraphStyle] = style
+            NSAttributedString(string: shown, attributes: attrs)
+                .draw(with: NSRect(x: 0, y: top, width: max(room, 1), height: ceil(used.ascender - used.descender + used.leading)),
+                      options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        }
+        if !text.1.isEmpty {
+            let x = min(width(text.0, used), room) + 4
+            unitText.draw(at: NSPoint(x: x, y: baseline(used) - unitFont.ascender))
+        }
+    }
+
+    /// The figure at rest: one bitmap, no pieces.
+    private func render() {
+        settle?.cancel()
+        settle = nil
+        let size = bounds.size
+        guard size.width > 0, size.height > 0 else { return }
+        let text = drawn.0.isEmpty ? current : drawn
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        base.removeAllAnimations()
+        base.frame = CGRect(origin: .zero, size: size)
+        base.contentsScale = scale
+        base.opacity = 1
+        base.contents = bitmap(size) { [weak self] in self?.drawFigure(text) }
+        outgoing.opacity = 0
+        outgoing.removeAllAnimations()
+        pieces.forEach { $0.removeFromSuperlayer() }
+        pieces.removeAll()
+        CATransaction.commit()
+    }
+
+    // MARK: Motion
+
+    /// Number pop-in: the digits after the shared start leave quickly and the new
+    /// ones rise (or drop) into place with a slight overshoot, a few ms apart. Each
+    /// change also starts after a short random wait so figures across the window
+    /// do not all move on the same frame.
+    private func popDigits(from old: String, to new: String, unit: String) {
+        settle?.cancel()
+        let oldChars = Array(old), newChars = Array(new)
+        var shared = 0
+        while shared < min(oldChars.count, newChars.count), oldChars[shared] == newChars[shared] { shared += 1 }
+        let number = { (text: String) in Double(text.filter { $0.isNumber || $0 == "." }) ?? 0 }
+        let direction: CGFloat = number(new) >= number(old) ? 1 : -1
+        let size = bounds.size
+        let used = font
+        let top = baseline(used) - used.ascender
+        let lineHeight = ceil(used.ascender - used.descender + used.leading) + 2
+        let attrs = attributes(used)
+        let now = CACurrentMediaTime()
+        let wait = Double.random(in: 0...0.12)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        pieces.forEach { $0.removeFromSuperlayer() }
+        pieces.removeAll()
+        base.removeAllAnimations()
+        base.frame = CGRect(origin: .zero, size: size)
+        base.contentsScale = scale
+        base.contents = bitmap(size) { [weak self] in self?.drawFigure((new, unit), keep: shared) }
+
+        // What left: one bitmap of the old digits after the shared start.
+        let oldTail = String(oldChars[shared...])
+        let oldX = width(String(oldChars[..<shared]), used)
+        let oldWidth = width(oldTail, used) + 4
+        outgoing.frame = CGRect(x: oldX, y: top, width: oldWidth, height: lineHeight)
+        outgoing.contentsScale = scale
+        outgoing.contents = bitmap(outgoing.frame.size) { NSAttributedString(string: oldTail, attributes: attrs).draw(at: .zero) }
+        outgoing.opacity = 0
+        CATransaction.commit()
+
+        let leave = CAAnimationGroup()
+        leave.animations = [Self.basic("opacity", 1, 0), Self.basic("transform.translation.y", 0, -direction * 4)]
+        leave.duration = 0.12
+        leave.beginTime = now + wait
+        leave.fillMode = .both
+        leave.timingFunction = CAMediaTimingFunction(name: .easeIn)
+        outgoing.add(leave, forKey: "leave")
+
+        // What came: each changed digit on its own layer.
+        var end = now + wait
+        for index in shared..<newChars.count {
+            let character = String(newChars[index])
+            let x = width(String(newChars[..<index]), used)
+            let piece = CALayer()
+            piece.anchorPoint = .zero
+            piece.contentsGravity = .topLeft
+            piece.contentsScale = scale
+            piece.frame = CGRect(x: x, y: top, width: width(character, used) + 4, height: lineHeight)
+            piece.contents = bitmap(piece.frame.size) { NSAttributedString(string: character, attributes: attrs).draw(at: .zero) }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer?.addSublayer(piece)
+            CATransaction.commit()
+            pieces.append(piece)
+
+            let opacity = CAKeyframeAnimation(keyPath: "opacity")
+            opacity.values = [0, 1, 1]
+            opacity.keyTimes = [0, 0.55, 1]
+            opacity.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .linear)]
+            let move = Self.basic("transform.translation.y", direction * Self.distance, 0)
+            move.timingFunction = Self.pop
+            let enter = CAAnimationGroup()
+            enter.animations = [opacity, move]
+            enter.duration = Self.duration
+            enter.beginTime = now + wait + 0.04 + Double(index - shared) * Self.stagger
+            enter.fillMode = .backwards
+            piece.add(enter, forKey: "enter")
+            end = max(end, enter.beginTime + enter.duration)
+        }
+
+        // Once everything has landed, fold the pieces back into one bitmap.
+        let work = DispatchWorkItem { [weak self] in self?.render() }
+        settle = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (end - now) + 0.03, execute: work)
+    }
+
+    /// Text that is not a number: the old and new cross-fade in place, no movement.
+    private func crossFade(from old: (String, String)) {
+        settle?.cancel()
+        let size = bounds.size
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        outgoing.frame = CGRect(origin: .zero, size: size)
+        outgoing.contentsScale = scale
+        outgoing.contents = base.contents
+        outgoing.opacity = 0
+        CATransaction.commit()
+        render()
+        let now = CACurrentMediaTime()
+        let fadeOut = Self.basic("opacity", 1, 0)
+        fadeOut.duration = 0.12
+        fadeOut.beginTime = now
+        fadeOut.fillMode = .backwards
+        outgoing.add(fadeOut, forKey: "leave")
+        let fadeIn = Self.basic("opacity", 0, 1)
+        fadeIn.duration = 0.18
+        fadeIn.beginTime = now + 0.03
+        fadeIn.fillMode = .backwards
+        base.add(fadeIn, forKey: "enter")
+    }
+
+    private static func basic(_ key: String, _ from: Any, _ to: Any) -> CABasicAnimation {
+        let animation = CABasicAnimation(keyPath: key)
+        animation.fromValue = from
+        animation.toValue = to
+        return animation
+    }
+
+    private var laidOutSize = CGSize.zero
 
     override func layout() {
         super.layout()
+        // Only a new size needs a new bitmap; a parent's layout pass must not cut a pop short.
+        guard bounds.size != laidOutSize else { return }
+        laidOutSize = bounds.size
         render()
     }
 
@@ -290,50 +480,6 @@ final class BigNumber: DrawnView {
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         render()
-    }
-
-    /// Draws the figure into a bitmap the size of the view and puts it on the front layer.
-    private func render() {
-        let size = bounds.size
-        guard size.width > 0, size.height > 0 else { return }
-        let (figure, unit) = drawn.0.isEmpty ? current : drawn
-        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        let appearance = effectiveAppearance
-        let font = self.font, unitFont = self.unitFont, color = self.color
-        let image = NSImage(size: size, flipped: true) { bounds in
-            appearance.performAsCurrentDrawingAppearance {
-                let unitText = NSAttributedString(string: unit, attributes: [.font: unitFont, .foregroundColor: Theme.inkTertiary])
-                let room = bounds.width - (unit.isEmpty ? 0 : ceil(unitText.size().width) + 4)
-                // Long text, such as an app name, shrinks to fit rather than running out of the card.
-                var used = font
-                var figureText = NSAttributedString(string: figure, attributes: [.font: used, .foregroundColor: color, .kern: -0.6])
-                let width = figureText.size().width
-                if width > room, room > 0 {
-                    used = NSFont(descriptor: font.fontDescriptor, size: max(15, floor(font.pointSize * room / width))) ?? font
-                    // Past the smallest size it still fits, the end gives way to an ellipsis.
-                    let style = NSMutableParagraphStyle()
-                    style.lineBreakMode = .byTruncatingTail
-                    figureText = NSAttributedString(string: figure, attributes: [.font: used, .foregroundColor: color, .kern: -0.4,
-                                                                                  .paragraphStyle: style])
-                }
-                let baseline = (bounds.height + used.ascender + used.descender) / 2
-                let lineHeight = ceil(used.ascender - used.descender + used.leading)
-                figureText.draw(with: NSRect(x: 0, y: baseline - used.ascender, width: max(room, 1), height: lineHeight),
-                                options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-                if !unit.isEmpty {
-                    unitText.draw(at: NSPoint(x: min(ceil(figureText.size().width), room) + 4, y: baseline - unitFont.ascender))
-                }
-            }
-            return true
-        }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for sub in [front, back] {
-            sub.frame = CGRect(origin: .zero, size: size)
-            sub.contentsScale = scale
-        }
-        front.contents = image.layerContents(forContentsScale: scale)
-        CATransaction.commit()
     }
 
     override func draw(_ dirtyRect: NSRect) {}
