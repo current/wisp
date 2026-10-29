@@ -508,10 +508,7 @@ final class SettingsSidebar: NSView {
         if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView { glass.contentView = content } else { surface.addSubview(content) }
         content.wantsLayer = true
         highlight.cornerRadius = 9
-        highlight.shadowColor = NSColor.black.cgColor
-        highlight.shadowOpacity = 0.08
-        highlight.shadowRadius = 3
-        highlight.shadowOffset = CGSize(width: 0, height: -1)
+        highlight.cornerCurve = .continuous
         highlight.opacity = 0
         content.layer?.addSublayer(highlight)
         for section in SettingsWindowController.Section.allCases {
@@ -552,7 +549,7 @@ final class SettingsSidebar: NSView {
         highlight.frame = row.frame
         highlight.opacity = 1
         highlight.backgroundColor = (effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor.white.withAlphaComponent(0.12) : NSColor.white.withAlphaComponent(0.92)).cgColor
+            ? NSColor.white.withAlphaComponent(0.1) : NSColor.black.withAlphaComponent(0.075)).cgColor
         CATransaction.commit()
     }
 

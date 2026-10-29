@@ -101,44 +101,90 @@ final class GlassPill: NSView {
     }
 }
 
-/// A card with an icon tile, a caption, one figure and an optional meter line.
+/// A figure card in the Tahoe inspector: a coloured symbol and name, the figure,
+/// and for the big ones a thin bar with a line under it. The small ones sit four
+/// to a strip without a card of their own.
 final class FigureTile: CardView {
     let figure = BigNumber()
-    let meter = TickMeter()
+    let meter = SplitBar()
     let note = TextLine()
     private let label = TextLine()
-    private let icon = NSImageView()
+    private let tint: NSColor
     var showsMeter = false { didSet { meter.isHidden = !showsMeter; note.isHidden = !showsMeter; needsLayout = true } }
     private let big: Bool
 
     init(_ name: String, symbol: String, tint: NSColor, big: Bool) {
         self.big = big
+        self.tint = tint
         super.init()
         radius = 14
-        label.text = NSAttributedString(string: name, attributes: [.font: Theme.sans(12, .medium), .foregroundColor: Theme.inkSecondary])
-        icon.image = IconTile.image(symbol, tint: tint, size: big ? 24 : 18, appearance: NSApp.effectiveAppearance)
-        figure.font = Theme.figure(big ? 30 : 19, .medium)
-        figure.unitFont = Theme.sans(big ? 14 : 11, .medium)
-        meter.color = tint
-        meter.tickWidth = 2
-        meter.pitch = 4
+        if big {
+            label.text = Theme.header(name, symbol: symbol, tint: tint)
+        } else {
+            let text = NSMutableAttributedString(attachment: {
+                let attachment = NSTextAttachment()
+                attachment.image = IconTile.glyph(symbol, tint: tint, size: 12, appearance: NSApp.effectiveAppearance)
+                attachment.bounds = CGRect(x: 0, y: -2, width: 12, height: 12)
+                return attachment
+            }())
+            text.append(NSAttributedString(string: " " + name, attributes: [.font: Theme.sans(11), .foregroundColor: Theme.inkSecondary]))
+            label.text = text
+            fill = .clear
+            stroke = .clear
+        }
+        figure.font = Theme.figure(big ? 30 : 14)
+        figure.unitFont = Theme.sans(big ? 15 : 12, .medium)
         meter.isHidden = true
         note.isHidden = true
-        for view in [label, icon, figure, meter, note] as [NSView] { addSubview(view) }
+        for view in [label, figure, meter, note] as [NSView] { addSubview(view) }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The bar's share, 0 to 1, in the tile's colour.
+    func setMeter(_ fraction: Double) { meter.parts = [(fraction, tint)] }
+
     override func layout() {
         super.layout()
-        let width = bounds.width - 28
-        let iconSize: CGFloat = big ? 24 : 18
-        icon.frame = NSRect(x: 14, y: 14, width: iconSize, height: iconSize)
-        label.frame = NSRect(x: 14 + iconSize + 8, y: 14 + (iconSize - 16) / 2, width: width - iconSize - 8, height: 16)
-        figure.frame = NSRect(x: 14, y: big ? 46 : 36, width: width, height: big ? 38 : 26)
-        if showsMeter {
-            meter.frame = NSRect(x: 14, y: bounds.height - 24, width: 52, height: 8)
-            note.frame = NSRect(x: 74, y: bounds.height - 28, width: width - 60, height: 16)
+        if big {
+            let width = bounds.width - 28
+            label.frame = NSRect(x: 14, y: 13, width: width, height: 20)
+            figure.frame = NSRect(x: 14, y: 36, width: width, height: 38)
+            if showsMeter {
+                meter.frame = NSRect(x: 14, y: bounds.height - 36, width: width, height: 6)
+                note.frame = NSRect(x: 14, y: bounds.height - 25, width: width, height: 15)
+            }
+        } else {
+            let width = bounds.width - 20
+            label.frame = NSRect(x: 10, y: 11, width: width, height: 15)
+            figure.frame = NSRect(x: 10, y: 28, width: width, height: 22)
+        }
+    }
+}
+
+/// A white card split into equal columns by hairlines.
+final class ColumnsCard: CardView {
+    var columns = 4 { didSet { needsDisplay = true } }
+
+    override var wantsUpdateLayer: Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.25, dy: 0.25), xRadius: radius, yRadius: radius)
+        fill.setFill()
+        shape.fill()
+        stroke.setStroke()
+        shape.lineWidth = 0.5
+        shape.stroke()
+        let width = bounds.width / CGFloat(columns)
+        Theme.rule.setFill()
+        for index in 1..<columns { NSRect(x: (CGFloat(index) * width).rounded(), y: 10, width: 0.5, height: bounds.height - 20).fill() }
+    }
+
+    override func layout() {
+        super.layout()
+        let width = bounds.width / CGFloat(columns)
+        for (index, view) in subviews.enumerated() {
+            view.frame = NSRect(x: CGFloat(index) * width, y: 0, width: width, height: bounds.height).integral
         }
     }
 }
@@ -157,9 +203,8 @@ final class InsideCard: CardView {
     var isBrowser = false
 
     static let colors: [AppBreakdown.Kind: NSColor] = [
-        .tabs: Theme.dynamic(0x2F6BF0, 0x5C8DF6), .gpu: Theme.dynamic(0xD9487A, 0xEB6F98), .main: Theme.dynamic(0xE0662A, 0xF0864E),
-        .extensions: Theme.dynamic(0x1F9D72, 0x4ACB98), .network: Theme.dynamic(0x1FA2B4, 0x48C2D2),
-        .media: Theme.dynamic(0x9B57D6, 0xB77CEB), .other: Theme.dynamic(0x9A9AA5, 0x6C6C75),
+        .tabs: Theme.indigo, .gpu: Theme.pink, .main: Theme.orange, .extensions: Theme.green, .network: Theme.teal,
+        .media: Theme.purple, .other: Theme.dynamic(0xD1D1D6, 0x48484A),
     ]
     static let symbols: [AppBreakdown.Kind: String] = [
         .tabs: "square.on.square", .gpu: "cube", .main: "macwindow", .extensions: "puzzlepiece.extension",
@@ -265,25 +310,30 @@ final class PartRow: DrawnView {
         needsDisplay = true
     }
 
+    var showsRule = true
+
     override func draw(_ dirtyRect: NSRect) {
-        IconTile.image(symbol, tint: tint, size: 28, appearance: effectiveAppearance)
-            .draw(in: NSRect(x: 0, y: (bounds.height - 28) / 2, width: 28, height: 28), from: .zero, operation: .sourceOver,
-                  fraction: 1, respectFlipped: true, hints: nil)
-        let valueAttributes: [NSAttributedString.Key: Any] = [.font: Theme.figure(13, .medium), .foregroundColor: Theme.ink]
-        let shareAttributes: [NSAttributedString.Key: Any] = [.font: Theme.figure(12), .foregroundColor: Theme.inkTertiary]
+        tint.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 0, y: bounds.height / 2 - 4, width: 8, height: 8)).fill()
+        if showsRule {
+            Theme.rule.setFill()
+            NSRect(x: 18, y: bounds.height - 0.5, width: bounds.width - 18, height: 0.5).fill()
+        }
+        let valueAttributes: [NSAttributedString.Key: Any] = [.font: Theme.figure(13, .semibold), .foregroundColor: Theme.ink]
+        let shareAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular), .foregroundColor: Theme.inkSecondary]
         let valueWidth = ceil((value as NSString).size(withAttributes: valueAttributes).width)
         (value as NSString).draw(at: NSPoint(x: bounds.width - valueWidth, y: (bounds.height - 16) / 2), withAttributes: valueAttributes)
         let shareWidth = ceil((share as NSString).size(withAttributes: shareAttributes).width)
         (share as NSString).draw(at: NSPoint(x: bounds.width - 84 - shareWidth, y: (bounds.height - 15) / 2), withAttributes: shareAttributes)
-        let room = bounds.width - 40 - 84 - 44
+        let room = bounds.width - 18 - 84 - 44
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         let nameY: CGFloat = note.isEmpty ? (bounds.height - 17) / 2 : 4
-        (name as NSString).draw(with: NSRect(x: 40, y: nameY, width: room, height: 17), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                attributes: [.font: Theme.sans(13, .medium), .foregroundColor: Theme.ink, .paragraphStyle: paragraph])
+        (name as NSString).draw(with: NSRect(x: 18, y: nameY, width: room, height: 17), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                attributes: [.font: Theme.sans(13), .foregroundColor: Theme.ink, .paragraphStyle: paragraph])
         if !note.isEmpty {
-            (note as NSString).draw(with: NSRect(x: 40, y: 21, width: room, height: 15), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                    attributes: [.font: Theme.sans(11), .foregroundColor: Theme.inkTertiary, .paragraphStyle: paragraph])
+            (note as NSString).draw(with: NSRect(x: 18, y: 21, width: room, height: 15), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                    attributes: [.font: Theme.sans(11), .foregroundColor: Theme.inkSecondary, .paragraphStyle: paragraph])
         }
     }
 }
@@ -312,6 +362,7 @@ final class AppDrawer: NSView {
     private let gpu = FigureTile("GPU", symbol: "cube.fill", tint: PageID.gpu.tint, big: false)
     private let disk = FigureTile("Disk", symbol: "internaldrive", tint: PageID.disk.tint, big: false)
     private let network = FigureTile("Network", symbol: "globe", tint: PageID.network.tint, big: false)
+    private let strip = ColumnsCard()
     private let inside = InsideCard()
     private let historyCard = CardView()
     private let historyTitle = TextLine()
@@ -352,7 +403,7 @@ final class AppDrawer: NSView {
         layer?.shadowRadius = 18
         layer?.shadowOffset = CGSize(width: 0, height: -6)
         body.radius = 20
-        body.fill = Theme.panel
+        body.fill = Theme.ground
         // No masksToBounds: clipping a layer tree to rounded corners makes Core Animation
         // render it inside the app, about 190 MB of buffers. Nothing here reaches the corners.
         addSubview(body)
@@ -371,11 +422,12 @@ final class AppDrawer: NSView {
         scroll.automaticallyAdjustsContentInsets = false
         scroll.autohidesScrollers = true
         for view in [header, rule, scroll, footer] as [NSView] { body.addSubview(view) }
-        for view in [memory, cpu, power, gpu, disk, network, inside, historyCard, factsCard, commandCard] as [NSView] { content.addSubview(view) }
+        for view in [memory, cpu, strip, inside, historyCard, factsCard, commandCard] as [NSView] { content.addSubview(view) }
+        for view in [power, gpu, disk, network] as [NSView] { strip.addSubview(view) }
         memory.showsMeter = true
         cpu.showsMeter = true
 
-        historyTitle.text = Theme.caption("Last hour")
+        historyTitle.text = NSAttributedString(string: "Last Hour", attributes: [.font: Theme.sans(13, .semibold), .foregroundColor: Theme.ink])
         historyCard.radius = 14
         for view in [historyTitle, historyToggle, chart] as [NSView] { historyCard.addSubview(view) }
         historyToggle.onChange = { [weak self] _ in self?.fillChart() }
@@ -407,6 +459,7 @@ final class AppDrawer: NSView {
         kind.frame = NSRect(x: 78, y: 46, width: width - 140, height: 14)
         close.frame = NSRect(x: width - 20 - 32, y: 26, width: 32, height: 32)
         rule.frame = NSRect(x: 0, y: 84, width: width, height: 1)
+        rule.isHidden = true
         let footerHeight: CGFloat = buttons.isEmpty ? 0 : 68
         footer.frame = NSRect(x: 0, y: bounds.height - footerHeight, width: width, height: footerHeight)
         layoutFooter()
@@ -426,16 +479,15 @@ final class AppDrawer: NSView {
         memory.frame = NSRect(x: 16, y: y, width: half, height: 116)
         cpu.frame = NSRect(x: 16 + half + 10, y: y, width: half, height: 116)
         y += 126
-        for (index, tile) in [power, gpu, disk, network].enumerated() {
-            tile.frame = NSRect(x: 16 + CGFloat(index % 2) * (half + 10), y: y + CGFloat(index / 2) * 82, width: half, height: 72)
-        }
-        y += 164
+        strip.radius = 14
+        strip.frame = NSRect(x: 16, y: y, width: inner, height: 58)
+        y += 68
         if !inside.isHidden {
             inside.frame = NSRect(x: 16, y: y, width: inner, height: inside.wantedHeight)
             y = inside.frame.maxY + 10
         }
         historyCard.frame = NSRect(x: 16, y: y, width: inner, height: 150)
-        historyTitle.frame = NSRect(x: 18, y: 20, width: 120, height: 14)
+        historyTitle.frame = NSRect(x: 18, y: 18, width: 120, height: 18)
         let toggleWidth = historyToggle.naturalWidth
         historyToggle.frame = NSRect(x: inner - 18 - toggleWidth, y: 14, width: toggleWidth, height: 26)
         chart.frame = NSRect(x: 18, y: 50, width: inner - 36, height: 88)
@@ -534,7 +586,7 @@ final class AppDrawer: NSView {
     }
 
     private func setTitle(_ title: String, _ detail: String) {
-        name.text = NSAttributedString(string: title, attributes: [.font: Theme.sans(16, .semibold), .foregroundColor: Theme.ink])
+        name.text = NSAttributedString(string: title, attributes: [.font: Theme.sans(17, .bold), .foregroundColor: Theme.ink])
         kind.text = Theme.caption(detail, size: 9.5)
     }
 
@@ -542,11 +594,11 @@ final class AppDrawer: NSView {
                       watts: Double, disk rate: Double, net: Double?) {
         let (memValue, memUnit) = DashboardView.split(Format.memory(bytes))
         memory.figure.show(memValue, unit: memUnit)
-        memory.meter.fraction = Double(bytes) / max(total, 1)
+        memory.setMeter(Double(bytes) / max(total, 1))
         memory.note.text = NSAttributedString(string: "\(Format.percent(Double(bytes) / max(total, 1))) of \(Format.memory(total))",
                                               attributes: [.font: Theme.sans(11.5), .foregroundColor: Theme.inkSecondary])
         cpu.figure.show(Style.appCPU(load, machine: machine, coreCount: cores).replacingOccurrences(of: "%", with: ""), unit: "%")
-        cpu.meter.fraction = load / Double(max(cores, 1))
+        cpu.setMeter(load / Double(max(cores, 1)))
         cpu.note.text = NSAttributedString(string: String(format: "%.1f of %d cores", load, cores),
                                            attributes: [.font: Theme.sans(11.5), .foregroundColor: Theme.inkSecondary])
         let (w, wu) = watts > 0.005 ? DashboardView.split(Format.watts(watts)) : ("–", "")

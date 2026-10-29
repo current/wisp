@@ -558,7 +558,23 @@ final class TickMeter: DrawnView {
     var tickWidth: CGFloat = 2
     var pitch: CGFloat = 4.5
 
+    /// Tahoe draws a thin capsule; the tick style stays for places that want it.
+    var ticks = false
+
     override func draw(_ dirtyRect: NSRect) {
+        if !ticks {
+            let height = min(6, bounds.height)
+            let track = NSRect(x: 0, y: (bounds.height - height) / 2, width: bounds.width, height: height)
+            Theme.track.setFill()
+            NSBezierPath(roundedRect: track, xRadius: height / 2, yRadius: height / 2).fill()
+            let filled = track.width * CGFloat(min(1, max(0, fraction)))
+            if filled > 0.5 {
+                color.setFill()
+                NSBezierPath(roundedRect: NSRect(x: 0, y: track.minY, width: max(height, filled), height: height),
+                             xRadius: height / 2, yRadius: height / 2).fill()
+            }
+            return
+        }
         let count = max(1, Int((bounds.width + pitch - tickWidth) / pitch))
         let filled = Int((min(1, max(0, fraction)) * Double(count)).rounded())
         for index in 0..<count {

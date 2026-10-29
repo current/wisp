@@ -306,8 +306,8 @@ final class MemoryPage: MachinePage {
         hero.meta.text = Theme.caption("Used of \(Format.memory(m.total)) · \(Format.percent(m.usedFraction))")
         hero.needsLayout = true
         let parts: [(String, UInt64, NSColor)] = [
-            ("App", m.app, Theme.series[0]), ("Wired", m.wired, Theme.series[1]), ("Compressed", m.compressed, Theme.series[2]),
-            ("Cached", m.cached, Theme.series[3]), ("Free", m.free, Theme.track),
+            ("App", m.app, Theme.indigo), ("Wired", m.wired, Theme.orange), ("Compressed", m.compressed, Theme.indigo.withAlphaComponent(0.45)),
+            ("Cached", m.cached, Theme.teal), ("Free", m.free, Theme.track),
         ]
         waffle.parts = parts.map { .init(name: $0.0, value: Double($0.1), color: $0.2) }
         legend.items = parts.map {

@@ -254,7 +254,8 @@ final class AgentsPage: CardPage {
         let sorted = found.sorted { $0.cpu > $1.cpu }
         list.set(count: sorted.count) { [weak self] row, index in
             let agent = sorted[index]
-            row.icon = NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)
+            let (symbol, tint) = AgentLine.mark(agent.kind)
+            row.icon = IconTile.glyph(symbol, tint: tint, size: 16, appearance: NSApp.effectiveAppearance)
             row.name = agent.kind + (agent.host.map { $0 != agent.kind ? " in \($0)" : "" } ?? "") + "  \(agent.pid)"
             var note = agent.folder.flatMap { $0 == home ? nil : $0.replacingOccurrences(of: home, with: "~") } ?? ""
             if let start = agent.startDate { note += (note.isEmpty ? "" : " · ") + Format.duration(now.timeIntervalSince(start)) }
