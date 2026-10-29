@@ -109,6 +109,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         card.addSubview(scroll)
 
         search.placeholderString = "Filter apps and processes"
+        search.cell?.lineBreakMode = .byTruncatingTail
         search.delegate = self
         search.translatesAutoresizingMaskIntoConstraints = true
         search.sendsSearchStringImmediately = true

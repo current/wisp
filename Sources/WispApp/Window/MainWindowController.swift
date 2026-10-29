@@ -3,7 +3,7 @@ import IOKit
 import WispCore
 
 enum PageID: String, CaseIterable {
-    case overview, apps, cpu, memory, energy, disk, network, gpu, neural, sound, bluetooth, sensors, ports, docker, agents
+    case overview, apps, cpu, memory, energy, disk, network, gpu, neural, sound, bluetooth, sensors, ports, docker, agents, settings
 
     var title: String {
         switch self {
@@ -22,6 +22,7 @@ enum PageID: String, CaseIterable {
         case .ports: return "Projects"
         case .docker: return "Containers"
         case .agents: return "Coding Agents"
+        case .settings: return "Settings"
         }
     }
 
@@ -42,6 +43,7 @@ enum PageID: String, CaseIterable {
         case .ports: return "folder"
         case .docker: return "shippingbox"
         case .agents: return "sparkles"
+        case .settings: return "gearshape"
         }
     }
 
@@ -123,7 +125,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         drawer.isHidden = true
         drawer.onClose = { [weak self] in self?.select(nil) }
         sidebar.onSelect = { [weak self] id in self?.show(id) }
-        sidebar.onSettings = { [weak delegate] in delegate?.showSettings() }
+        sidebar.onSettings = { [weak self] in self?.show(.settings) }
         window.contentView = root
         root.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(rootResized), name: NSView.frameDidChangeNotification, object: root)
@@ -131,6 +133,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if !window.setFrameUsingName("WispMain") { window.center() }
         // For screenshots while other apps are in use.
         if ProcessInfo.processInfo.environment["WISP_FLOAT"] != nil { window.level = .floating }
+        // WISP_BACKGROUND keeps the window under every other window, for audits and benchmarks
+        // that run while the Mac is in use. It still renders, and screencapture -l still sees it.
+        if Self.background { window.level = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1) }
         // WISP_SIZE=1440x900 sets the window size, for screenshots.
         if let size = ProcessInfo.processInfo.environment["WISP_SIZE"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2 {
             window.setContentSize(NSSize(width: size[0], height: size[1]))
@@ -151,6 +156,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             if self.drawerOpen { self.drawer.update(table: table) }
         }
         delegate.windowVisible = true
+        // WISP_AUDIT=<folder> visits every page, then the app drawer, audits each layout and
+        // quits. It writes the page it is on to <folder>/now so a script can screenshot it.
+        if let folder = ProcessInfo.processInfo.environment["WISP_AUDIT"] {
+            runAudit(into: URL(fileURLWithPath: folder))
+        }
         // WISP_DEMO=<app id> walks pages and the drawer on a timer, for recording the motion.
         if let id = ProcessInfo.processInfo.environment["WISP_DEMO"] {
             let steps: [(Double, (MainWindowController) -> Void)] = [
@@ -190,6 +200,41 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    private func runAudit(into folder: URL) {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let report = folder.appendingPathComponent("report.tsv")
+        let now = folder.appendingPathComponent("now")
+        let size = window.map { "\(Int($0.contentLayoutRect.width))x\(Int($0.contentLayoutRect.height))" } ?? "?"
+        let appearance = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? "dark" : "light"
+        var steps: [(String, () -> Void)] = PageID.allCases.map { page in (page.rawValue, { [weak self] in self?.show(page) }) }
+        steps.append(("drawer", { [weak self] in
+            guard let self, let app = self.delegate.table.apps.max(by: { $0.memory < $1.memory }) else { return }
+            self.show(.apps)
+            self.select(.app(app.id))
+        }))
+        var lines: [String] = []
+        func run(_ index: Int) {
+            guard index < steps.count else {
+                try? lines.joined(separator: "\n").appending("\n").write(to: report, atomically: true, encoding: .utf8)
+                try? "done".write(to: now, atomically: true, encoding: .utf8)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { NSApp.terminate(nil) }
+                return
+            }
+            let (name, step) = steps[index]
+            step()
+            // Let data arrive, layouts settle and entrance animations finish.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                guard let self, let root = self.window?.contentView else { return }
+                root.layoutSubtreeIfNeeded()
+                for issue in LayoutAudit.audit(root) { lines.append("\(appearance)\t\(size)\t\(name)\t\(issue)") }
+                try? name.write(to: now, atomically: true, encoding: .utf8)
+                // The script screenshots while the page holds still.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { run(index + 1) }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { run(0) }
+    }
 
     @objc private func rootResized() { place(animated: false) }
 
@@ -298,8 +343,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         done?()
     }
 
+    static let background = ProcessInfo.processInfo.environment["WISP_BACKGROUND"] != nil
+
     private var isVisible: Bool {
         guard let window else { return false }
+        if Self.background { return window.isVisible }
         return window.isVisible && window.occlusionState.contains(.visible)
     }
 
@@ -350,6 +398,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return page
         case .docker: return ContainersPage(title: "Containers", metric: .cpu, delegate: delegate, onSelect: select)
         case .agents: return AgentsPage(delegate: delegate, onSelect: select)
+        case .settings: return SettingsPage(delegate: delegate)
         }
     }
 

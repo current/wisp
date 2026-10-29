@@ -231,13 +231,18 @@ final class InsideCard: CardView {
         if let top = sorted.first, total > 0 {
             let share = (byCPU ? top.cpu : Double(top.memory)) / total
             let what = byCPU ? "its CPU" : "its memory"
-            let text = NSMutableAttributedString(string: "\(top.name) use", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.ink])
-            if top.processes == 1 && top.name != "Tabs" && top.name != "Extensions" { text.mutableString.append("s") }
-            text.append(NSAttributedString(string: " \(Format.percent(share))", attributes: [.font: Theme.figure(15, .semibold), .foregroundColor: Self.colors[top.kind] ?? Theme.ink]))
-            text.append(NSAttributedString(string: " of \(what)", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.ink]))
-            headline.text = text
+            func line(_ name: String) -> NSAttributedString {
+                let text = NSMutableAttributedString(string: "\(name) use", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.ink])
+                if top.processes == 1 && top.name != "Tabs" && top.name != "Extensions" { text.mutableString.append("s") }
+                text.append(NSAttributedString(string: " \(Format.percent(share))", attributes: [.font: Theme.figure(15, .semibold), .foregroundColor: Self.colors[top.kind] ?? Theme.ink]))
+                text.append(NSAttributedString(string: " of \(what)", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.ink]))
+                return text
+            }
+            // A process named like com.apple.Virtualization.VirtualMachine shortens to its last part.
+            let short = top.name.split(separator: ".").last.map(String.init) ?? top.name
+            headline.variants = short == top.name ? [line(top.name)] : [line(top.name), line(short)]
         } else {
-            headline.text = NSAttributedString(string: "Nothing measured yet", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.inkSecondary])
+            headline.variants = [NSAttributedString(string: "Nothing measured yet", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.inkSecondary])]
         }
         bar.segments = sorted.map { ((byCPU ? $0.cpu : Double($0.memory)) / max(total, 1e-9), Self.colors[$0.kind] ?? Theme.inkTertiary) }
         while rows.count < sorted.count {
@@ -300,7 +305,7 @@ final class StackBar: DrawnView {
     }
 }
 
-final class PartRow: DrawnView {
+final class PartRow: DrawnView, SelfAuditing {
     private var name = "", note = "", share = "", value = "", symbol = "circle"
     private var tint = Theme.accent
 
@@ -311,6 +316,23 @@ final class PartRow: DrawnView {
     }
 
     var showsRule = true
+
+    private static let nameFont = Theme.sans(13)
+    private var nameRoom: CGFloat { bounds.width - 18 - 84 - 44 }
+
+    /// A reverse-DNS process name (com.apple.Virtualization.VirtualMachine) that does not
+    /// fit shows only its last part.
+    private func shownName(room: CGFloat) -> String {
+        guard (name as NSString).size(withAttributes: [.font: Self.nameFont]).width > room,
+              name.contains("."), let last = name.split(separator: ".").last else { return name }
+        return String(last)
+    }
+
+    var auditFaults: [String] {
+        let shown = shownName(room: nameRoom)
+        let width = ceil((shown as NSString).size(withAttributes: [.font: Self.nameFont]).width)
+        return width > nameRoom + 1 ? ["\(shown) needs \(Int(width)) pt, has \(Int(nameRoom))"] : []
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         tint.setFill()
@@ -329,7 +351,7 @@ final class PartRow: DrawnView {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         let nameY: CGFloat = note.isEmpty ? (bounds.height - 17) / 2 : 4
-        (name as NSString).draw(with: NSRect(x: 18, y: nameY, width: room, height: 17), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+        (shownName(room: room) as NSString).draw(with: NSRect(x: 18, y: nameY, width: room, height: 17), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
                                 attributes: [.font: Theme.sans(13), .foregroundColor: Theme.ink, .paragraphStyle: paragraph])
         if !note.isEmpty {
             (note as NSString).draw(with: NSRect(x: 18, y: 21, width: room, height: 15), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],

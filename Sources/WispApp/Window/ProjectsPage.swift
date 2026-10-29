@@ -185,7 +185,7 @@ final class ProjectsPage: CardPage {
         processes.set(note: "Servers, watchers, editors")
         let openPorts = Set(projects.flatMap { $0.servers.flatMap { $0.ports.map(\.port) } }).sorted()
         ports.set(text: "\(openPorts.count)")
-        ports.set(note: openPorts.prefix(5).map(String.init).joined(separator: " · ") + (openPorts.count > 5 ? " +\(openPorts.count - 5)" : ""))
+        ports.set(note: openPorts.prefix(4).map(String.init).joined(separator: " · ") + (openPorts.count > 4 ? " +\(openPorts.count - 4)" : ""))
 
         let idle = projects.flatMap(\.idleServers)
         idleCard.isHidden = idle.isEmpty

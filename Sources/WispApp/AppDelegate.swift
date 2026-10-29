@@ -10,7 +10,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBar!
     private var dashboard: DashboardPopover!
     private var mainWindow: MainWindowController?
-    private var settingsWindow: SettingsWindowController?
     private let notifier = Notifier()
     private var displayAsleep = false
     private var flushTimer: Timer?
@@ -28,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        MainMenu.install(delegate: self)
         statusBar = StatusBar(delegate: self)
         dashboard = DashboardPopover(delegate: self)
 
@@ -171,7 +171,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Appearance, units and the Dock icon, from settings.
     private func applyLooks() {
-        switch settings.look {
+        // WISP_APPEARANCE=dark or light overrides the setting, for screenshots and the layout audit.
+        switch ProcessInfo.processInfo.environment["WISP_APPEARANCE"].flatMap(Look.init(rawValue:)) ?? settings.look {
         case .light: NSApp.appearance = NSAppearance(named: .aqua)
         case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
         case .automatic: NSApp.appearance = nil
@@ -190,6 +191,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mainWindow = MainWindowController(delegate: self)
             if appID == nil, let page = PageID(rawValue: settings.startPage) { mainWindow?.show(page) }
         }
+        if MainWindowController.background {
+            // Shown without taking focus or coming forward.
+            mainWindow?.window?.orderBack(nil)
+            if let appID { mainWindow?.reveal(appID: appID) }
+            return
+        }
         NSApp.activate()
         mainWindow?.showWindow(nil)
         mainWindow?.window?.makeKeyAndOrderFront(nil)
@@ -204,16 +211,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowVisible = false
     }
 
-    func showSettings() {
-        dashboard.close()
-        if settingsWindow == nil { settingsWindow = SettingsWindowController(delegate: self) }
-        NSApp.activate()
-        settingsWindow?.showWindow(nil)
-        settingsWindow?.window?.makeKeyAndOrderFront(nil)
-        settingsWindow?.window?.orderFrontRegardless()
+    func showPage(_ page: PageID) {
+        showWindow()
+        mainWindow?.show(page)
     }
 
-    func settingsClosed() { settingsWindow = nil }
+    /// Settings live in the main window, as its last page.
+    func showSettings() {
+        showWindow()
+        mainWindow?.show(.settings)
+    }
 
     func closeDashboard() { dashboard.close() }
 

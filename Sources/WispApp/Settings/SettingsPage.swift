@@ -2,11 +2,11 @@ import AppKit
 import ServiceManagement
 import WispCore
 
-/// Settings in the same style as the main window: a glass sidebar of sections and,
-/// beside it, grouped cards with one setting per row. Every control writes through
-/// AppDelegate.change, which saves and re-plans sampling at once.
+/// Settings, as a page of the main window: the sections are a segmented control in
+/// the toolbar and each section is grouped cards with one setting per row. Every
+/// control writes through AppDelegate.change, which saves and re-plans sampling at once.
 @MainActor
-final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+final class SettingsPage: NSViewController, Page {
     enum Section: String, CaseIterable {
         case general, menuBar, display, alerts, assistants, about
 
@@ -45,69 +45,62 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private unowned let delegate: AppDelegate
-    private let root = WindowGround()
-    private let side = SettingsSidebar()
     private let scroll = NSScrollView()
     private let page = SettingsPageView()
+    private let tabs = Segmented(Section.allCases.map(\.title))
     private var section: Section = .general
 
     init(delegate: AppDelegate) {
         self.delegate = delegate
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 580),
-                              styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: true)
-        window.title = "Wisp Settings"
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.backgroundColor = Theme.ground
-        window.isReleasedWhenClosed = false
-        super.init(window: window)
-        root.wantsLayer = true
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func loadView() {
+        let root = NSView()
         scroll.documentView = page
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsets(top: Toolbar.height, left: 0, bottom: 0, right: 0)
+        scroll.scrollerInsets = NSEdgeInsets(top: Toolbar.height - 8, left: 0, bottom: 0, right: 0)
+        scroll.autoresizingMask = [.width, .height]
         root.addSubview(scroll)
-        root.addSubview(side)
-        side.onSelect = { [weak self] section in self?.show(section) }
-        window.contentView = root
-        root.postsFrameChangedNotifications = true
-        NotificationCenter.default.addObserver(self, selector: #selector(place), name: NSView.frameDidChangeNotification, object: root)
-        window.delegate = self
+        view = root
+        tabs.onChange = { [weak self] index in self?.show(Section.allCases[index]) }
         // WISP_TAB=<0-5> opens on a given section, for screenshots.
         let start = ProcessInfo.processInfo.environment["WISP_TAB"].flatMap(Int.init).flatMap { Section.allCases.indices.contains($0) ? Section.allCases[$0] : nil }
-        show(start ?? .general)
-        place()
-        window.center()
+        show(start ?? .general, animated: false)
     }
 
-    required init?(coder: NSCoder) { fatalError() }
+    var toolbarItems: [NSView] { [tabs] }
 
-    @objc private func place() {
-        let bounds = root.bounds
-        side.frame = NSRect(x: 8, y: 8, width: 200, height: bounds.height - 16)
-        scroll.frame = NSRect(x: 216, y: 0, width: bounds.width - 216, height: bounds.height)
-        page.width = scroll.contentSize.width
-        page.relayout()
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        scroll.frame = view.bounds
+        if page.width != scroll.contentSize.width {
+            page.width = scroll.contentSize.width
+            page.relayout()
+        }
     }
 
-    func show(_ section: Section) {
+    func show(_ section: Section, animated: Bool = true) {
         self.section = section
-        side.select(section)
+        tabs.select(Section.allCases.firstIndex(of: section) ?? 0, animated: false)
         rebuild()
-        page.scroll(.zero)
-        Motion.enter(page, from: CGPoint(x: 0, y: 6), duration: 0.2)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: -Toolbar.height))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        if animated { Motion.enter(page, from: CGPoint(x: 0, y: 6), duration: 0.2) }
     }
 
     /// Builds the current section again, after a change that adds or removes rows.
     func rebuild() {
-        page.title = section.title
         page.groups = groups(for: section)
         page.width = scroll.contentSize.width
         page.relayout()
     }
-
-    func windowWillClose(_ notification: Notification) { delegate.settingsClosed() }
 
     // MARK: Sections
 
@@ -157,7 +150,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             return [SettingsGroup("Shown in the menu bar", rows)]
         case .display:
             let looks = Look.allCases
-            let pages = PageID.allCases
+            let pages = PageID.allCases.filter { $0 != .settings }
             return [
                 SettingsGroup("Window", [
                     .control("Appearance", nil, popup(["Light", "Dark", "Match the system"], looks.firstIndex(of: s.look) ?? 0) { [unowned self] i in
@@ -272,7 +265,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func addLimit() {
-        guard let window else { return }
+        guard let window = view.window else { return }
         let apps = delegate.table.apps.sorted { $0.memory > $1.memory }.prefix(40)
         guard !apps.isEmpty else { return }
         let appMenu = NSPopUpButton()
@@ -336,7 +329,6 @@ struct SettingsGroup {
 /// The scrolling column of a settings section: its title and its grouped cards.
 @MainActor
 final class SettingsPageView: NSView {
-    var title = ""
     var groups: [SettingsGroup] = []
     var width: CGFloat = 560
     private var built: [NSView] = []
@@ -348,11 +340,7 @@ final class SettingsPageView: NSView {
         built = []
         let inner = min(620, width - 48)
         let left = (width - inner) / 2
-        var y: CGFloat = 40
-        let heading = TextLine(NSAttributedString(string: title, attributes: [.font: Theme.sans(22, .semibold), .foregroundColor: Theme.ink]))
-        heading.frame = NSRect(x: left + 4, y: y, width: inner, height: 30)
-        add(heading)
-        y += 46
+        var y: CGFloat = 8
         for group in groups {
             if let groupTitle = group.title {
                 let caption = TextLine(Theme.caption(groupTitle))
@@ -479,121 +467,6 @@ final class AboutCard: DrawnView {
         let text = "A system monitor that stays out of the way: about 0.2% of one core and 18 MB with only the menu bar showing."
         (text as NSString).draw(with: NSRect(x: 136, y: 88, width: bounds.width - 160, height: 60), options: [.usesLineFragmentOrigin],
                                 attributes: [.font: Theme.sans(12.5), .foregroundColor: Theme.inkSecondary])
-    }
-}
-
-/// The settings sidebar: the same glass panel and rows as the main window's.
-@MainActor
-final class SettingsSidebar: NSView {
-    var onSelect: ((SettingsWindowController.Section) -> Void)?
-    private let surface: NSView
-    private let content = Sidebar.FlippedContent()
-    private var rows: [SectionRow] = []
-    private let highlight = CALayer()
-    private var selected: SettingsWindowController.Section?
-
-    override init(frame: NSRect) {
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            glass.cornerRadius = 18
-            surface = glass
-        } else {
-            let card = CardView()
-            card.fill = Theme.panel
-            card.radius = 18
-            surface = card
-        }
-        super.init(frame: frame)
-        addSubview(surface)
-        if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView { glass.contentView = content } else { surface.addSubview(content) }
-        content.wantsLayer = true
-        highlight.cornerRadius = 9
-        highlight.cornerCurve = .continuous
-        highlight.opacity = 0
-        content.layer?.addSublayer(highlight)
-        for section in SettingsWindowController.Section.allCases {
-            let row = SectionRow(section)
-            row.onClick = { [weak self] in self?.onSelect?(section) }
-            rows.append(row)
-            content.addSubview(row)
-        }
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func layout() {
-        super.layout()
-        surface.frame = bounds
-        content.frame = surface.bounds
-        for (index, row) in rows.enumerated() {
-            row.frame = NSRect(x: 8, y: 48 + CGFloat(index) * 32, width: bounds.width - 16, height: 30)
-        }
-        place(animated: false)
-    }
-
-    func select(_ section: SettingsWindowController.Section) {
-        selected = section
-        for row in rows { row.selected = row.section == section }
-        place(animated: highlight.opacity > 0)
-    }
-
-    private func place(animated: Bool) {
-        guard let selected, let row = rows.first(where: { $0.section == selected }) else { return }
-        CATransaction.begin()
-        if animated && !Theme.reduceMotion {
-            CATransaction.setAnimationDuration(0.26)
-            CATransaction.setAnimationTimingFunction(Motion.ease)
-        } else {
-            CATransaction.setDisableActions(true)
-        }
-        highlight.frame = row.frame
-        highlight.opacity = 1
-        highlight.backgroundColor = (effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor.white.withAlphaComponent(0.1) : NSColor.black.withAlphaComponent(0.075)).cgColor
-        CATransaction.commit()
-    }
-
-    final class SectionRow: DrawnView {
-        let section: SettingsWindowController.Section
-        var selected = false { didSet { if selected != oldValue { needsDisplay = true } } }
-        var onClick: (() -> Void)?
-        private var hovering = false { didSet { needsDisplay = true } }
-
-        init(_ section: SettingsWindowController.Section) {
-            self.section = section
-            super.init(frame: .zero)
-            setAccessibilityElement(true)
-            setAccessibilityRole(.button)
-            setAccessibilityLabel(section.title)
-        }
-
-        required init?(coder: NSCoder) { fatalError() }
-
-        override func draw(_ dirtyRect: NSRect) {
-            if hovering, !selected {
-                Theme.ink.withAlphaComponent(0.05).setFill()
-                NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
-            }
-            IconTile.image(section.symbol, tint: section.tint, solid: true, appearance: effectiveAppearance)
-                .draw(in: NSRect(x: 8, y: (bounds.height - 22) / 2, width: 22, height: 22), from: .zero, operation: .sourceOver,
-                      fraction: 1, respectFlipped: true, hints: nil)
-            (section.title as NSString).draw(at: NSPoint(x: 40, y: (bounds.height - 17) / 2),
-                                             withAttributes: [.font: Theme.sans(13, selected ? .semibold : .regular), .foregroundColor: Theme.ink])
-        }
-
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            trackingAreas.forEach(removeTrackingArea)
-            addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
-        }
-
-        override func mouseEntered(with event: NSEvent) { hovering = true }
-        override func mouseExited(with event: NSEvent) { hovering = false }
-        override func mouseDown(with event: NSEvent) {}
-        override func mouseUp(with event: NSEvent) {
-            if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
-        }
-        override func accessibilityPerformPress() -> Bool { onClick?(); return true }
     }
 }
 

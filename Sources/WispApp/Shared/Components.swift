@@ -152,6 +152,18 @@ final class TextLine: DrawnView {
         didSet { if text != oldValue { needsDisplay = true } }
     }
     var alignment: NSTextAlignment = .left { didSet { needsDisplay = true } }
+    /// Longest first: the line shows the first one that fits its width, else the last.
+    var variants: [NSAttributedString] = [] { didSet { if variants != oldValue { pickVariant() } } }
+
+    private func pickVariant() {
+        guard let last = variants.last else { return }
+        text = variants.first { ceil($0.size().width) <= bounds.width } ?? last
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        pickVariant()
+    }
 
     convenience init(_ text: NSAttributedString, alignment: NSTextAlignment = .left) {
         self.init(frame: .zero)
@@ -318,7 +330,7 @@ final class BigNumber: DrawnView {
                       options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         }
         if !text.1.isEmpty {
-            let x = min(width(text.0, used), room) + 4
+            let x = (fits ? width(text.0, used) : min(width(text.0, used), room)) + 4
             unitText.draw(at: NSPoint(x: x, y: baseline(used) - unitFont.ascender))
         }
     }

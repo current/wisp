@@ -55,7 +55,7 @@ final class Stat: DrawnView {
 }
 
 /// Small labelled figures in a row: a caption over a semibold value, an optional dot.
-final class Facts: DrawnView {
+final class Facts: DrawnView, SelfAuditing {
     struct Item: Equatable {
         var label: String
         var value: String
@@ -78,10 +78,24 @@ final class Facts: DrawnView {
 
     var naturalWidth: CGFloat { widths().reduce(0, +) + spacing * CGFloat(max(0, items.count - 1)) }
 
+    /// What fits the width: the spacing tightens to 12 first, then trailing items drop.
+    private func fitted() -> (count: Int, spacing: CGFloat) {
+        let columns = widths()
+        for count in stride(from: columns.count, through: 1, by: -1) {
+            let content = columns.prefix(count).reduce(0, +)
+            let gaps = CGFloat(count - 1)
+            if content + gaps * spacing <= bounds.width + 0.5 { return (count, spacing) }
+            if content + gaps * 12 <= bounds.width + 0.5 { return (count, 12) }
+        }
+        return (min(1, columns.count), spacing)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         let columns = widths()
-        var x = alignRight ? bounds.width - naturalWidth : 0
-        for (item, width) in zip(items, columns) {
+        let (count, gap) = fitted()
+        let used = columns.prefix(count).reduce(0, +) + gap * CGFloat(max(0, count - 1))
+        var x = alignRight ? bounds.width - used : 0
+        for (item, width) in zip(items.prefix(count), columns) {
             var labelX = x
             if let dot = item.dot {
                 dot.setFill()
@@ -90,8 +104,13 @@ final class Facts: DrawnView {
             }
             (item.label as NSString).draw(at: NSPoint(x: labelX, y: 0), withAttributes: [.font: Self.labelFont, .foregroundColor: Theme.inkSecondary])
             (item.value as NSString).draw(at: NSPoint(x: x, y: 15), withAttributes: [.font: Self.valueFont, .foregroundColor: Theme.ink])
-            x += width + spacing
+            x += width + gap
         }
+    }
+
+    var auditFaults: [String] {
+        let columns = widths()
+        return columns.first.map { $0 > bounds.width + 1 ? ["first fact needs \(Int($0)) pt, has \(Int(bounds.width))"] : [] } ?? []
     }
 
     override func isAccessibilityElement() -> Bool { true }
@@ -185,11 +204,12 @@ final class SummaryCard: CardView {
         let noteWidth = note.naturalWidth
         note.frame = NSRect(x: chevron.frame.minX - 6 - noteWidth, y: 15, width: noteWidth, height: 16)
         let figureWidth = min(width, figure.naturalWidth)
+        // The frame stays wide: sized to one reading, the next wider reading would not fit.
         figure.frame = NSRect(x: 16, y: 36, width: max(60, width * (kind == .cpu ? 0.45 : 1)), height: 38)
         let afterFigure = 16 + figureWidth + 10
         switch kind {
         case .cpu:
-            context.frame = NSRect(x: 16, y: 76, width: width * 0.5, height: 14)
+            context.frame = NSRect(x: 16, y: 76, width: width, height: 14)
             let factsWidth = facts.naturalWidth
             facts.frame = NSRect(x: bounds.width - 16 - factsWidth, y: 44, width: factsWidth, height: 32)
             chart.frame = NSRect(x: 16, y: 100, width: width, height: height - 112)
@@ -296,8 +316,24 @@ final class CapsuleButton: DrawnView {
 }
 
 /// Four figures side by side on a soft grey strip, with hairlines between them.
-final class StatStrip: DrawnView {
+final class StatStrip: DrawnView, SelfAuditing {
     var items: [(String, String, String)] = [] { didSet { needsDisplay = true } }
+    private static let labelFont = Theme.sans(11)
+
+    /// The caption under a value: the label, and the extra only when there is room for it.
+    private func caption(_ label: String, _ extra: String, width: CGFloat) -> String {
+        let full = extra.isEmpty ? label : label + " · " + extra
+        return (full as NSString).size(withAttributes: [.font: Self.labelFont]).width <= width ? full : label
+    }
+
+    var auditFaults: [String] {
+        guard !items.isEmpty else { return [] }
+        let room = bounds.width / CGFloat(items.count) - 20
+        return items.compactMap { item in
+            let width = ceil((caption(item.1, item.2, width: room) as NSString).size(withAttributes: [.font: Self.labelFont]).width)
+            return width > room + 1 ? "\(item.1) needs \(Int(width)) pt, has \(Int(room))" : nil
+        }
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         Theme.fill.setFill()
@@ -311,9 +347,9 @@ final class StatStrip: DrawnView {
                 NSRect(x: x, y: 10, width: 0.5, height: bounds.height - 20).fill()
             }
             (value as NSString).draw(at: NSPoint(x: x + 14, y: 10), withAttributes: [.font: Theme.figure(24), .foregroundColor: Theme.ink])
-            let caption = NSMutableAttributedString(string: label, attributes: [.font: Theme.sans(11), .foregroundColor: Theme.inkSecondary])
-            if !extra.isEmpty { caption.append(NSAttributedString(string: " · " + extra, attributes: [.font: Theme.sans(11), .foregroundColor: Theme.inkSecondary])) }
-            caption.draw(with: NSRect(x: x + 14, y: 42, width: column - 20, height: 14), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+            let text = NSAttributedString(string: caption(label, extra, width: column - 20),
+                                          attributes: [.font: Self.labelFont, .foregroundColor: Theme.inkSecondary])
+            text.draw(with: NSRect(x: x + 14, y: 42, width: column - 20, height: 14), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         }
     }
 }
@@ -324,19 +360,8 @@ final class AgentLine: DrawnView {
     var count = 0 { didSet { needsDisplay = true } }
     var showsRule = true
 
-    static func mark(_ kind: String) -> (String, NSColor) {
-        switch kind {
-        case let k where k.contains("Claude"): return ("asterisk", Theme.hex(0xD97757))
-        case let k where k.contains("Codex"): return ("circle.hexagongrid.fill", Theme.ink)
-        case let k where k.contains("Gemini"): return ("sparkle", Theme.blue)
-        case let k where k.contains("Cursor"): return ("cursorarrow.rays", Theme.ink)
-        default: return ("terminal.fill", Theme.ink)
-        }
-    }
-
     override func draw(_ dirtyRect: NSRect) {
-        let (symbol, tint) = Self.mark(name)
-        IconTile.glyph(symbol, tint: tint, size: 18, appearance: effectiveAppearance)
+        AgentMark.image(name, size: 18, appearance: effectiveAppearance)
             .draw(in: NSRect(x: 0, y: (bounds.height - 18) / 2, width: 18, height: 18), from: .zero, operation: .sourceOver,
                   fraction: 1, respectFlipped: true, hints: nil)
         (name as NSString).draw(at: NSPoint(x: 30, y: (bounds.height - 16) / 2), withAttributes: [.font: Theme.sans(13), .foregroundColor: Theme.ink])
@@ -557,7 +582,9 @@ final class OverviewPage: CardPage {
             cpu.note.text = NSAttributedString(string: c.total >= 0.85 ? "Strained" : c.total >= 0.6 ? "Busy" : "",
                                                attributes: [.font: Theme.sans(13, .medium), .foregroundColor: Theme.inkTertiary])
             let performance = c.performanceCores, efficiency = c.efficiencyCores
-            cpu.context.text = Theme.caption("\(c.cores.count) cores" + (performance > 0 ? " · \(performance) performance, \(efficiency) efficiency" : ""))
+            cpu.context.variants = (performance > 0
+                ? ["\(c.cores.count) cores · \(performance) performance, \(efficiency) efficiency", "\(c.cores.count) cores (\(performance)P + \(efficiency)E)"]
+                : ["\(c.cores.count) cores"]).map { Theme.caption($0) }
             cpu.facts.items = [.init(label: "User", value: Format.percent(c.user), dot: Theme.blue),
                                .init(label: "System", value: Format.percent(c.system), dot: Theme.cyan),
                                .init(label: "Load average", value: String(format: "%.1f", c.loadAverage.first ?? 0), dot: nil)]
@@ -624,7 +651,7 @@ final class OverviewPage: CardPage {
             thermal.state.isHidden = t.pressure == .nominal
             thermal.state.text = t.pressure.rawValue.prefix(1).uppercased() + t.pressure.rawValue.dropFirst()
             thermal.state.tone = t.pressure == .fair ? .warn : .bad
-            thermal.context.text = Theme.caption("Hottest sensor · thermal pressure \(t.pressure.rawValue)")
+            thermal.context.variants = ["Hottest sensor · thermal pressure \(t.pressure.rawValue)", "Hottest sensor"].map { Theme.caption($0) }
             thermal.facts.items = t.fans.enumerated().prefix(2).map { .init(label: "Fan \($0.offset + 1)", value: "\(Int($0.element.rpm)) rpm", dot: nil) }
             thermal.needsLayout = true
         }
@@ -649,7 +676,7 @@ final class OverviewPage: CardPage {
         let ports = Set(projects.flatMap { $0.servers.flatMap { $0.ports.map(\.port) } }).count
         let docker = Docker.status(stats: false)
         let running = docker.containers.filter { $0.state == "running" }.count
-        strip.items = [("\(projects.count)", "Projects running", ""), ("\(processes)", "Processes", ""), ("\(ports)", "Open ports", ""),
+        strip.items = [("\(projects.count)", "Projects", ""), ("\(processes)", "Processes", ""), ("\(ports)", "Open ports", ""),
                        ("\(running)", "Containers", docker.socket.map { Docker.engineName($0) } ?? "")]
 
         let found = agents.find(table)

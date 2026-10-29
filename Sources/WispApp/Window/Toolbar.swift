@@ -18,7 +18,9 @@ final class Toolbar: NSView {
         layer?.addSublayer(fade)
         fade.startPoint = CGPoint(x: 0.5, y: 1)
         fade.endPoint = CGPoint(x: 0.5, y: 0)
-        fade.locations = [0, 0.6, 1]
+        // Solid under the title and controls, then a short fade, so scrolled
+        // content never shows through the heading.
+        fade.locations = [0, 0.82, 1]
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -57,7 +59,7 @@ final class Toolbar: NSView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        fade.frame = bounds
+        fade.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height + 14)
         effectiveAppearance.performAsCurrentDrawingAppearance {
             fade.colors = [Theme.ground.cgColor, Theme.ground.cgColor, Theme.ground.withAlphaComponent(0).cgColor]
         }
@@ -119,7 +121,11 @@ final class GlassCapsule: NSView {
 
     var naturalWidth: CGFloat {
         if let segmented = content as? Segmented { return segmented.naturalWidth + 2 }
-        if content is NSSearchField { return 210 }
+        if let search = content as? NSSearchField {
+            // Room for the whole placeholder: text, the magnifier and the clear button.
+            let text = (search.placeholderString ?? "") as NSString
+            return max(180, ceil(text.size(withAttributes: [.font: search.font ?? Theme.sans(13)]).width) + 100)
+        }
         return max(34, content.fittingSize.width + 12)
     }
 
