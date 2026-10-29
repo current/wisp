@@ -61,6 +61,8 @@ protocol Page: NSViewController {
     var demand: Demand { get }
     var toolbarHeading: (NSView, NSView)? { get }
     var toolbarItems: [NSView] { get }
+    /// The view the whole page scrolls in, if it has one; the toolbar heading follows it.
+    var pageScroll: NSScrollView? { get }
     func update(system: SystemSnapshot)
     func update(table: ProcessTable)
 }
@@ -70,6 +72,7 @@ extension Page {
     var toolbarHeading: (NSView, NSView)? { nil }
     /// Controls the page puts in the toolbar, each on its own glass capsule.
     var toolbarItems: [NSView] { [] }
+    var pageScroll: NSScrollView? { nil }
     var demand: Demand { [] }
     func update(system: SystemSnapshot) {}
     func update(table: ProcessTable) {}
@@ -85,6 +88,14 @@ final class WindowGround: NSView {
 }
 
 @MainActor
+/// The main window. In background runs (WISP_BACKGROUND) it lives entirely off the
+/// screen, where nobody can see it but it still draws and can be screenshotted.
+final class MainWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        MainWindowController.background ? frameRect : super.constrainFrameRect(frameRect, to: screen)
+    }
+}
+
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     private unowned let delegate: AppDelegate
     private let root = WindowGround()
@@ -104,7 +115,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     init(delegate: AppDelegate) {
         self.delegate = delegate
         drawer = AppDrawer(delegate: delegate)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 720),
+        let window = MainWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 720),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
         window.title = "Wisp"
@@ -115,7 +126,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.minSize = NSSize(width: 900, height: 620)
         // Test runs (sizes, parked or background windows) must not change the size people saved.
         let environment = ProcessInfo.processInfo.environment
-        if !["WISP_SIZE", "WISP_PARK", "WISP_BACKGROUND", "WISP_AUDIT"].contains(where: { environment[$0] != nil }) {
+        if !["WISP_SIZE", "WISP_BACKGROUND", "WISP_AUDIT"].contains(where: { environment[$0] != nil }) {
             window.setFrameAutosaveName("WispMain")
         }
         super.init(window: window)
@@ -145,8 +156,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if ProcessInfo.processInfo.environment["WISP_FLOAT"] != nil { window.level = .floating }
         // WISP_BACKGROUND keeps the window under every other window, for audits and benchmarks
         // that run while the Mac is in use. It still renders, and screencapture -l still sees it.
-        if Self.background { window.level = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1) }
-        if Self.parked { window.level = .floating }
+        if Self.background {
+            window.level = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1)
+            window.ignoresMouseEvents = true
+        }
         // WISP_SIZE=1440x900 sets the window size, for screenshots.
         if let size = ProcessInfo.processInfo.environment["WISP_SIZE"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2 {
             window.setContentSize(NSSize(width: size[0], height: size[1]))
@@ -180,6 +193,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             ]
             for (delay, step) in steps {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in if let self { step(self) } }
+            }
+        }
+        // WISP_SNAPSHOT=<file.png> writes a picture of the window after WISP_SNAPSHOT_DELAY
+        // seconds (default 5), then quits. Works with WISP_BACKGROUND, off the screen.
+        if let path = ProcessInfo.processInfo.environment["WISP_SNAPSHOT"] {
+            let delay = ProcessInfo.processInfo.environment["WISP_SNAPSHOT_DELAY"].flatMap(Double.init) ?? 5
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.writeSnapshot(to: URL(fileURLWithPath: path))
+                NSApp.terminate(nil)
+            }
+        }
+        // WISP_LAYER_REPORT=<file> lists, after 8 s, every layer that can make Core Animation
+        // render this window inside the app instead of in the window server.
+        if let path = ProcessInfo.processInfo.environment["WISP_LAYER_REPORT"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                guard let root = self?.window?.contentView?.superview?.layer else { return }
+                var lines: [String] = []
+                func name(_ layer: CALayer) -> String { layer.delegate.map { String(describing: type(of: $0)) } ?? String(describing: type(of: layer)) }
+                func walk(_ layer: CALayer, _ path: [String]) {
+                    let here = path + [name(layer)]
+                    var reasons: [String] = []
+                    if layer.masksToBounds && layer.cornerRadius > 0 { reasons.append("rounded clip") }
+                    if layer.shadowOpacity > 0 && layer.shadowPath == nil { reasons.append("shadow without path") }
+                    if layer.mask != nil { reasons.append("mask") }
+                    if !(layer.filters ?? []).isEmpty || !(layer.backgroundFilters ?? []).isEmpty || layer.compositingFilter != nil { reasons.append("filter") }
+                    if layer.drawsAsynchronously { reasons.append("async drawing") }
+                    if layer.shouldRasterize { reasons.append("rasterize") }
+                    if !reasons.isEmpty { lines.append("\(reasons.joined(separator: ", ")) \(Int(layer.bounds.width))x\(Int(layer.bounds.height)) " + here.suffix(6).joined(separator: " > ")) }
+                    layer.sublayers?.forEach { walk($0, here) }
+                }
+                walk(root, [])
+                try? lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
             }
         }
         // WISP_DRAWER=<app id> opens the drawer once data has arrived, for screenshots.
@@ -239,6 +284,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 guard let self, let root = self.window?.contentView else { return }
                 root.layoutSubtreeIfNeeded()
                 for issue in LayoutAudit.audit(root) { lines.append("\(appearance)\t\(size)\t\(name)\t\(issue)") }
+                self.writeSnapshot(to: folder.appendingPathComponent(name + ".png"))
                 try? name.write(to: now, atomically: true, encoding: .utf8)
                 // The script screenshots while the page holds still.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { run(index + 1) }
@@ -369,15 +415,54 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     static let background = ProcessInfo.processInfo.environment["WISP_BACKGROUND"] != nil
-    /// WISP_PARK shows the window almost entirely past the right edge of the screen, above
-    /// other windows: macOS counts it as visible, so it updates and draws as it would in use,
-    /// while only a 24 pt strip covers the screen. For benchmarks run while the Mac is in use.
-    static let parked = ProcessInfo.processInfo.environment["WISP_PARK"] != nil
 
     private var isVisible: Bool {
         guard let window else { return false }
         if Self.background { return window.isVisible }
         return window.isVisible && window.occlusionState.contains(.visible)
+    }
+
+    /// Draws the window's layers into a PNG, from inside the app, so a window kept off
+    /// the screen can still be looked at. Liquid Glass is drawn by the window server and
+    /// does not appear; everything Wisp draws itself does.
+    func writeSnapshot(to url: URL) {
+        guard let window, let frameView = window.contentView?.superview, let layer = frameView.layer else { return }
+        frameView.layoutSubtreeIfNeeded()
+        let scale = window.backingScaleFactor
+        let size = frameView.bounds.size
+        guard let context = CGContext(data: nil, width: Int(size.width * scale), height: Int(size.height * scale), bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        context.scaleBy(x: scale, y: scale)
+        if !layer.isGeometryFlipped && frameView.isFlipped == false {
+            // Layer coordinates are bottom-up here already.
+        }
+        effectiveAppearanceRender(frameView) { layer.render(in: context) }
+        guard let image = context.makeImage() else { return }
+        let rep = NSBitmapImageRep(cgImage: image)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+    }
+
+    private func effectiveAppearanceRender(_ view: NSView, _ body: () -> Void) {
+        view.effectiveAppearance.performAsCurrentDrawingAppearance(body)
+    }
+
+    private var scrollObserver: NSObjectProtocol?
+
+    private func followScroll(of page: Page) {
+        if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+        scrollObserver = nil
+        guard let scroll = page.pageScroll else { return }
+        let clip = scroll.contentView
+        clip.postsBoundsChangedNotifications = true
+        let report = { [weak self, weak scroll] in
+            guard let scroll else { return }
+            self?.toolbar.follow(scrolled: scroll.contentView.bounds.minY + scroll.contentInsets.top)
+        }
+        scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: nil) { _ in
+            MainActor.assumeIsolated { report() }
+        }
+        report()
     }
 
     /// The page to return to from Settings.
@@ -403,6 +488,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         container.addSubview(page.view)
         delegate.windowDemand = page.demand
         toolbar.show(title: id.title, subtitle: Self.machineSubtitle, heading: page.toolbarHeading, items: page.toolbarItems)
+        followScroll(of: page)
         page.update(system: delegate.system)
         page.update(table: delegate.table)
         if let cards = page as? CardPage {

@@ -6,10 +6,10 @@
     scripts/perf-suite.py --wisp build/Wisp.app --out build/perf
 
 Scenarios: both apps in the menu bar with no window, then each app's window on its
-overview, CPU, memory and disk pages. Both windows are the same size and are parked
-almost entirely past the right edge of the screen: macOS still counts them as
-visible, so they update and draw as they would in use, and the Mac stays usable
-while the suite runs. Wisp is relaunched for every scenario; Vitals keeps running
+overview, CPU, memory and disk pages. Both windows are the same size. Wisp's is
+kept off the screen (WISP_BACKGROUND) but told to update as if it were shown;
+Vitals' window is moved to the right edge of the screen with only a 24 point
+strip showing. Neither app is ever brought forward, so the Mac stays usable. Wisp is relaunched for every scenario; Vitals keeps running
 and is switched with its own ⌘1-4 shortcuts (agent-desktop sends them without
 bringing it forward).
 
@@ -57,7 +57,9 @@ def screen_width():
 def vitals_window(shortcut):
     """Opens or closes Vitals' window without bringing Vitals forward."""
     if shortcut is None:
-        run("agent-desktop", "press", "--app", "Vitals", "cmd+w")
+        # Its close button: ⌘W only reaches Vitals when it is the active app.
+        run("osascript", "-e", 'tell application "System Events" to tell process "Vitals" to '
+            'click (first button of window 1 whose subrole is "AXCloseButton")')
         return
     run("open", "-g", "-a", "Vitals")
     time.sleep(2)
@@ -73,7 +75,7 @@ def launch_wisp(app, page):
     # The shipped defaults, whatever this Mac's own settings say.
     env = ["--env", "WISP_MENU_INTERVAL=3", "--env", "WISP_INTERVAL=2"]
     if page:
-        env += ["--env", "WISP_PARK=1", "--env", "WISP_OPEN=window", "--env", f"WISP_PAGE={page}",
+        env += ["--env", "WISP_BACKGROUND=1", "--env", "WISP_OPEN=window", "--env", f"WISP_PAGE={page}",
                 "--env", f"WISP_SIZE={WIDTH}x{HEIGHT}"]
     run("open", "-g", "-n", "-a", app, *env)
 

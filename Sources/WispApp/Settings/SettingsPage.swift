@@ -89,6 +89,7 @@ final class SettingsPage: NSViewController, Page {
 
     /// The sections are listed in the sidebar; the toolbar names the one shown.
     var toolbarHeading: (NSView, NSView)? { (headingTitle, headingSubtitle) }
+    var pageScroll: NSScrollView? { scroll }
 
     override func viewDidLayout() {
         super.viewDidLayout()

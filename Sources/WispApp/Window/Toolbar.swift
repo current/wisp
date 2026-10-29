@@ -10,6 +10,10 @@ final class Toolbar: NSView {
     private let defaultSubtitle = TextLine()
     private var heading: (NSView, NSView)?
     private var capsules: [GlassCapsule] = []
+    /// The page's name on a small glass capsule, shown once the heading has scrolled away.
+    private let compactTitle = TextLine()
+    private lazy var compact = GlassCapsule(content: compactTitle)
+    private var scrolled: CGFloat = 0
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -36,6 +40,12 @@ final class Toolbar: NSView {
             heading = (defaultTitle, defaultSubtitle)
         }
         if let heading { addSubview(heading.0); addSubview(heading.1) }
+        let name = (heading?.0 as? TextLine)?.text.string ?? (heading?.0 as? NSTextField)?.stringValue ?? title
+        compactTitle.text = NSAttributedString(string: name, attributes: [.font: Theme.sans(13, .semibold), .foregroundColor: Theme.ink])
+        if compact.superview == nil { addSubview(compact) }
+        scrolled = 0
+        compact.alphaValue = 0
+        compact.isHidden = true
         capsules.forEach { $0.removeFromSuperview() }
         capsules = items.map { GlassCapsule(content: $0) }
         capsules.forEach(addSubview)
@@ -60,8 +70,35 @@ final class Toolbar: NSView {
         }
         if let (title, subtitle) = heading {
             let width = max(80, right - 24 - 12)
-            title.frame = NSRect(x: 24, y: 13, width: width, height: 19)
-            subtitle.frame = NSRect(x: 24, y: 32, width: width, height: 14)
+            title.frame = NSRect(x: 24, y: 13 - scrolled, width: width, height: 19)
+            subtitle.frame = NSRect(x: 24, y: 32 - scrolled, width: width, height: 14)
+            // The heading belongs to the page: it scrolls away with it and fades as it goes.
+            let fade = max(0, min(1, 1 - scrolled / 28))
+            title.alphaValue = fade
+            subtitle.alphaValue = fade
+        }
+        compact.frame = NSRect(x: 16, y: 13, width: min(compact.naturalWidth, max(80, right - 26)), height: 34)
+    }
+
+    /// The page scrolled to `offset` points from its top. The heading moves with the
+    /// content, so nothing ever runs under it, and the compact title takes its place.
+    func follow(scrolled offset: CGFloat) {
+        let offset = max(0, offset)
+        guard offset != scrolled else { return }
+        let wasCompact = scrolled > 40
+        scrolled = offset
+        needsLayout = true
+        let isCompact = offset > 40
+        guard isCompact != wasCompact else { return }
+        compact.isHidden = false
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Theme.reduceMotion ? 0 : 0.2
+            compact.animator().alphaValue = isCompact ? 1 : 0
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.scrolled <= 40 else { return }
+                self.compact.isHidden = true
+            }
         }
     }
 
@@ -114,6 +151,7 @@ final class GlassCapsule: NSView {
             let text = (search.placeholderString ?? "") as NSString
             return max(180, ceil(text.size(withAttributes: [.font: search.font ?? Theme.sans(13)]).width) + 100)
         }
+        if let line = content as? TextLine { return line.naturalWidth + 30 }
         return max(34, content.fittingSize.width + 12)
     }
 
@@ -128,6 +166,8 @@ final class GlassCapsule: NSView {
         holder.frame = surface.bounds
         if content is Segmented {
             content.frame = bounds.insetBy(dx: 1, dy: 0)
+        } else if content is TextLine {
+            content.frame = NSRect(x: 15, y: (bounds.height - 17) / 2, width: bounds.width - 30, height: 17)
         } else if content is NSSearchField {
             content.frame = NSRect(x: 8, y: (bounds.height - 22) / 2, width: bounds.width - 16, height: 22)
         } else {

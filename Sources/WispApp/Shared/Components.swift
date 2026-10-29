@@ -21,6 +21,10 @@ class BitmapView: DrawnView {
         super.init(frame: frame)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
+        // A layer that clips its children to rounded corners has Core Animation draw
+        // the card inside the app, about 190 MB of buffers. Nothing in a card should
+        // reach its corners anyway; the layout audit reports anything that spills.
+        clipsToBounds = false
     }
 
     required init?(coder: NSCoder) { fatalError() }
