@@ -101,6 +101,8 @@ struct AppSettings: Codable, Equatable {
     var openWindowAtLaunch = false
     /// The page a newly opened window starts on.
     var startPage = "overview"
+    /// The blocks of the menu bar dashboard, top to bottom.
+    var dashboard = DashboardBlock.defaultLayout
 
     static let key = "settings"
 
@@ -127,6 +129,8 @@ struct AppSettings: Codable, Equatable {
         showInDock = (try? c.decode(Bool.self, forKey: .showInDock)) ?? fallback.showInDock
         openWindowAtLaunch = (try? c.decode(Bool.self, forKey: .openWindowAtLaunch)) ?? fallback.openWindowAtLaunch
         startPage = (try? c.decode(String.self, forKey: .startPage)) ?? fallback.startPage
+        // Read as names so a block this build does not know drops out instead of losing the whole layout.
+        dashboard = DashboardBlock.layout(from: try? c.decode([String].self, forKey: .dashboard))
     }
 
     static func load() -> AppSettings {
@@ -136,10 +140,17 @@ struct AppSettings: Codable, Equatable {
         for metric in MenuMetric.allCases where !settings.menuItems.contains(where: { $0.metric == metric }) {
             settings.menuItems.append(MenuItemSetting(metric: metric, enabled: false, style: .number))
         }
+        // WISP_DASHBOARD=cpu,gpu,... shows a given layout, for screenshots.
+        if let names = ProcessInfo.processInfo.environment["WISP_DASHBOARD"] {
+            settings.dashboard = DashboardBlock.layout(from: names.split(separator: ",").map(String.init))
+        }
         return settings
     }
 
     func save() {
+        // Screenshot and demo runs share the real app's defaults; they keep changes in memory.
+        let env = ProcessInfo.processInfo.environment
+        guard env["WISP_NO_SAVE"] == nil, env["WISP_BUILDER_DEMO"] == nil else { return }
         if let data = try? JSONEncoder().encode(self) { UserDefaults.standard.set(data, forKey: Self.key) }
     }
 }

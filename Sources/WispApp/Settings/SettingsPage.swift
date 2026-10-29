@@ -49,6 +49,11 @@ final class SettingsPage: NSViewController, Page {
     private let page = SettingsPageView()
     private let tabs = Segmented(Section.allCases.map(\.title))
     private var section: Section = .general
+    private lazy var builder: DashboardBuilder = {
+        let builder = DashboardBuilder(delegate: delegate)
+        builder.onHeightChange = { [weak self] in self?.rebuild() }
+        return builder
+    }()
 
     init(delegate: AppDelegate) {
         self.delegate = delegate
@@ -76,6 +81,14 @@ final class SettingsPage: NSViewController, Page {
     }
 
     var toolbarItems: [NSView] { [tabs] }
+
+    func update(system: SystemSnapshot) {
+        if section == .menuBar { builder.update(system: system) }
+    }
+
+    func update(table: ProcessTable) {
+        if section == .menuBar { builder.update(table: table) }
+    }
 
     override func viewDidLayout() {
         super.viewDidLayout()
@@ -147,7 +160,14 @@ final class SettingsPage: NSViewController, Page {
             }
             rows.append(.control("Show icons next to numbers", "A reading turns red when the Mac is under strain.",
                                  toggle(s.showIcons) { [unowned self] on in delegate.change { $0.showIcons = on } }))
-            return [SettingsGroup("Shown in the menu bar", rows)]
+            builder.needsLayout = true
+            return [
+                SettingsGroup("Dashboard", [
+                    .custom(builder, builder.preferredHeight),
+                    .control("Reset the dashboard", "Back to the CPU, meters, cores and apps.", pill("Reset to Default") { [unowned self] in builder.reset() }),
+                ], footer: "The dashboard opens from the menu bar. It reads only what its blocks show, and nothing while it is closed."),
+                SettingsGroup("Shown in the menu bar", rows),
+            ]
         case .display:
             let looks = Look.allCases
             let pages = PageID.allCases.filter { $0 != .settings }

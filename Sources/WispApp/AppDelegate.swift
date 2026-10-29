@@ -128,7 +128,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             demand.formUnion(windowDemand)
         } else if dashboardOpen {
             activity = .popover
-            demand.formUnion([.system, .processes])
+            // Only what the dashboard's blocks show.
+            demand.formUnion(DashboardBlock.demand(of: settings.dashboard))
+            // Per-app network when it is tracked in the background anyway, for the apps block's Net tab.
+            if settings.trackAppNetwork, settings.dashboard.contains(.apps) { demand.insert(.appNetwork) }
         } else {
             activity = demand.isEmpty ? .hidden : .menuBar
         }
@@ -160,9 +163,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         body(&copy)
         guard copy != settings else { return }
         let menuChanged = copy.menuItems != settings.menuItems || copy.showIcons != settings.showIcons
+        let layoutChanged = copy.dashboard != settings.dashboard
         settings = copy
         settings.save()
         if menuChanged { statusBar.rebuild(settings.menuItems) }
+        if layoutChanged { dashboard.layoutChanged() }
         monitor.update(rules: settings.alerts)
         IPCServer.shared.assistantsAllowed = settings.allowMCP
         applyLooks()
@@ -217,9 +222,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Settings live in the main window, as its last page.
-    func showSettings() {
+    func showSettings(section: SettingsPage.Section? = nil) {
         showWindow()
         mainWindow?.show(.settings)
+        if let section { mainWindow?.showSettings(section) }
     }
 
     func closeDashboard() { dashboard.close() }
