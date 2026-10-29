@@ -53,7 +53,12 @@ final class PlanCard: CardView {
     }
 
     func show(_ usage: PlanUsage, now: Date) {
-        name.text = NSAttributedString(string: usage.provider, attributes: [.font: Theme.sans(14, .medium), .foregroundColor: Theme.ink])
+        let mark = NSTextAttachment()
+        mark.image = AgentMark.image(usage.provider, size: 16, appearance: NSApp.effectiveAppearance)
+        mark.bounds = NSRect(x: 0, y: -3, width: 16, height: 16)
+        let title = NSMutableAttributedString(attachment: mark)
+        title.append(NSAttributedString(string: "  " + usage.provider, attributes: [.font: Theme.sans(14, .medium), .foregroundColor: Theme.ink]))
+        name.text = title
         account.text = Theme.caption(usage.account, size: 9.5)
         plan.text = usage.plan ?? ""
         plan.isHidden = usage.plan == nil
@@ -254,8 +259,7 @@ final class AgentsPage: CardPage {
         let sorted = found.sorted { $0.cpu > $1.cpu }
         list.set(count: sorted.count) { [weak self] row, index in
             let agent = sorted[index]
-            let (symbol, tint) = AgentLine.mark(agent.kind)
-            row.icon = IconTile.glyph(symbol, tint: tint, size: 16, appearance: NSApp.effectiveAppearance)
+            row.icon = AgentMark.image(agent.kind, size: 18, appearance: NSApp.effectiveAppearance)
             row.name = agent.kind + (agent.host.map { $0 != agent.kind ? " in \($0)" : "" } ?? "") + "  \(agent.pid)"
             var note = agent.folder.flatMap { $0 == home ? nil : $0.replacingOccurrences(of: home, with: "~") } ?? ""
             if let start = agent.startDate { note += (note.isEmpty ? "" : " · ") + Format.duration(now.timeIntervalSince(start)) }
