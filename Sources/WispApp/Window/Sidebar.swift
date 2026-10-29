@@ -162,6 +162,14 @@ final class NavRow: DrawnView {
 final class Sidebar: NSView {
     var onSelect: ((PageID) -> Void)?
     var onSettings: (() -> Void)?
+    /// In settings: a section was picked, or the Settings row was clicked to go back.
+    var onSection: ((SettingsPage.Section) -> Void)?
+    var onBack: (() -> Void)?
+    private var sectionRows: [NavRowButton] = []
+    private var selectedSection: SettingsPage.Section = .general
+    /// Settings replaces the page list: its row rises to the top and the sections
+    /// fan out of it. Leaving folds them back in.
+    private(set) var inSettings = false
     private(set) var rows: [NavRow] = []
     private var headers: [TextLine] = []
     private let brand = TextLine()
@@ -219,7 +227,18 @@ final class Sidebar: NSView {
                 content.addSubview(row)
             }
         }
-        settingsRow.onClick = { [weak self] in self?.onSettings?() }
+        settingsRow.onClick = { [weak self] in
+            guard let self else { return }
+            if self.inSettings { self.onBack?() } else { self.onSettings?() }
+        }
+        for section in SettingsPage.Section.allCases {
+            let row = NavRowButton(title: section.title, symbol: section.sidebarSymbol)
+            row.onClick = { [weak self] in self?.onSection?(section) }
+            row.alphaValue = 0
+            row.isHidden = true
+            sectionRows.append(row)
+            content.addSubview(row)
+        }
         content.addSubview(settingsRow)
     }
 
@@ -241,38 +260,123 @@ final class Sidebar: NSView {
         super.layout()
         surface.frame = bounds
         content.frame = surface.bounds
+        guard !moving else { return }
+        apply(frames())
+        placeHighlight(animated: false)
+    }
+
+    /// Where every row goes in the current mode, and how visible it is.
+    private func frames() -> [(NSView, NSRect, CGFloat)] {
         let width = bounds.width
+        var result: [(NSView, NSRect, CGFloat)] = []
         // The first row sits under the window buttons, which live on the sidebar.
         var y: CGFloat = 44
         var rowIndex = 0
+        let pagesAlpha: CGFloat = inSettings ? 0 : 1
+        let lift: CGFloat = inSettings ? -10 : 0
         for (sectionIndex, (title, pages)) in PageID.sections.enumerated() {
             if title != nil {
                 y += 12
-                headers[sectionIndex].frame = NSRect(x: 19, y: y, width: width - 38, height: 14)
+                result.append((headers[sectionIndex], NSRect(x: 19, y: y + lift, width: width - 38, height: 14), pagesAlpha))
                 y += 18
             }
             for _ in pages {
-                rows[rowIndex].frame = NSRect(x: 10, y: y, width: width - 20, height: 28)
+                result.append((rows[rowIndex], NSRect(x: 10, y: y + lift, width: width - 20, height: 28), pagesAlpha))
                 y += 28
                 rowIndex += 1
             }
         }
-        settingsRow.frame = NSRect(x: 10, y: bounds.height - 38, width: width - 20, height: 28)
+        let bottom = NSRect(x: 10, y: bounds.height - 38, width: width - 20, height: 28)
+        let top = NSRect(x: 10, y: 44, width: width - 20, height: 28)
+        let settingsFrame = inSettings ? top : bottom
         // A short window hides the settings row rather than draw it over the pages.
-        settingsRow.isHidden = y > bounds.height - 44
-        placeHighlight(animated: false)
+        result.append((settingsRow, settingsFrame, inSettings || y <= bounds.height - 44 ? 1 : 0))
+        for (index, row) in sectionRows.enumerated() {
+            let open = NSRect(x: 10, y: 44 + 36 + CGFloat(index) * 28, width: width - 20, height: 28)
+            result.append((row, inSettings ? open : settingsFrame, inSettings ? 1 : 0))
+        }
+        return result
+    }
+
+    private var moving = false
+
+    private func apply(_ frames: [(NSView, NSRect, CGFloat)]) {
+        for (view, frame, alpha) in frames {
+            view.frame = frame
+            view.alphaValue = alpha
+            view.isHidden = alpha == 0
+        }
+    }
+
+    /// Opens or closes settings in the sidebar.
+    func showSettings(_ open: Bool) {
+        guard open != inSettings else { return }
+        inSettings = open
+        settingsRow.symbol = open ? "chevron.left" : "gearshape"
+        settingsRow.setAccessibilityLabel(open ? "Back" : "Settings")
+        let targets = frames()
+        guard window != nil, !Theme.reduceMotion else {
+            apply(targets)
+            placeHighlight(animated: false)
+            return
+        }
+        moving = true
+        highlight.opacity = 0
+        for (view, _, alpha) in targets where alpha > 0 { view.isHidden = false }
+        let curve = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+        for (index, (view, frame, alpha)) in targets.enumerated() {
+            // Sections leave the Settings row one after another on the way out and
+            // fold back in together; the page list fades as a block.
+            let order = sectionRows.firstIndex { $0 === view }
+            let delay = open ? Double(order ?? 0) * 0.03 + (order == nil ? 0 : 0.08) : 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = open ? 0.42 : 0.3
+                    context.timingFunction = curve
+                    context.allowsImplicitAnimation = true
+                    view.animator().frame = frame
+                    view.animator().alphaValue = alpha
+                } completionHandler: {
+                    if alpha == 0 { view.isHidden = true }
+                    guard index == targets.count - 1 else { return }
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.moving = false
+                        self.placeHighlight(animated: false)
+                        self.revealHighlight()
+                    }
+                }
+            }
+        }
+    }
+
+    private func revealHighlight() {
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        fade.duration = 0.18
+        highlight.add(fade, forKey: "reveal")
+    }
+
+    func select(section: SettingsPage.Section) {
+        selectedSection = section
+        for (row, candidate) in zip(sectionRows, SettingsPage.Section.allCases) { row.selected = candidate == section }
+        if !moving { placeHighlight(animated: highlight.opacity > 0) }
     }
 
     func select(_ page: PageID) {
         selectedPage = page
         for row in rows { row.selected = row.page == page }
-        settingsRow.selected = page == .settings
-        placeHighlight(animated: highlight.opacity > 0)
+        let wasInSettings = inSettings
+        showSettings(page == .settings)
+        if !moving { placeHighlight(animated: highlight.opacity > 0 && wasInSettings == inSettings) }
     }
 
     private func placeHighlight(animated: Bool) {
         guard let page = selectedPage else { return }
-        let target: NSView? = page == .settings ? settingsRow : rows.first(where: { $0.page == page })
+        let target: NSView? = page == .settings
+            ? sectionRows[SettingsPage.Section.allCases.firstIndex(of: selectedSection) ?? 0]
+            : rows.first(where: { $0.page == page })
         guard let target, !target.isHidden else { highlight.opacity = 0; return }
         let from = highlight.presentation()?.frame ?? highlight.frame
         let to = target.frame
@@ -345,7 +449,7 @@ final class Sidebar: NSView {
 /// The settings row at the foot of the sidebar.
 final class NavRowButton: DrawnView {
     let title: String
-    let symbol: String
+    var symbol: String { didSet { if symbol != oldValue { needsDisplay = true } } }
     var onClick: (() -> Void)?
     var selected = false { didSet { if selected != oldValue { needsDisplay = true } } }
     private var hovering = false { didSet { needsDisplay = true } }

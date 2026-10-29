@@ -67,6 +67,10 @@ class CardPage: NSViewController, Page {
         // WISP_SCROLL=bottom shows the end of the page, for screenshots.
         if ProcessInfo.processInfo.environment["WISP_SCROLL"] == "bottom" {
             canvas.scroll(NSPoint(x: 0, y: max(0, height - scroll.contentSize.height)))
+        } else if first, let points = ProcessInfo.processInfo.environment["WISP_SCROLL"].flatMap(Double.init) {
+            // WISP_SCROLL=<points> scrolls part of the way, for screenshots.
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: -Self.topInset + points))
+            scroll.reflectScrolledClipView(scroll.contentView)
         } else if first {
             scrollToTop()
         }
@@ -74,7 +78,7 @@ class CardPage: NSViewController, Page {
 
     override func viewDidAppear() {
         super.viewDidAppear()
-        if ProcessInfo.processInfo.environment["WISP_SCROLL"] != "bottom" { scrollToTop() }
+        if ProcessInfo.processInfo.environment["WISP_SCROLL"] == nil { scrollToTop() }
     }
 
     func scrollToTop() {
@@ -152,6 +156,7 @@ class CardPage: NSViewController, Page {
 
     var toolbarHeading: (NSView, NSView)? { headingLines.map { ($0.0, $0.1) } }
     var toolbarItems: [NSView] { [] }
+    var pageScroll: NSScrollView? { scroll }
 
     /// Headings sit in the toolbar now; the cards start at the top margin.
     func place(_ title: TextLine, _ caption: TextLine, width: CGFloat) -> CGFloat { margin }
