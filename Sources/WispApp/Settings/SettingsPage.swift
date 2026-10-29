@@ -8,6 +8,18 @@ import WispCore
 @MainActor
 final class SettingsPage: NSViewController, Page {
     enum Section: String, CaseIterable {
+        /// The outline symbol the sidebar shows, as for pages.
+        var sidebarSymbol: String {
+            switch self {
+            case .general: return "gearshape"
+            case .menuBar: return "menubar.rectangle"
+            case .display: return "paintbrush"
+            case .alerts: return "bell.badge"
+            case .assistants: return "sparkles"
+            case .about: return "info.circle"
+            }
+        }
+
         case general, menuBar, display, alerts, assistants, about
 
         var title: String {
@@ -47,8 +59,9 @@ final class SettingsPage: NSViewController, Page {
     private unowned let delegate: AppDelegate
     private let scroll = NSScrollView()
     private let page = SettingsPageView()
-    private let tabs = Segmented(Section.allCases.map(\.title))
-    private var section: Section = .general
+    private(set) var section: Section = .general
+    private let headingTitle = TextLine()
+    private let headingSubtitle = TextLine(Toolbar.subtitle("Settings"))
 
     init(delegate: AppDelegate) {
         self.delegate = delegate
@@ -69,13 +82,13 @@ final class SettingsPage: NSViewController, Page {
         scroll.autoresizingMask = [.width, .height]
         root.addSubview(scroll)
         view = root
-        tabs.onChange = { [weak self] index in self?.show(Section.allCases[index]) }
         // WISP_TAB=<0-5> opens on a given section, for screenshots.
         let start = ProcessInfo.processInfo.environment["WISP_TAB"].flatMap(Int.init).flatMap { Section.allCases.indices.contains($0) ? Section.allCases[$0] : nil }
         show(start ?? .general, animated: false)
     }
 
-    var toolbarItems: [NSView] { [tabs] }
+    /// The sections are listed in the sidebar; the toolbar names the one shown.
+    var toolbarHeading: (NSView, NSView)? { (headingTitle, headingSubtitle) }
 
     override func viewDidLayout() {
         super.viewDidLayout()
@@ -88,7 +101,7 @@ final class SettingsPage: NSViewController, Page {
 
     func show(_ section: Section, animated: Bool = true) {
         self.section = section
-        tabs.select(Section.allCases.firstIndex(of: section) ?? 0, animated: false)
+        headingTitle.text = Toolbar.title(section.title)
         rebuild()
         scroll.contentView.scroll(to: NSPoint(x: 0, y: -Toolbar.height))
         scroll.reflectScrolledClipView(scroll.contentView)
@@ -251,9 +264,16 @@ final class SettingsPage: NSViewController, Page {
     }
 
     private func popup(_ titles: [String], _ selected: Int, _ body: @escaping (Int) -> Void) -> NSView {
-        let popup = ActionPopUp(titles: titles, selected: selected, body)
-        popup.controlSize = .regular
-        return popup
+        let button = MenuButton()
+        button.titles = titles
+        button.selected = selected
+        button.onPick = body
+        // As wide as the longest choice, so picking one does not move the button.
+        let longest = titles.max { $0.count < $1.count } ?? ""
+        let probe = MenuButton()
+        probe.titles = [longest]
+        button.frame.size = NSSize(width: probe.naturalWidth, height: 26)
+        return button
     }
 
     private func pill(_ title: String, _ body: @escaping () -> Void) -> NSView {

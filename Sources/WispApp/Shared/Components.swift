@@ -959,3 +959,70 @@ final class Tooltip: DrawnView {
 
     func hide() { isHidden = true }
 }
+
+/// A Tahoe pull-down for choosing one of a few things inside a card: the choice and a
+/// small up-down chevron on a soft grey capsule, with a menu of the choices on click.
+final class MenuButton: DrawnView {
+    var titles: [String] = [] { didSet { if titles != oldValue { needsDisplay = true } } }
+    var selected = 0 { didSet { if selected != oldValue { needsDisplay = true } } }
+    var onPick: ((Int) -> Void)?
+    private var hovering = false { didSet { needsDisplay = true } }
+    private static let font = Theme.sans(12.5, .medium)
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.popUpButton)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private var title: String { titles.indices.contains(selected) ? titles[selected] : "" }
+
+    var naturalWidth: CGFloat { ceil((title as NSString).size(withAttributes: [.font: Self.font]).width) + 40 }
+
+    override func draw(_ dirtyRect: NSRect) {
+        (hovering ? Theme.ink.withAlphaComponent(0.09) : Theme.fill).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        (title as NSString).draw(with: NSRect(x: 12, y: (bounds.height - 16) / 2, width: bounds.width - 38, height: 16),
+                                 options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                 attributes: [.font: Self.font, .foregroundColor: Theme.ink, .paragraphStyle: paragraph])
+        IconTile.glyph("chevron.up.chevron.down", tint: Theme.inkSecondary, size: 10, appearance: effectiveAppearance)
+            .draw(in: NSRect(x: bounds.width - 22, y: (bounds.height - 10) / 2, width: 10, height: 10), from: .zero,
+                  operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        setAccessibilityValue(title)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func mouseDown(with event: NSEvent) { showMenu() }
+    override func accessibilityPerformPress() -> Bool { showMenu(); return true }
+
+    private func showMenu() {
+        guard !titles.isEmpty else { return }
+        let menu = NSMenu()
+        for (index, title) in titles.enumerated() {
+            let item = NSMenuItem(title: title, action: #selector(picked(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            item.state = index == selected ? .on : .off
+            menu.addItem(item)
+        }
+        // The current choice opens over the button, as a macOS pop-up menu does.
+        menu.popUp(positioning: menu.item(at: selected), at: NSPoint(x: 4, y: bounds.height - 4), in: self)
+        hovering = false
+    }
+
+    @objc private func picked(_ item: NSMenuItem) {
+        selected = item.tag
+        onPick?(item.tag)
+    }
+}

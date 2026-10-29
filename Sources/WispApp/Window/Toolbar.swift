@@ -1,12 +1,11 @@
 import AppKit
 
 /// The Tahoe toolbar over the page: the page's title and a subtitle on the left,
-/// its controls on the right, each on a glass capsule. The page scrolls under it;
-/// a short fade from the ground colour keeps the title readable.
+/// its controls on the right, each on a glass capsule. It has no background: the
+/// page scrolls under it, as in a Tahoe window.
 @MainActor
 final class Toolbar: NSView {
     static let height: CGFloat = 60
-    private let fade = CAGradientLayer()
     private let defaultTitle = TextLine()
     private let defaultSubtitle = TextLine()
     private var heading: (NSView, NSView)?
@@ -15,12 +14,6 @@ final class Toolbar: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.addSublayer(fade)
-        fade.startPoint = CGPoint(x: 0.5, y: 1)
-        fade.endPoint = CGPoint(x: 0.5, y: 0)
-        // Solid under the title and controls, then a short fade, so scrolled
-        // content never shows through the heading.
-        fade.locations = [0, 0.82, 1]
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -59,13 +52,6 @@ final class Toolbar: NSView {
 
     override func layout() {
         super.layout()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        fade.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height + 14)
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            fade.colors = [Theme.ground.cgColor, Theme.ground.cgColor, Theme.ground.withAlphaComponent(0).cgColor]
-        }
-        CATransaction.commit()
         var right = bounds.width - 16
         for capsule in capsules.reversed() {
             let width = capsule.naturalWidth

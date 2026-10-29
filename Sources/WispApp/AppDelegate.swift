@@ -5,7 +5,14 @@ import WispCore
 /// the sampling plan in step with what is on screen.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private(set) var settings = AppSettings.load()
+    private(set) var settings: AppSettings = {
+        var settings = AppSettings.load()
+        // Benchmarks set the update intervals for one run without saving them.
+        let environment = ProcessInfo.processInfo.environment
+        if let seconds = environment["WISP_MENU_INTERVAL"].flatMap(Double.init) { settings.menuInterval = seconds }
+        if let seconds = environment["WISP_INTERVAL"].flatMap(Double.init) { settings.interval = seconds }
+        return settings
+    }()
     let monitor: Monitor
     private var statusBar: StatusBar!
     private var dashboard: DashboardPopover!
@@ -71,10 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let page = ProcessInfo.processInfo.environment["WISP_PAGE"].flatMap(PageID.init(rawValue:)) { mainWindow?.show(page) }
         case "dashboard": DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.statusBar.openDashboard() }
         case "settings": showSettings()
-        case "menu":
-            if let seconds = ProcessInfo.processInfo.environment["WISP_MENU_INTERVAL"].flatMap(Double.init) {
-                change { $0.menuInterval = seconds }
-            }
+        case "menu": break
         default:
             if settings.openWindowAtLaunch { showWindow() }
         }

@@ -130,6 +130,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         drawer.onClose = { [weak self] in self?.select(nil) }
         sidebar.onSelect = { [weak self] id in self?.show(id) }
         sidebar.onSettings = { [weak self] in self?.show(.settings) }
+        sidebar.onBack = { [weak self] in self?.show(self?.lastPage ?? .overview) }
+        sidebar.onSection = { [weak self] section in
+            guard let self, let settings = self.pages[.settings] as? SettingsPage else { return }
+            settings.show(section)
+            self.sidebar.select(section: section)
+        }
         window.contentView = root
         root.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(rootResized), name: NSView.frameDidChangeNotification, object: root)
@@ -374,11 +380,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         return window.isVisible && window.occlusionState.contains(.visible)
     }
 
+    /// The page to return to from Settings.
+    private var lastPage: PageID = .overview
+
     func show(_ id: PageID) {
+        if id != .settings { lastPage = id }
         currentID = id
         sidebar.select(id)
         let page = pages[id] ?? makePage(id)
         pages[id] = page
+        if let settings = page as? SettingsPage {
+            settings.loadViewIfNeeded()
+            sidebar.select(section: settings.section)
+        }
         guard page !== current else { return }
         if current != nil { select(nil) }
         current?.view.removeFromSuperview()

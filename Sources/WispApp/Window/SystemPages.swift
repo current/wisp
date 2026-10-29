@@ -180,31 +180,35 @@ final class NeuralPage: MachinePage {
 
 // MARK: - Sound
 
-/// One default device: picker, volume slider and level.
+/// One default device: which one, its volume as a figure, and a slider.
 final class DeviceCard: CardView {
     let title = TextLine()
-    let picker = NSPopUpButton(frame: .zero, pullsDown: false)
+    let picker = MenuButton()
     let slider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
-    let level = TextLine()
+    let level = BigNumber()
 
     override init() {
         super.init()
-        picker.controlSize = .small
-        picker.font = Theme.sans(12)
-        slider.controlSize = .small
+        slider.controlSize = .regular
+        level.font = Theme.figure(30)
+        level.unitFont = Theme.sans(15, .medium)
         for view in [title, picker, slider, level] as [NSView] { addSubview(view) }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    func show(volume: Float?) {
+        if let volume { level.show(String(format: "%.0f", volume * 100), unit: "%") } else { level.show("Fixed") }
+    }
+
     override func layout() {
         super.layout()
-        let width = bounds.width - 40
-        title.frame = NSRect(x: 20, y: 16, width: 80, height: 20)
-        picker.frame = NSRect(x: 96, y: 13, width: width - 76, height: 24)
-        slider.frame = NSRect(x: 20, y: 52, width: width - 56, height: 20)
-        level.frame = NSRect(x: 20 + width - 46, y: 54, width: 46, height: 16)
-        level.alignment = .right
+        let width = bounds.width - 32
+        title.frame = NSRect(x: 16, y: 13, width: 90, height: 20)
+        let pickerWidth = min(picker.naturalWidth, width - 100)
+        picker.frame = NSRect(x: bounds.width - 16 - pickerWidth, y: 10, width: pickerWidth, height: 26)
+        level.frame = NSRect(x: 16, y: 40, width: width, height: 38)
+        slider.frame = NSRect(x: 14, y: 86, width: width + 4, height: 22)
     }
 }
 
@@ -229,8 +233,7 @@ final class SoundPage: CardPage {
         for (card, isInput) in [(output, false), (input, true)] {
             card.slider.target = self
             card.slider.action = isInput ? #selector(inputVolume(_:)) : #selector(outputVolume(_:))
-            card.picker.target = self
-            card.picker.action = isInput ? #selector(pickInput(_:)) : #selector(pickOutput(_:))
+            card.picker.onPick = { [weak self] index in self?.pick(index, input: isInput) }
         }
         refresh()
     }
@@ -239,8 +242,8 @@ final class SoundPage: CardPage {
         let inner = width - margin * 2
         let half = (inner - gap) / 2
         let top = place(titleLines.0, titleLines.1, width: width)
-        output.frame = NSRect(x: margin, y: top, width: half, height: 90)
-        input.frame = NSRect(x: margin + half + gap, y: top, width: half, height: 90)
+        output.frame = NSRect(x: margin, y: top, width: half, height: 122)
+        input.frame = NSRect(x: margin + half + gap, y: top, width: half, height: 122)
         apps.frame = NSRect(x: margin, y: output.frame.maxY + gap, width: inner, height: apps.wantedHeight)
         return apps.frame.maxY + margin
     }
@@ -256,16 +259,13 @@ final class SoundPage: CardPage {
             let candidates = devices.filter { isInput ? $0.hasInput : $0.hasOutput }
             let current = Audio.defaultDevice(input: isInput)
             let titles = candidates.map(\.name)
-            if card.picker.itemTitles != titles {
-                card.picker.removeAllItems()
-                card.picker.addItems(withTitles: titles)
-            }
-            if let index = candidates.firstIndex(where: { $0.id == current }) { card.picker.selectItem(at: index) }
+            card.picker.titles = titles
+            if let index = candidates.firstIndex(where: { $0.id == current }) { card.picker.selected = index }
+            card.needsLayout = true
             let volume = current.flatMap { Audio.volume($0, input: isInput) }
             card.slider.isEnabled = volume != nil
             if let volume, card.slider.window?.currentEvent?.type != .leftMouseDragged { card.slider.floatValue = volume }
-            card.level.text = NSAttributedString(string: volume.map { String(format: "%.0f%%", $0 * 100) } ?? "Fixed",
-                                                 attributes: [.font: Theme.figure(13, .medium), .foregroundColor: Theme.ink])
+            card.show(volume: volume)
         }
         let clients = Audio.clients()
         let table = delegate.table
@@ -298,31 +298,20 @@ final class SoundPage: CardPage {
         relayout()
     }
 
-    private func device(_ picker: NSPopUpButton, input: Bool) -> AudioDevice? {
+    private func pick(_ index: Int, input: Bool) {
         let candidates = devices.filter { input ? $0.hasInput : $0.hasOutput }
-        return candidates.indices.contains(picker.indexOfSelectedItem) ? candidates[picker.indexOfSelectedItem] : nil
-    }
-
-    @objc private func pickOutput(_ sender: NSPopUpButton) {
-        if let device = device(sender, input: false) { Audio.setDefaultDevice(device.id, input: false) }
-        refresh()
-    }
-
-    @objc private func pickInput(_ sender: NSPopUpButton) {
-        if let device = device(sender, input: true) { Audio.setDefaultDevice(device.id, input: true) }
+        if candidates.indices.contains(index) { Audio.setDefaultDevice(candidates[index].id, input: input) }
         refresh()
     }
 
     @objc private func outputVolume(_ sender: NSSlider) {
         if let id = Audio.defaultDevice(input: false) { Audio.setVolume(id, input: false, to: sender.floatValue) }
-        output.level.text = NSAttributedString(string: String(format: "%.0f%%", sender.floatValue * 100),
-                                               attributes: [.font: Theme.figure(13, .medium), .foregroundColor: Theme.ink])
+        output.show(volume: sender.floatValue)
     }
 
     @objc private func inputVolume(_ sender: NSSlider) {
         if let id = Audio.defaultDevice(input: true) { Audio.setVolume(id, input: true, to: sender.floatValue) }
-        input.level.text = NSAttributedString(string: String(format: "%.0f%%", sender.floatValue * 100),
-                                              attributes: [.font: Theme.figure(13, .medium), .foregroundColor: Theme.ink])
+        input.show(volume: sender.floatValue)
     }
 }
 

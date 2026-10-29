@@ -70,7 +70,8 @@ def launch_wisp(app, page):
     binary = os.path.join(app, "Contents/MacOS/Wisp")
     run("pkill", "-f", binary)
     time.sleep(1.5)
-    env = []
+    # The shipped defaults, whatever this Mac's own settings say.
+    env = ["--env", "WISP_MENU_INTERVAL=3", "--env", "WISP_INTERVAL=2"]
     if page:
         env += ["--env", "WISP_PARK=1", "--env", "WISP_OPEN=window", "--env", f"WISP_PAGE={page}",
                 "--env", f"WISP_SIZE={WIDTH}x{HEIGHT}"]
