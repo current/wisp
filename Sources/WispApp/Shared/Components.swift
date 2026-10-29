@@ -398,7 +398,7 @@ final class BigNumber: DrawnView {
 
         let leave = CAAnimationGroup()
         leave.animations = [Self.basic("opacity", 1, 0), Self.basic("transform.translation.y", 0, -direction * 4)]
-        leave.duration = 0.12
+        leave.duration = 0.1
         leave.beginTime = now + wait
         leave.fillMode = .both
         leave.timingFunction = CAMediaTimingFunction(name: .easeIn)
@@ -430,7 +430,7 @@ final class BigNumber: DrawnView {
             let enter = CAAnimationGroup()
             enter.animations = [opacity, move]
             enter.duration = Self.duration
-            enter.beginTime = now + wait + 0.04 + Double(index - shared) * Self.stagger
+            enter.beginTime = now + wait + 0.06 + Double(index - shared) * Self.stagger
             enter.fillMode = .backwards
             piece.add(enter, forKey: "enter")
             end = max(end, enter.beginTime + enter.duration)

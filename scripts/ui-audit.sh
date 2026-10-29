@@ -18,7 +18,7 @@ for appearance in $appearances; do
   for size in $sizes; do
     run="$out/$appearance-$size"
     mkdir -p "$run"
-    open -g -n -a "$app" --env WISP_BACKGROUND=1 --env WISP_OPEN=window --env WISP_SIZE="$size" \
+    open -g -n -a "$app" --env WISP_BACKGROUND=1 --env WISP_NO_MOTION=1 --env WISP_OPEN=window --env WISP_SIZE="$size" \
       --env WISP_APPEARANCE="$appearance" --env WISP_AUDIT="$PWD/$run"
     last=""
     for _ in $(seq 1 600); do

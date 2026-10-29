@@ -191,6 +191,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mainWindow = MainWindowController(delegate: self)
             if appID == nil, let page = PageID(rawValue: settings.startPage) { mainWindow?.show(page) }
         }
+        if MainWindowController.parked, let window = mainWindow?.window, let screen = NSScreen.main?.frame {
+            window.setFrameTopLeftPoint(NSPoint(x: screen.maxX - 24, y: screen.maxY - 40))
+            window.orderFrontRegardless()
+            if let appID { mainWindow?.reveal(appID: appID) }
+            return
+        }
         if MainWindowController.background {
             // Shown without taking focus or coming forward.
             mainWindow?.window?.orderBack(nil)

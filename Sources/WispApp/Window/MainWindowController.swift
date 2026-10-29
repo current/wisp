@@ -113,7 +113,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.backgroundColor = Theme.ground
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 900, height: 620)
-        window.setFrameAutosaveName("WispMain")
+        // Test runs (sizes, parked or background windows) must not change the size people saved.
+        let environment = ProcessInfo.processInfo.environment
+        if !["WISP_SIZE", "WISP_PARK", "WISP_BACKGROUND", "WISP_AUDIT"].contains(where: { environment[$0] != nil }) {
+            window.setFrameAutosaveName("WispMain")
+        }
         super.init(window: window)
 
         root.wantsLayer = true
@@ -136,6 +140,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // WISP_BACKGROUND keeps the window under every other window, for audits and benchmarks
         // that run while the Mac is in use. It still renders, and screencapture -l still sees it.
         if Self.background { window.level = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1) }
+        if Self.parked { window.level = .floating }
         // WISP_SIZE=1440x900 sets the window size, for screenshots.
         if let size = ProcessInfo.processInfo.environment["WISP_SIZE"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2 {
             window.setContentSize(NSSize(width: size[0], height: size[1]))
@@ -246,9 +251,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let left = inset + Self.sidebarWidth
         // `drawerProgress` runs 0 to 1 as the drawer opens: the page gives up its
         // right edge at the same rate the drawer slides in, so they move as one.
+        // When the page would be left narrower than 480 pt, the drawer lies over it instead.
+        let squeezes = bounds.width - left - Self.drawerWidth - inset >= 480
         let room = (Self.drawerWidth + inset) * drawerProgress
-        container.frame = NSRect(x: left, y: 0, width: max(200, bounds.width - left - room), height: bounds.height)
+        container.frame = NSRect(x: left, y: 0, width: max(200, bounds.width - left - (squeezes ? room : 0)), height: bounds.height)
         drawer.frame = NSRect(x: bounds.width - room, y: inset, width: Self.drawerWidth, height: bounds.height - inset * 2)
+        // Lying over the page, the drawer needs an edge. The shadow has a path, so Core
+        // Animation does not have to render the drawer offscreen to find its outline.
+        drawer.wantsLayer = true
+        if let layer = drawer.layer {
+            layer.shadowOpacity = squeezes ? 0 : 0.16
+            if !squeezes {
+                layer.shadowRadius = 18
+                layer.shadowOffset = .zero
+                layer.shadowColor = NSColor.black.cgColor
+                layer.shadowPath = CGPath(roundedRect: drawer.bounds, cornerWidth: 20, cornerHeight: 20, transform: nil)
+            }
+        }
         current?.view.frame = container.bounds
         toolbar.frame = NSRect(x: container.frame.minX, y: 0, width: container.frame.width, height: Toolbar.height)
         placeWindowButtons()
@@ -344,6 +363,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     static let background = ProcessInfo.processInfo.environment["WISP_BACKGROUND"] != nil
+    /// WISP_PARK shows the window almost entirely past the right edge of the screen, above
+    /// other windows: macOS counts it as visible, so it updates and draws as it would in use,
+    /// while only a 24 pt strip covers the screen. For benchmarks run while the Mac is in use.
+    static let parked = ProcessInfo.processInfo.environment["WISP_PARK"] != nil
 
     private var isVisible: Bool {
         guard let window else { return false }

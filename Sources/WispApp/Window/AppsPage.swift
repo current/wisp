@@ -43,7 +43,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
     private let onSelect: (Selection?) -> Void
     let outline = NSOutlineView()
     private let search = NSSearchField()
-    private let summary = Style.secondary()
+    private let summary = TextLine()
     private let titleLabel = Style.label("Apps")
     var toolbarHeading: (NSView, NSView)? { (titleLabel, summary) }
     var toolbarItems: [NSView] { [search] }
@@ -114,9 +114,6 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         search.translatesAutoresizingMaskIntoConstraints = true
         search.sendsSearchStringImmediately = true
 
-        summary.font = Theme.sans(11)
-        summary.textColor = Theme.inkSecondary
-        summary.lineBreakMode = .byTruncatingTail
         titleLabel.attributedStringValue = Toolbar.title("Apps")
         // The toolbar places these by frame.
         for view in [titleLabel, summary] as [NSView] { view.translatesAutoresizingMaskIntoConstraints = true }
@@ -216,8 +213,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         }
 
         // Counts move rarely; a label that changes every tick re-lays out the whole window.
-        let text = "\(roots.count) apps, \(table.processes.count / 10 * 10)+ processes"
-        if summary.stringValue != text { summary.stringValue = text }
+        summary.variants = ["\(roots.count) apps, \(table.processes.count / 10 * 10)+ processes", "\(roots.count) apps"].map(Toolbar.subtitle)
     }
 
     private var lastOrder: [String] = []

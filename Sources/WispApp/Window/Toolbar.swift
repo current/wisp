@@ -37,7 +37,9 @@ final class Toolbar: NSView {
             heading = custom
         } else {
             defaultTitle.text = Self.title(title)
-            defaultSubtitle.text = Self.subtitle(subtitle)
+            // Narrow toolbars drop the model name, then the line.
+            let short = subtitle.components(separatedBy: " · ").dropFirst().joined(separator: " · ")
+            defaultSubtitle.variants = [subtitle, short, ""].map(Self.subtitle)
             heading = (defaultTitle, defaultSubtitle)
         }
         if let heading { addSubview(heading.0); addSubview(heading.1) }
