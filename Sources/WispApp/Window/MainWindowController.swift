@@ -207,7 +207,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // WISP_LAYER_REPORT=<file> lists, after 8 s, every layer that can make Core Animation
         // render this window inside the app instead of in the window server.
         if let path = ProcessInfo.processInfo.environment["WISP_LAYER_REPORT"] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in MainActor.assumeIsolated {
                 guard let root = self?.window?.contentView?.superview?.layer else { return }
                 var lines: [String] = []
                 func name(_ layer: CALayer) -> String { layer.delegate.map { String(describing: type(of: $0)) } ?? String(describing: type(of: layer)) }
@@ -224,8 +224,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                     layer.sublayers?.forEach { walk($0, here) }
                 }
                 walk(root, [])
-                try? lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
-            }
+                // Animations running now, as they can also move rendering into the app.
+                func animations(_ layer: CALayer, _ path: [String]) {
+                    let here = path + [name(layer)]
+                    if let keys = layer.animationKeys(), !keys.isEmpty {
+                        lines.append("animating \(keys.joined(separator: ",")) " + here.suffix(5).joined(separator: " > "))
+                    }
+                    layer.sublayers?.forEach { animations($0, here) }
+                }
+                animations(root, [])
+                let stamp = "--- \(Int(Date().timeIntervalSince1970) % 10000)\n"
+                let entry = stamp + lines.joined(separator: "\n") + "\n"
+                if let handle = FileHandle(forWritingAtPath: path) {
+                    handle.seekToEndOfFile(); handle.write(Data(entry.utf8)); try? handle.close()
+                } else {
+                    try? entry.write(toFile: path, atomically: true, encoding: .utf8)
+                }
+            } }
         }
         // WISP_DRAWER=<app id> opens the drawer once data has arrived, for screenshots.
         if let id = ProcessInfo.processInfo.environment["WISP_DRAWER"] {

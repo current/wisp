@@ -11,7 +11,7 @@ class MachinePage: CardPage {
     var extras: [(CardView, CGFloat)] = [] { didSet { extras.forEach { canvas.addSubview($0.0) } } }
     let tableCard = CardView()
     let tableTitle = TextLine()
-    let table = ColumnTable()
+    let table: ColumnTable = { let table = ColumnTable(); table.drawsVisibleOnly = true; return table }()
     let onSelect: (Selection?) -> Void
     var metric: SystemMetric
     var secondMetric: SystemMetric?

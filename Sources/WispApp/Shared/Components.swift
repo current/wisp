@@ -21,16 +21,36 @@ class BitmapView: DrawnView {
         super.init(frame: frame)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
-        // A layer that clips its children to rounded corners has Core Animation draw
-        // the card inside the app, about 190 MB of buffers. Nothing in a card should
-        // reach its corners anyway; the layout audit reports anything that spills.
-        clipsToBounds = false
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// For tall views in a scroll view (a table of every app): only the part on screen,
+    /// plus a margin, is drawn, so the bitmap stays small however long the view is.
+    var drawsVisibleOnly = false
+    private let region = CALayer()
+    private var drawnRegion = NSRect.zero
+    private var scrollObserver: NSObjectProtocol?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+        scrollObserver = nil
+        guard drawsVisibleOnly, let clip = enclosingScrollView?.contentView else { return }
+        clip.postsBoundsChangedNotifications = true
+        scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // Draw again only once the visible part leaves what was drawn.
+                let visible = self.visibleRect
+                if !visible.isEmpty, !self.drawnRegion.contains(visible) { self.needsDisplay = true }
+            }
+        }
+    }
+
     override func updateLayer() {
         guard let layer, bounds.width >= 1, bounds.height >= 1 else { return }
+        if drawsVisibleOnly { return drawVisible(into: layer) }
         let scale = window?.backingScaleFactor ?? 2
         let width = Int((bounds.width * scale).rounded(.up)), height = Int((bounds.height * scale).rounded(.up))
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
@@ -46,6 +66,38 @@ class BitmapView: DrawnView {
         layer.contentsScale = scale
         layer.contentsGravity = .resize
         layer.contents = context.makeImage()
+    }
+
+    private func drawVisible(into layer: CALayer) {
+        let visible = visibleRect
+        guard !visible.isEmpty else {
+            region.contents = nil
+            drawnRegion = .zero
+            return
+        }
+        let target = visible.insetBy(dx: 0, dy: -200).intersection(bounds).integral
+        let scale = window?.backingScaleFactor ?? 2
+        let width = Int(target.width * scale), height = Int(target.height * scale)
+        guard width > 0, height > 0,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: scale, y: -scale)
+        context.translateBy(x: -target.minX, y: -target.minY)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        effectiveAppearance.performAsCurrentDrawingAppearance { draw(target) }
+        NSGraphicsContext.restoreGraphicsState()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if region.superlayer !== layer { layer.addSublayer(region) }
+        layer.contents = nil
+        region.frame = target
+        region.contentsScale = scale
+        region.contents = context.makeImage()
+        CATransaction.commit()
+        drawnRegion = target
     }
 
     override func viewDidChangeBackingProperties() {
@@ -91,6 +143,9 @@ class CardView: NSView {
         layer.borderWidth = stroke == .clear ? 0 : 0.5
         layer.cornerRadius = radius
         layer.cornerCurve = .continuous
+        // A layer that clips its children to rounded corners has Core Animation draw
+        // the card inside the app, about 190 MB of buffers. Nothing in a card should
+        // reach its corners anyway; the layout audit reports anything that spills.
         layer.masksToBounds = false
     }
 

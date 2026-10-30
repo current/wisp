@@ -144,14 +144,14 @@ final class HeatKey: DrawnView {
 
 /// A grid of dots split into coloured parts, like a waffle chart. Hovering a part
 /// fades the others.
-final class Waffle: DrawnView {
-    struct Part {
+final class Waffle: BitmapView {
+    struct Part: Equatable {
         var name: String
         var value: Double
         var color: NSColor
     }
 
-    var parts: [Part] = [] { didSet { needsDisplay = true } }
+    var parts: [Part] = [] { didSet { if parts != oldValue { needsDisplay = true } } }
     var highlighted: Int? { didSet { if highlighted != oldValue { needsDisplay = true } } }
     var cell: CGFloat = 7
     var gap: CGFloat = 2.5

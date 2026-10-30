@@ -461,7 +461,7 @@ final class TimeChart: BitmapView {
 /// A sortable list of rows with an icon, drawn in one view. Used for the app
 /// lists on machine pages: a few dozen rows, so drawing all of them is cheaper
 /// than a table view with cell reuse.
-final class ColumnTable: DrawnView {
+final class ColumnTable: BitmapView {
     struct Column {
         var title: String
         var width: CGFloat
