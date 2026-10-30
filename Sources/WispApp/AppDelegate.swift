@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         flushTimer?.tolerance = 120
 
+        dashboard.snapshotIfAsked()
         switch ProcessInfo.processInfo.environment["WISP_OPEN"] {
         case "window":
             showWindow(selecting: ProcessInfo.processInfo.environment["WISP_SELECT"])

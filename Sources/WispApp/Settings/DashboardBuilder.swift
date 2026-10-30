@@ -29,6 +29,8 @@ final class DashboardBuilder: DrawnView {
     private var elements: [BlockElement] = []
     /// Asks the settings page to lay out again when the builder's height changes.
     var onHeightChange: (() -> Void)?
+    /// Tells the settings page the saved layout changed, so it can ask for what the preview needs.
+    var onLayoutChange: (() -> Void)?
 
     private final class Holder: NSView {
         override var isFlipped: Bool { true }
@@ -506,6 +508,7 @@ final class DashboardBuilder: DrawnView {
     private func commit(_ blocks: [DashboardBlock]) {
         let before = preferredHeight
         delegate.change { $0.dashboard = blocks }
+        onLayoutChange?()
         refreshChips()
         committedPreviewHeight = preview.frame.height
         needsLayout = true

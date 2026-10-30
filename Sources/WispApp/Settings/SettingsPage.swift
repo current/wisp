@@ -65,6 +65,7 @@ final class SettingsPage: NSViewController, Page {
     private lazy var builder: DashboardBuilder = {
         let builder = DashboardBuilder(delegate: delegate)
         builder.onHeightChange = { [weak self] in self?.rebuild() }
+        builder.onLayoutChange = { [weak self] in self?.updateDemand() }
         return builder
     }()
 
@@ -96,6 +97,16 @@ final class SettingsPage: NSViewController, Page {
     var toolbarHeading: (NSView, NSView)? { (headingTitle, headingSubtitle) }
     var pageScroll: NSScrollView? { scroll }
 
+    /// The builder's live preview needs what its blocks show; the core map is the one
+    /// reading a window does not take anyway.
+    var demand: Demand {
+        section == .menuBar ? DashboardBlock.demand(of: delegate.settings.dashboard).intersection(.cpuCores) : []
+    }
+
+    private func updateDemand() {
+        if view.window != nil { delegate.windowDemand = demand }
+    }
+
     func update(system: SystemSnapshot) {
         if section == .menuBar { builder.update(system: system) }
     }
@@ -117,6 +128,7 @@ final class SettingsPage: NSViewController, Page {
         self.section = section
         headingTitle.text = Toolbar.title(section.title)
         rebuild()
+        updateDemand()
         scroll.contentView.scroll(to: NSPoint(x: 0, y: -Toolbar.height))
         scroll.reflectScrolledClipView(scroll.contentView)
         if animated { Motion.enter(page, from: CGPoint(x: 0, y: 6), duration: 0.2) }

@@ -85,6 +85,57 @@ final class DashboardPopover: NSObject {
         } as Any)
     }
 
+    /// WISP_POPOVER_SNAPSHOT=<file.png> builds the dashboard in a panel far off every
+    /// screen, lets it fill for WISP_SNAPSHOT_DELAY seconds (default 5), draws it into
+    /// a PNG and quits. The real popover never opens. Liquid Glass does not show here.
+    func snapshotIfAsked() {
+        guard let path = ProcessInfo.processInfo.environment["WISP_POPOVER_SNAPSHOT"] else { return }
+        let delay = ProcessInfo.processInfo.environment["WISP_SNAPSHOT_DELAY"].flatMap(Double.init) ?? 5
+        let view = DashboardView(delegate: delegate)
+        let panel = DashboardPanel(content: view)
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1)
+        view.onHeightChange = { [weak panel] in panel?.fit() }
+        panel.fit()
+        panel.setFrameOrigin(NSPoint(x: -30000, y: -30000))
+        panel.orderBack(nil)
+        delegate.dashboardOpen = true
+        let refresh = { [weak self, weak view] in
+            guard let self, let view else { return }
+            view.update(self.delegate.system, history: self.delegate.monitor.history)
+            view.update(self.delegate.table)
+        }
+        refresh()
+        delegate.observeSystem { _ in refresh() }
+        delegate.observeTable { _ in refresh() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            panel.fit()
+            Self.write(panel, to: URL(fileURLWithPath: path))
+            NSApp.terminate(nil)
+        }
+    }
+
+    private static func write(_ panel: NSWindow, to url: URL) {
+        guard let root = panel.contentView, let layer = root.layer else { return }
+        root.layoutSubtreeIfNeeded()
+        root.displayIfNeeded()
+        let scale: CGFloat = 2
+        let size = root.bounds.size
+        guard let context = CGContext(data: nil, width: Int(size.width * scale), height: Int(size.height * scale), bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        context.scaleBy(x: scale, y: scale)
+        // The panel's root is flipped; its layer draws top-down, the bitmap bottom-up.
+        if root.isFlipped {
+            context.translateBy(x: 0, y: size.height)
+            context.scaleBy(x: 1, y: -1)
+        }
+        root.effectiveAppearance.performAsCurrentDrawingAppearance { layer.render(in: context) }
+        guard let image = context.makeImage() else { return }
+        try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: url)
+    }
+
     func close() {
         guard let panel, panel.isVisible else { return }
         monitors.forEach(NSEvent.removeMonitor)
