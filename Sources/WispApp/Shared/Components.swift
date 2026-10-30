@@ -91,6 +91,7 @@ class CardView: NSView {
         layer.borderWidth = stroke == .clear ? 0 : 0.5
         layer.cornerRadius = radius
         layer.cornerCurve = .continuous
+        layer.masksToBounds = false
     }
 
     override func updateTrackingAreas() {
