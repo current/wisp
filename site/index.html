@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Wisp: a system monitor for your Mac</title>
+<meta name="description" content="Wisp is a free, open-source system monitor for macOS. See which apps use your CPU, memory, power, disk and network, from the menu bar or a full window.">
+<meta name="theme-color" content="#F5F5F7">
+<meta property="og:title" content="Wisp: a system monitor for your Mac">
+<meta property="og:description" content="Free and open source. Lives in the menu bar on 19 MB of memory.">
+<meta property="og:image" content="assets/icon-512.png">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="icon" href="assets/icon-64.png" type="image/png" sizes="64x64">
+<link rel="apple-touch-icon" href="assets/icon-256.png">
+<link rel="preload" as="image" href="assets/overview-1280.webp" imagesrcset="assets/overview-1280.webp 1280w, assets/overview-2400.webp 2400w" imagesizes="(min-width: 1260px) 1180px, 92vw" fetchpriority="high">
+<link rel="stylesheet" href="styles.css">
+<script>
+  // Decide the layout before first paint: pinned tour only with room and motion allowed.
+  (function () {
+    var r = document.documentElement;
+    if (!matchMedia('(prefers-reduced-motion: no-preference)').matches) return;
+    r.classList.add('anim');
+    if (matchMedia('(min-width: 900px) and (min-height: 640px)').matches) r.classList.add('motion');
+    // If GSAP never arrives, show the static page.
+    setTimeout(function () { if (!window.gsap) r.classList.remove('anim', 'motion'); }, 3000);
+  })();
+</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav" aria-label="Site">
+  <a class="brand" href="#top" aria-label="Wisp, back to top">
+    <img src="assets/icon-64.png" width="30" height="30" alt="">
+    <span>Wisp</span>
+  </a>
+  <nav class="nav-links" aria-label="Sections">
+    <a href="#tour">Tour</a>
+    <a href="#performance">Performance</a>
+    <a href="#features">Features</a>
+    <a href="https://github.com/current/wisp">GitHub</a>
+  </nav>
+  <a class="btn btn-primary btn-sm" href="#download">Download</a>
+</header>
+
+<main id="main">
+  <section class="hero wrap" id="top">
+    <img class="hero-icon" src="assets/icon-256.png" width="112" height="112" alt="Wisp app icon">
+    <h1>See what your Mac is doing</h1>
+    <p class="lede">Wisp is a free, open-source system monitor for the menu bar. It shows which apps use your CPU, memory, power, disk and network, and uses almost nothing itself.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/current/wisp#install">Download for Mac</a>
+      <a class="btn btn-plain" href="https://github.com/current/wisp">Source on GitHub <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M5 3l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+    </div>
+  </section>
+
+  <section class="tour" id="tour" aria-label="A tour of Wisp">
+    <div class="backdrop" aria-hidden="true"></div>
+    <div class="tour-pin">
+      <div class="stage">
+        <div class="win win-base">
+          <img src="assets/overview-1280.webp" srcset="assets/overview-1280.webp 1280w, assets/overview-2400.webp 2400w" sizes="(min-width: 1260px) 1180px, 92vw" width="1280" height="803" fetchpriority="high" alt="Wisp's Overview window: cards for CPU at 48 percent, memory at 31 of 36 GB, GPU, disk, network, power and temperature, a Developer card with coding agents, and a Worth a Look list">
+        </div>
+        <div class="win win-over win-drawer" aria-hidden="true">
+          <img src="assets/cpu-drawer-1280.webp" srcset="assets/cpu-drawer-1280.webp 1280w, assets/cpu-drawer-2400.webp 2400w" sizes="(min-width: 1260px) 1180px, 92vw" width="1280" height="803" loading="lazy" alt="">
+        </div>
+        <div class="menubar-layer" aria-hidden="true">
+          <div class="menubar">
+            <span class="mb-menus"><b>Finder</b><span>File</span><span>Edit</span><span>View</span><span>Go</span><span>Window</span></span>
+            <span class="mb-wisp"><img src="assets/menubar.svg" width="16" height="16" alt=""><span class="num">43%</span></span>
+            <span class="num">Tue 9:41</span>
+          </div>
+          <img class="popover" src="assets/menubar-860.webp" width="430" height="888" loading="lazy" alt="">
+        </div>
+      </div>
+
+      <div class="seg" role="group" aria-label="Tour steps">
+        <button type="button" data-step="0" aria-current="true">Overview</button>
+        <button type="button" data-step="1" aria-current="false">Inside an app</button>
+        <button type="button" data-step="2" aria-current="false">Menu bar</button>
+      </div>
+
+      <div class="captions">
+        <article class="cap" data-step="0">
+          <h3>Your whole Mac on one page</h3>
+          <p>CPU, memory, GPU, disk, network, power and temperature, with recent history behind each figure and a short list of anything worth a look.</p>
+        </article>
+        <article class="cap" data-step="1">
+          <h3>Open any app to see what is inside it</h3>
+          <p>Processes are grouped under the app that owns them. Its drawer shows the browser tabs, GPU process and extensions inside, its GPU time and last hour, and Quit or Force Quit.</p>
+          <img class="cap-media" src="assets/cpu-drawer-1280.webp" srcset="assets/cpu-drawer-1280.webp 1280w, assets/cpu-drawer-2400.webp 2400w" sizes="92vw" width="1280" height="803" loading="lazy" alt="Wisp's CPU page with the drawer for Google Chrome open: 16 GB of memory, 229.6 percent CPU, and a breakdown showing tabs use 91 percent of its memory">
+        </article>
+        <article class="cap" data-step="2">
+          <h3>Or leave it in the menu bar</h3>
+          <p>Show CPU, memory, network, disk, GPU, temperature, power or battery as text or a small graph. Click it for a dashboard with every core and the busiest apps.</p>
+          <img class="cap-media pop" src="assets/menubar-860.webp" width="430" height="888" loading="lazy" alt="Wisp's menu bar dashboard: CPU at 43 percent, meters for memory, GPU, power, network, disk and battery, a heat map of 14 cores and the five busiest apps">
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section wrap" id="performance" aria-labelledby="perf-title">
+    <div class="section-head center">
+      <h2 id="perf-title">Light enough to leave on all day</h2>
+      <p class="lede">Menu bar only, measured side by side on the same M3 Max over the same 90 seconds</p>
+    </div>
+    <div class="perf-grid">
+      <article class="card perf-card" aria-labelledby="cpu-t">
+        <h3 class="card-title t-blue" id="cpu-t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9.5 2.5v3M14.5 2.5v3M9.5 18.5v3M14.5 18.5v3M2.5 9.5h3M2.5 14.5h3M18.5 9.5h3M18.5 14.5h3"/></svg>CPU</h3>
+        <p class="big num"><span data-count="0.4" data-dec="1">0.4</span><span class="unit">%</span></p>
+        <p class="big-sub">Of one core, about half of what Vitals uses</p>
+        <ul class="bars">
+          <li class="bar-row us"><span class="name">Wisp</span><span class="track"><span class="fill lo" style="width:45%"></span></span><span class="val num">0.42%</span></li>
+          <li class="bar-row"><span class="name">Vitals</span><span class="track"><span class="fill lo" style="width:90%"></span></span><span class="val num">0.83%</span></li>
+        </ul>
+      </article>
+      <article class="card perf-card" aria-labelledby="mem-t">
+        <h3 class="card-title t-indigo" id="mem-t"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="2.5" y="6.5" width="19" height="10" rx="2.5"/><path d="M6.5 16.5v3M10.5 16.5v3M14.5 16.5v3M18.5 16.5v3M7 10.5v2M11 10.5v2M15 10.5v2"/></svg>Memory</h3>
+        <p class="big num"><span data-count="19">19</span><span class="unit">MB</span></p>
+        <p class="big-sub">About a twelfth of what Vitals uses</p>
+        <ul class="bars">
+          <li class="bar-row us"><span class="name">Wisp</span><span class="track"><span class="fill lo" style="width:7%"></span></span><span class="val num">19 MB</span></li>
+          <li class="bar-row"><span class="name">Vitals</span><span class="track"><span class="fill lo" style="width:90%"></span></span><span class="val num">238 MB</span></li>
+        </ul>
+      </article>
+    </div>
+    <p class="fine perf-note">With a window open, Wisp uses about 3% CPU and 50 to 60 MB, Vitals 5 to 6% and 245 to 450 MB</p>
+  </section>
+
+  <section class="section wrap" id="features" aria-labelledby="feat-title">
+    <div class="section-head">
+      <h2 id="feat-title">More than CPU and memory</h2>
+      <p class="lede">A page for every part of the Mac, and for the dev servers, containers and coding agents you leave running.</p>
+    </div>
+    <div class="feat-grid">
+      <article class="card feat wide" style="--c: var(--purple-text); --tint: rgba(203, 48, 224, .08)">
+        <h3 class="card-title t-purple"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5c.7 4.6 3 6.9 7.5 7.5-4.5.6-6.8 2.9-7.5 7.5-.7-4.6-3-6.9-7.5-7.5 4.5-.6 6.8-2.9 7.5-7.5zM19 15.5c.3 1.9 1.1 2.7 3 3-1.9.3-2.7 1.1-3 3-.3-1.9-1.1-2.7-3-3 1.9-.3 2.7-1.1 3-3z"/></svg>Coding Agents</h3>
+        <p>Claude Code, Codex, Gemini CLI and more: the folder each one works in, its CPU and memory, and your plan limits if you turn them on.</p>
+        <div class="shot"><img src="assets/agents-crop-720.webp" srcset="assets/agents-crop-720.webp 720w, assets/agents-crop-1440.webp 1440w" sizes="(min-width: 1260px) 760px, (min-width: 980px) 62vw, 92vw" width="720" height="298" loading="lazy" alt="Wisp's Coding Agents page: 12 agents running using 45.2 percent CPU and 3.6 GB, with a list of Claude Code and Codex sessions"></div>
+      </article>
+      <article class="card feat" style="--c: var(--blue-text); --tint: rgba(0, 136, 255, .08)">
+        <h3 class="card-title t-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9.5 2.5v3M14.5 2.5v3M9.5 18.5v3M14.5 18.5v3M2.5 9.5h3M2.5 14.5h3M18.5 9.5h3M18.5 14.5h3"/></svg>Every part of the machine</h3>
+        <p>Each part gets a page with a live, hour and day chart.</p>
+        <ul class="meters" aria-label="Pages in Wisp's sidebar with live figures">
+          <li><span>CPU</span><span class="v">48%</span></li>
+          <li><span>Memory</span><span class="v warn">31 GB</span></li>
+          <li><span>GPU</span><span class="v">42%</span></li>
+          <li><span>Neural Engine</span><span class="v">Idle</span></li>
+          <li><span>Power</span><span class="v">14 W</span></li>
+          <li><span>Disk</span><span class="v">41 MB/s</span></li>
+          <li><span>Network</span><span class="v">20 KB/s</span></li>
+        </ul>
+        <p class="more">Plus Sound, Bluetooth and Sensors.</p>
+      </article>
+      <article class="card feat" style="--c: var(--orange-text); --tint: rgba(255, 141, 40, .10)">
+        <h3 class="card-title t-orange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projects and containers</h3>
+        <p>Dev servers and the ports they hold, with idle ones marked. Docker, OrbStack and Colima containers too, without the CLI.</p>
+      </article>
+      <article class="card feat" style="--c: var(--red-text); --tint: rgba(255, 56, 60, .08)">
+        <h3 class="card-title t-red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 21h4"/></svg>Alerts</h3>
+        <p>A notification when an app holds a core for minutes or keeps growing in memory.</p>
+      </article>
+      <article class="card feat" style="--c: var(--green-text); --tint: rgba(52, 199, 89, .10)">
+        <h3 class="card-title t-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="3"/><path d="M7 9.5l3 2.5-3 2.5M12.5 15h4.5"/></svg>CLI and MCP server</h3>
+        <p>Read the same numbers from Terminal, or hand them to your coding agent.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="section wrap download" id="download" aria-labelledby="dl-title">
+    <img class="download-icon" src="assets/icon-256.png" width="128" height="128" loading="lazy" alt="">
+    <h2 id="dl-title">Free and open source</h2>
+    <p class="lede">MIT licensed. Nothing runs as root, and a year of per-app history stays on your Mac.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/current/wisp#install">Download for Mac</a>
+      <a class="btn btn-plain" href="https://github.com/current/wisp">Source on GitHub <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M5 3l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+    </div>
+    <p class="fine req">macOS 15 or later on Apple silicon, best on macOS 26</p>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap fine">
+    <span>Wisp · MIT License</span>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollTrigger.min.js" defer></script>
+<script src="main.js" defer></script>
+</body>
+</html>
