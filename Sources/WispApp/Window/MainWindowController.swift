@@ -571,6 +571,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if drawerOpen { select(nil) }
     }
 
+    func showSettings(_ section: SettingsPage.Section) {
+        (pages[.settings] as? SettingsPage)?.show(section)
+    }
+
     func reveal(appID: String) {
         show(.apps)
         (pages[.apps] as? AppsPage)?.select(appID: appID)
