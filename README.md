@@ -3,7 +3,7 @@
 A system monitor for the Mac that tells you which app is using what, and costs
 almost nothing to leave running.
 
-![Wisp's overview in light mode](docs/images/overview.png)
+![Wisp's overview in light mode](site/assets/overview-1280.webp)
 
 Activity Monitor lists processes. Chrome alone is forty of them, so the
 question "what is slowing my Mac down" turns into adding up rows. Wisp groups
@@ -49,7 +49,7 @@ power, GPU, disk and network, what is inside it (for a browser that is tabs,
 the GPU process, extensions and the network service), the last hour, its
 command line, and Quit or Force Quit.
 
-![The drawer for Google Chrome](docs/images/drawer.png)
+![The drawer for Google Chrome](site/assets/cpu-drawer-1280.webp)
 
 The Projects page finds every project folder with something running in it,
 lists its servers and ports, and flags servers nobody has connected to for 30
