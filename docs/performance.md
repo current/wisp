@@ -5,6 +5,41 @@ release build. Each run takes one-second samples from one shared `top` run, so
 every app in a table was measured over the same seconds. CPU is percent of one
 core.
 
+## Side by side with Vitals
+
+`scripts/perf-suite.py` runs five scenarios with both apps open over the same
+90 seconds: menu bar only, then each app's window on its overview, CPU, memory
+and disk pages, both windows 1300 by 800 points. Wisp is relaunched for every
+scenario with its shipped update intervals (2 s window, 3 s menu bar). Its
+window is kept off the screen and told to update as if shown; Vitals' window is
+moved to the right edge of the screen with a 24 point strip showing. Neither
+app is brought forward, so the Mac stays usable while it runs. Vitals 1.9.7,
+release build of Wisp, evening of 3 November.
+
+| Scenario  | App    | Mean  | Median | p95   | Memory | Idle wakeups/s |
+|-----------|--------|-------|--------|-------|--------|----------------|
+| Menu bar  | Wisp   | 0.42% | 0.00%  | 1.8%  | 19 MB  | 0.4            |
+| Menu bar  | Vitals | 0.83% | 0.00%  | 4.9%  | 238 MB | 52.5           |
+| Overview  | Wisp   | 3.03% | 3.55%  | 6.6%  | 48 MB  | 2.5            |
+| Overview  | Vitals | 6.41% | 8.30%  | 14.2% | 452 MB | 65.5           |
+| CPU       | Wisp   | 3.32% | 4.00%  | 7.5%  | 57 MB  | 3.1            |
+| CPU       | Vitals | 5.40% | 7.10%  | 12.1% | 245 MB | 72.1           |
+| Memory    | Wisp   | 3.00% | 3.90%  | 6.3%  | 63 MB  | 1.5            |
+| Memory    | Vitals | 4.69% | 6.95%  | 10.5% | 245 MB | 75.5           |
+| Disk      | Wisp   | 2.89% | 3.45%  | 6.4%  | 63 MB  | 4.2            |
+| Disk      | Vitals | 5.42% | 6.85%  | 13.0% | 254 MB | 84.0           |
+
+The menu bar figure is higher than the morning runs below (0.09 to 0.25%) on a
+busier machine; run-to-run spread for a process this quiet is about that size.
+
+Two fixes came out of this suite. Cards were clipping their children to rounded
+corners, and AppKit was switching the app tables and the memory waffle to
+asynchronous drawing because they redraw every update. Either one makes Core
+Animation render inside the app through Metal, which holds about 200 MB of
+buffers: the Memory and Disk pages sat at 260 MB for half of every minute. Cards
+no longer clip, the waffle draws into a bitmap, and tables draw only the rows
+on screen into a bitmap. Both pages now stay near 63 MB.
+
 ## Menu bar only
 
 Wisp shows CPU and memory in the menu bar. Nothing else is open. Two runs on

@@ -102,8 +102,8 @@ def measure(pids, samples):
                 entry = result[pids[fields[0]]]
                 entry["cpu"].append(float(fields[1]))
                 entry["memory"] = megabytes(fields[2])
-                entry["wakeups"].append(float(fields[3]))
-                entry["power"].append(float(fields[4]))
+                entry["wakeups"].append(float(fields[3].rstrip("+-")))
+                entry["power"].append(float(fields[4].rstrip("+-")))
     return result
 
 
@@ -139,7 +139,9 @@ def main():
         launch_wisp(app, page)
         vitals_window(shortcut)
         time.sleep(args.warmup)
-        pids = {pid_of("Wisp"): "Wisp", pid_of("Vitals"): "Vitals"}
+        # By path: other Wisp builds (a worktree, the installed app) may be running too.
+        wisp = run("pgrep", "-f", os.path.join(app, "Contents/MacOS/Wisp")).stdout.split()
+        pids = {(wisp[0] if wisp else None): "Wisp", pid_of("Vitals"): "Vitals"}
         pids.pop(None, None)
         measured = measure(pids, args.samples)
         results[name] = {app_name: summary(entry) for app_name, entry in measured.items()}

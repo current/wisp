@@ -1,72 +1,93 @@
 # Wisp
 
-Wisp is a system monitor for macOS. It sits in the menu bar and shows which apps
-use your CPU, memory, energy, disk and network. It keeps each app's last day
-minute by minute and a year of hourly totals. It also lists the dev servers,
-Docker containers and coding agents you have running.
+A system monitor for the Mac that tells you which app is using what, and costs
+almost nothing to leave running.
 
-With only the menu bar showing, Wisp uses 0.1 to 0.25% of one core and 18 MB of
-memory. [docs/performance.md](docs/performance.md) has the measurements and how
-to repeat them.
+![Wisp's overview in light mode](docs/images/overview.png)
 
-## What it shows
+Activity Monitor lists processes. Chrome alone is forty of them, so the
+question "what is slowing my Mac down" turns into adding up rows. Wisp groups
+every process under the app it belongs to and shows CPU, memory, GPU, power,
+disk and network per app, with a day of minute-by-minute history and a year of
+hourly totals.
 
-- **Menu bar:** any mix of CPU, memory, network, disk, GPU, temperature, power
-  and battery, as text or a small graph. Click it for a dashboard: CPU with a
-  live line, six meters, a heat map of every core or memory by kind, and the
-  busiest apps.
-- **Overview:** one card per part of the machine with the last half hour as
-  bars, and a list of anything worth a look.
-- **Window:** a floating sidebar on Liquid Glass with a live figure beside each
-  page, and a drawer that slides in from the right when you click any app.
-  The drawer shows the app's memory, CPU, power, GPU, disk and network, what
-  is inside it (for a browser: tabs, GPU process, extensions, network service),
-  the last hour, its command line, and Quit or Force Quit. Esc, the close
-  button or a second click on the app closes it.
-- **Apps:** processes grouped into the app that owns them, with CPU, memory,
-  power, disk and network per app. Select one to open its drawer.
-- **CPU, Memory, GPU, Neural Engine, Power, Disk, Network:** a live, hourly or
-  daily chart, the figures behind it, and the apps that used the most (GPU
-  lists each app's share of GPU time, read from the graphics driver). CPU has
-  the core map, Memory the breakdown by kind, Disk every volume, Network the
-  totals for today, the week and the month, and Power the battery and what is
-  keeping the Mac awake.
-- **Sound and Bluetooth:** output and input devices with their volume, the apps
-  playing or recording, and paired devices with their battery.
-- **Sensors:** temperatures and fans.
-- **Projects:** every project folder with something running in it, its servers
-  and ports, and the Docker containers that belong to it. Wisp marks servers
-  nobody has connected to for 30 minutes and can stop them.
-- **Containers:** CPU, memory, network and disk per container, what Docker
-  keeps on disk, and stop or restart. Wisp talks to the engine socket directly
-  and works with Docker Desktop, OrbStack, Colima, Rancher Desktop and Lima.
-- **Coding Agents:** Claude Code, Codex, Gemini CLI, Aider and other agents,
-  with the folder each works in and what it costs. If you turn it on, the
-  5-hour and weekly limits of each Claude and Codex account, and the tokens
-  Claude Code used today.
-- **Alerts:** a notification when an app holds a core for minutes, grows by a
-  gigabyte of memory in half an hour, keeps writing to disk or the network, or
-  goes over a limit you set for it, and when the CPU runs hot. Settings keeps
-  the recent ones.
+It also knows about the things developers leave running: dev servers and the
+ports they hold, Docker containers, and coding agents like Claude Code and
+Codex.
 
-## Requirements
+## What it costs
 
-macOS 15 or later on Apple silicon. Power readings and some sensors are not
-available on Intel Macs.
+Measured on 3 November 2026 on a MacBook Pro M3 Max running macOS 27.2, against
+Vitals 1.9.7 over the same seconds, with each window 1300 by 800 points.
+`scripts/perf-suite.py` runs these scenarios and writes the full table to
+`build/perf/`.
 
-## Build
+| | Wisp CPU | Vitals CPU | Wisp memory | Vitals memory |
+|---|---:|---:|---:|---:|
+| Menu bar only | 0.42% | 0.83% | 19 MB | 238 MB |
+| Overview window | 3.0% | 6.4% | 48 MB | 452 MB |
+| CPU page | 3.3% | 5.4% | 57 MB | 245 MB |
+| Memory page | 3.0% | 4.7% | 63 MB | 245 MB |
+| Disk page | 2.9% | 5.4% | 63 MB | 254 MB |
 
-You need Xcode 16 or later.
+CPU is the mean over 90 one-second samples, as a share of one core. Vitals also
+woke the CPU 50 to 85 times a second while idle; Wisp, under 5.
+
+Wisp redraws its menu bar every 3 seconds by default, and stops sampling the
+things no open view shows. [docs/performance.md](docs/performance.md) covers
+how, what didn't work, and how to measure it yourself.
+
+## The window
+
+Pages for CPU, memory, GPU, Neural Engine, power, disk, network, sound,
+Bluetooth and sensors, each with a live, hourly or daily chart and the apps
+behind the numbers. The GPU page shows each app's share of GPU time, read from
+the graphics driver.
+
+Click any app and a drawer slides in with everything about it: memory, CPU,
+power, GPU, disk and network, what is inside it (for a browser that is tabs,
+the GPU process, extensions and the network service), the last hour, its
+command line, and Quit or Force Quit.
+
+![The drawer for Google Chrome](docs/images/drawer.png)
+
+The Projects page finds every project folder with something running in it,
+lists its servers and ports, and flags servers nobody has connected to for 30
+minutes. Containers talks to the Docker socket directly, so it works with
+Docker Desktop, OrbStack, Colima, Rancher Desktop and Lima. Coding Agents shows
+each running agent, the folder it works in and what it costs the machine.
+
+## The menu bar
+
+Pick any mix of CPU, memory, network, disk, GPU, temperature, power and
+battery, as numbers or small graphs. Clicking it opens a dashboard you can
+rearrange in Settings.
+
+## Alerts
+
+Wisp sends a notification when an app holds a core for minutes, grows by a
+gigabyte in half an hour, keeps writing to disk or the network, or goes over a
+limit you set for it, and when the Mac runs hot.
+
+## Install
+
+There is no signed download yet. Apple charges 99 USD a year for the
+certificate that lets an app open without a warning, so for now you build it
+yourself. It takes about a minute.
+
+You need macOS 15 or later on Apple silicon, and Xcode 16 or later. Wisp looks
+its best on macOS 26, which adds the Liquid Glass sidebar and toolbar.
 
 ```sh
-scripts/build-app.sh          # universal release build in build/Wisp.app
-scripts/build-app.sh --debug  # faster, for this machine only
+git clone https://github.com/current/wisp
+cd wisp
+scripts/build-app.sh
 open build/Wisp.app
 ```
 
 ## Command line
 
-The app bundle includes a `wisp` command. Link it somewhere on your PATH:
+The app bundle includes a `wisp` command:
 
 ```sh
 ln -s "$PWD/build/Wisp.app/Contents/Helpers/wisp" /usr/local/bin/wisp
@@ -82,37 +103,38 @@ wisp docker
 wisp alerts
 ```
 
-Add `--json` to any command for output you can pipe into `jq`. While the app is
-running, `wisp` asks it over a local socket and gets an answer in a few
-milliseconds. Without the app, `wisp` takes its own one-second sample.
+Add `--json` for output you can pipe into `jq`. While the app runs, `wisp`
+asks it over a local socket and answers in a few milliseconds. Without the app
+it takes its own one-second sample.
 
-## MCP server
+## Asking an assistant
 
-`wisp mcp` runs an MCP server on stdin and stdout, so an assistant can ask what
-is slowing the machine down. For Claude Code:
+`wisp mcp` is an MCP server, so Claude Code or another assistant can ask what
+is slowing the machine down:
 
 ```sh
 claude mcp add wisp -- /usr/local/bin/wisp mcp
 ```
 
-It reads the same figures the CLI prints. The one thing it can ask for is to
-quit an app: Wisp then shows you the app, what it uses and the assistant's
-reason, and quits it only if you click Quit. It cannot kill processes or change
-settings. To turn it off, clear Assistants in Settings, General.
+It reads the same figures as the CLI. The one thing it can do is ask to quit
+an app. Wisp then shows you the app, what it uses and the reason the assistant
+gave, and quits it only if you click Quit. It cannot kill processes or change
+settings. Turn it off in Settings under Assistants.
 
 ## Privacy
 
-Wisp reads everything on your Mac and sends nothing anywhere. History lives in
-`~/Library/Application Support/Wisp`. It has no updater and no analytics.
+Wisp reads everything on your Mac and sends nothing anywhere. History stays in
+`~/Library/Application Support/Wisp`. There is no updater and no analytics.
 
-The one exception is off until you turn it on: plan limits on the Coding Agents
-page. Wisp then reads the sign-in that Claude Code keeps in your Keychain (through
-the `security` tool, which Claude Code itself uses) and the one Codex keeps in
-`~/.codex/auth.json`, and sends each only to the company that issued it, every
-five minutes while the page is open. It never stores, refreshes or logs them.
+One feature talks to the network, and it is off until you turn it on: plan
+limits on the Coding Agents page. Wisp then reads the sign-in Claude Code keeps
+in your Keychain (with the `security` tool, as Claude Code does) and the one
+Codex keeps in `~/.codex/auth.json`. It sends each one only to the company that
+issued it, every five minutes while the page is open, and never stores,
+refreshes or logs them.
 
 ## License
 
-MIT. See [LICENSE](LICENSE). The IOReport channel names for CPU power on
-recent Macs come from [macmon](https://github.com/vladkens/macmon), also MIT;
-see [NOTICE](NOTICE).
+MIT, see [LICENSE](LICENSE). The IOReport channel names for CPU power on recent
+Macs come from [macmon](https://github.com/vladkens/macmon), also MIT; see
+[NOTICE](NOTICE).
