@@ -1,7 +1,7 @@
 # Wisp
 
-A system monitor for the Mac that tells you which app is using what, and costs
-almost nothing to leave running.
+A system monitor for the Mac that tells you which app is using what, looks like
+Apple made it, and costs almost nothing to leave running.
 
 ![Wisp's overview in light mode](site/assets/overview-1280.webp)
 
@@ -14,6 +14,32 @@ hourly totals.
 It also knows about the things developers leave running: dev servers and the
 ports they hold, Docker containers, and coding agents like Claude Code and
 Codex.
+
+## Made to look and feel like a Mac app
+
+Most monitors are a wall of numbers. Wisp was designed screen by screen against
+macOS 26 (Tahoe) and only then built, in AppKit with no web views, so it reads
+like something that shipped with the Mac:
+
+- A Liquid Glass sidebar and toolbar that float over the page, white cards on
+  the system grey, SF Pro with tabular figures, and the system colours, so it
+  matches Settings and Finder in light and dark mode.
+- Motion with a job. When a number changes, only the digits that changed roll
+  in, a few milliseconds apart and never all on the same frame. The app drawer
+  slides in while the page narrows beside it, at the same speed. The sidebar
+  highlight stretches toward the row you picked, and Settings opens out of its
+  own row instead of a separate window. Reduce Motion turns all of it off.
+- Page titles scroll away with the page, and a small glass title takes their
+  place, so nothing ever sits on top of your data.
+- The menu bar dashboard is built from blocks you arrange yourself: drag them
+  in from a list, reorder them in a live preview, drag them out to remove.
+- Every control has a VoiceOver label, and every reorder has a menu as well
+  as a drag.
+
+None of this costs much: the whole window draws on about 50 MB. A layout check
+(`scripts/ui-audit.sh`) opens every page at four window sizes in light and dark
+and fails on text that is cut off, clipped, overlapping or spilling out of its
+card.
 
 ## What it costs
 
