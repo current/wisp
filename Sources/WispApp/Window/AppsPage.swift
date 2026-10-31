@@ -53,6 +53,8 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
     private var ascending = false
     private var table = ProcessTable()
     private var pendingSelection: String?
+    /// Set while a reload puts the selection back, so the drawer does not take it for a second click.
+    private var restoringSelection = false
 
     init(delegate: AppDelegate, onSelect: @escaping (Selection?) -> Void) {
         self.delegate = delegate
@@ -201,7 +203,9 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
             let selected = outline.item(atRow: outline.selectedRow) as? Node
             outline.reloadData()
             if let selected, outline.row(forItem: selected) >= 0 {
+                restoringSelection = true
                 outline.selectRowIndexes([outline.row(forItem: selected)], byExtendingSelection: false)
+                restoringSelection = false
             }
             lastOrder = flatOrder()
         }
@@ -404,6 +408,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
+        guard !restoringSelection else { return }
         guard let node = outline.item(atRow: outline.selectedRow) as? Node else {
             onSelect(nil)
             return
