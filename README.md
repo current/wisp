@@ -107,9 +107,19 @@ this light and how to measure it yourself.</sub>
 
 ## Install
 
-There is no signed download yet, so you build it yourself. It takes about a
-minute. You need macOS 15 or later on Apple silicon and Xcode 16 or later. Wisp
+Download `Wisp-0.1.0.zip` from the
+[latest release](https://github.com/current/wisp/releases/latest), unzip it and
+drag Wisp to Applications. You need macOS 15 or later on Apple silicon; Wisp
 looks its best on macOS 26.
+
+This build is not notarized yet, so macOS stops the first launch. Open System
+Settings > Privacy & Security and click Open Anyway, or run:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Wisp.app
+```
+
+To build it yourself instead, with Xcode 16 or later:
 
 ```sh
 git clone https://github.com/current/wisp && cd wisp
@@ -123,7 +133,7 @@ scripts/build-app.sh && open build/Wisp.app
 The app bundle includes a `wisp` command:
 
 ```sh
-ln -s "$PWD/build/Wisp.app/Contents/Helpers/wisp" /usr/local/bin/wisp
+ln -s /Applications/Wisp.app/Contents/Helpers/wisp /usr/local/bin/wisp
 ```
 
 ```sh
