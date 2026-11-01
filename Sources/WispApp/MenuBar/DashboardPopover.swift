@@ -11,6 +11,7 @@ final class DashboardPopover: NSObject {
     private var panel: DashboardPanel?
     private var content: DashboardView?
     private var monitors: [Any] = []
+    private var closedByClickAt: TimeInterval = 0
     /// WISP_PIN keeps it open; WISP_BACKGROUND also keeps it behind other windows, for screenshots.
     private let pinned = ProcessInfo.processInfo.environment["WISP_PIN"] != nil || MainWindowController.background
 
@@ -43,6 +44,10 @@ final class DashboardPopover: NSObject {
 
     func toggle(relativeTo button: NSStatusBarButton) {
         if isShown { return close() }
+        // A click on the status item while open reaches the outside-click monitor on
+        // mouse down and closes the panel; the button's action then arrives on mouse up.
+        // That click meant "close", so do not open again.
+        if ProcessInfo.processInfo.systemUptime - closedByClickAt < 0.5 { return }
         let view = content ?? DashboardView(delegate: delegate)
         content = view
         let panel = self.panel ?? DashboardPanel(content: view)
@@ -77,6 +82,7 @@ final class DashboardPopover: NSObject {
         guard !pinned else { return }
         // Close on a click anywhere else, in another app or in the menu bar.
         monitors.append(NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.closedByClickAt = ProcessInfo.processInfo.systemUptime
             self?.close()
         } as Any)
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
