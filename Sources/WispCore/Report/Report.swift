@@ -200,6 +200,8 @@ public struct Responder {
             return Report.json(status)
         case "alerts":
             return Report.json(alerts)
+        case "storage":
+            return Report.json(StorageReport.current())
         default:
             return Report.json(Failure(error: "Unknown command \(request.command)."))
         }

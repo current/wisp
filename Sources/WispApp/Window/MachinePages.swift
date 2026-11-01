@@ -357,7 +357,7 @@ final class MemoryPage: MachinePage {
 
 // MARK: - Disk
 
-final class DiskPage: MachinePage {
+class DiskPage: MachinePage {
     private let reading = Tile("Reading"), writing = Tile("Writing"), readToday = Tile("Read today")
     private let writtenToday = Tile("Written today"), writer = Tile("Busiest writer")
     private let volumesCard = CardView()

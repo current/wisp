@@ -12,7 +12,7 @@ enum PageID: String, CaseIterable {
         case .cpu: return "CPU"
         case .memory: return "Memory"
         case .energy: return "Power"
-        case .disk: return "Disk"
+        case .disk: return "Storage"
         case .network: return "Network"
         case .gpu: return "GPU"
         case .neural: return "Neural Engine"
@@ -538,7 +538,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case .apps: return AppsPage(delegate: delegate, onSelect: select)
         case .cpu: return CPUPage(title: "CPU", metric: .cpu, delegate: delegate, onSelect: select)
         case .memory: return MemoryPage(title: "Memory", metric: .memory, delegate: delegate, onSelect: select)
-        case .disk: return DiskPage(title: "Disk", metric: .diskRead, delegate: delegate, onSelect: select)
+        case .disk: return StoragePage(title: "Disk", metric: .diskRead, delegate: delegate, onSelect: select)
         case .network: return NetworkPage(title: "Network", metric: .networkIn, delegate: delegate, onSelect: select)
         case .gpu: return GPUPage(title: "GPU", metric: .gpu, delegate: delegate, onSelect: select)
         case .energy: return EnergyPage(title: "Power", metric: .power, delegate: delegate, onSelect: select)

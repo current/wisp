@@ -39,6 +39,9 @@ final class MCPServer {
         Tool(name: "recent_alerts",
              description: "Alerts Wisp raised recently: apps that pinned the CPU, kept growing in memory, or wrote or downloaded heavily.",
              properties: [:], required: []) { _ in LocalRequest(command: "alerts") },
+        Tool(name: "storage_summary",
+             description: "Startup disk space by kind (apps, developer, documents, mail, system data, purgeable, free), what System Data holds, developer caches and build folders with sizes, what could go to the Trash, local snapshots and SSD health. Folder sizes come from the last scan the Wisp app saved.",
+             properties: [:], required: []) { _ in LocalRequest(command: "storage") },
         Tool(name: "ask_to_quit_app",
              description: "Ask the user to quit an app, for example one using far too much memory. Wisp shows them the app, what it is using and your reason, and quits it normally only if they agree. Returns at once; check app_details later to see whether it quit.",
              properties: ["name": ["type": "string", "description": "App name or bundle id"],
@@ -81,7 +84,7 @@ final class MCPServer {
                 if !Self.allowed {
                     text = "{\"error\": \"Assistant access is turned off in Wisp's settings.\"}"
                 } else {
-                    let data = Local.ask(request) ?? (request.command == "quit"
+                    let data = request.command == "storage" ? Report.json(StorageReport.current()) : Local.ask(request) ?? (request.command == "quit"
                         ? Report.json(Responder.Failure(error: "Wisp is not running, so it cannot ask the user."))
                         : Local.sampleAndAnswer(request))
                     text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)

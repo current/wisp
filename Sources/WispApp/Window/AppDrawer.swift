@@ -391,6 +391,7 @@ final class AppDrawer: NSView {
     private let historyToggle = Segmented(["CPU", "Memory"])
     private let chart = TimeChart()
     private let factsCard = CardView()
+    private let storageSection = AppStorageSection()
     private var factRows: [FactRow] = []
     private let commandCard = CardView()
     private let commandTitle = TextLine()
@@ -514,6 +515,7 @@ final class AppDrawer: NSView {
         historyToggle.frame = NSRect(x: inner - 18 - toggleWidth, y: 14, width: toggleWidth, height: 26)
         chart.frame = NSRect(x: 18, y: 50, width: inner - 36, height: 88)
         y = historyCard.frame.maxY + 10
+        y = storageSection.place(in: content, selection: selection, at: y, width: inner)
         let facts = factRows.filter { !$0.isHidden }
         factsCard.isHidden = facts.isEmpty
         if !facts.isEmpty {
