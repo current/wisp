@@ -120,7 +120,7 @@ final class GlassCapsule: NSView {
 
     init(content: NSView) {
         self.content = content
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, *), !Theme.solidPanels {
             let glass = NSGlassEffectView()
             glass.style = .regular
             surface = glass

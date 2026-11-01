@@ -186,7 +186,7 @@ final class Sidebar: NSView {
     }
 
     override init(frame: NSRect) {
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, *), !Theme.solidPanels {
             let glass = NSGlassEffectView()
             glass.cornerRadius = 16
             glass.style = .regular

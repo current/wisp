@@ -393,7 +393,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// About 0.3 s of relayout per open or close; nothing runs once it settles.
     private func moveDrawer(to target: CGFloat, done: (() -> Void)? = nil) {
         drawerDone = done
-        guard !Theme.reduceMotion, window?.isVisible == true else {
+        // Off every screen (WISP_BACKGROUND) the display link never fires, so jump there.
+        guard !Theme.reduceMotion, !Self.background, window?.isVisible == true else {
             drawerProgress = target
             place(animated: false)
             finishDrawer()
@@ -449,10 +450,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                                       bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
         context.scaleBy(x: scale, y: scale)
-        if !layer.isGeometryFlipped && frameView.isFlipped == false {
-            // Layer coordinates are bottom-up here already.
-        }
         effectiveAppearanceRender(frameView) { layer.render(in: context) }
+        // A window kept off the screen is never the key window, so its buttons draw grey.
+        // Paint them as they look on the window you are using.
+        let colors: [(NSWindow.ButtonType, CGColor)] = [
+            (.closeButton, CGColor(srgbRed: 1, green: 0.373, blue: 0.341, alpha: 1)),
+            (.miniaturizeButton, CGColor(srgbRed: 0.996, green: 0.737, blue: 0.180, alpha: 1)),
+            (.zoomButton, CGColor(srgbRed: 0.157, green: 0.784, blue: 0.251, alpha: 1)),
+        ]
+        for (type, color) in colors {
+            guard let button = window.standardWindowButton(type), !button.isHidden else { continue }
+            let frame = button.convert(button.bounds, to: frameView)
+            let side = min(frame.width, frame.height) - 2
+            let dot = CGRect(x: frame.midX - side / 2, y: frame.midY - side / 2, width: side, height: side)
+            context.setFillColor(color)
+            context.fillEllipse(in: dot)
+            context.setStrokeColor(CGColor(gray: 0, alpha: 0.12))
+            context.setLineWidth(0.5)
+            context.strokeEllipse(in: dot.insetBy(dx: 0.25, dy: 0.25))
+        }
         guard let image = context.makeImage() else { return }
         let rep = NSBitmapImageRep(cgImage: image)
         try? rep.representation(using: .png, properties: [:])?.write(to: url)

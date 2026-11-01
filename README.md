@@ -74,14 +74,14 @@ this light and how to measure it yourself.</sub>
 <p>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/drawer-dark.png">
-  <img src="docs/images/drawer-light.png" alt="Click any app: the drawer for Google Chrome shows 16 GB of memory, 229.6% CPU, power and GPU, and what is inside it, with tabs using 91% of its memory.">
+  <img src="docs/images/drawer-light.png" alt="Click any app: the drawer for the Aside browser shows 14 GB of memory, its CPU, power, GPU, disk and network, and what is inside it, with windows using 68% of its memory.">
 </picture>
 </p>
 
 <p>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/dev-dark.png">
-  <img src="docs/images/dev-light.png" alt="What you left running: the Developer card shows 12 projects running, 88 processes, 17 open ports and 2 Colima containers, and the coding agents Claude Code and Codex.">
+  <img src="docs/images/dev-light.png" alt="What you left running: the Developer card shows 13 projects, 93 processes, 18 open ports and 2 containers, with Claude Code running in 6 sessions.">
 </picture>
 </p>
 

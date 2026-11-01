@@ -4,6 +4,13 @@ import AppKit
 /// hairline border, small uppercase mono captions and large plain figures.
 /// Every colour has a dark value so a later dark mode only needs the switch.
 enum Theme {
+    /// Liquid Glass is drawn by the window server, so a window drawn into a PNG by
+    /// Wisp itself (WISP_SNAPSHOT, WISP_POPOVER_SNAPSHOT) or run with WISP_NO_GLASS
+    /// uses solid panels in its place.
+    static let solidPanels: Bool = {
+        let environment = ProcessInfo.processInfo.environment
+        return ["WISP_NO_GLASS", "WISP_SNAPSHOT", "WISP_POPOVER_SNAPSHOT", "WISP_AUDIT"].contains { environment[$0] != nil }
+    }()
     // Tahoe: a light grey content area, white cards with a hairline edge, system
     // colours and SF Pro throughout. Every colour has a dark value.
     static let ground = dynamic(0xF5F5F7, 0x1D1D1F)

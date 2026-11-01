@@ -22,7 +22,7 @@ final class GlassPill: NSView {
         self.title = title
         self.symbol = symbol
         // The main action is solid: tinted glass turns grey whenever Wisp is not the active app.
-        if #available(macOS 26.0, *), kind != .primary {
+        if #available(macOS 26.0, *), !Theme.solidPanels, kind != .primary {
             let glass = NSGlassEffectView()
             glass.style = .regular
             surface = glass
