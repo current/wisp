@@ -11,7 +11,7 @@ enum PageID: String, CaseIterable {
         case .apps: return "Apps"
         case .cpu: return "CPU"
         case .memory: return "Memory"
-        case .energy: return "Power"
+        case .energy: return PowerPage.title
         case .disk: return "Disk"
         case .network: return "Network"
         case .gpu: return "GPU"
@@ -32,7 +32,7 @@ enum PageID: String, CaseIterable {
         case .apps: return "list.bullet.rectangle"
         case .cpu: return "cpu"
         case .memory: return "memorychip"
-        case .energy: return "bolt"
+        case .energy: return MachinePower.hasBattery ? "battery.75percent" : "bolt"
         case .disk: return "internaldrive"
         case .network: return "network"
         case .gpu: return "cube.transparent"
@@ -541,7 +541,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case .disk: return DiskPage(title: "Disk", metric: .diskRead, delegate: delegate, onSelect: select)
         case .network: return NetworkPage(title: "Network", metric: .networkIn, delegate: delegate, onSelect: select)
         case .gpu: return GPUPage(title: "GPU", metric: .gpu, delegate: delegate, onSelect: select)
-        case .energy: return EnergyPage(title: "Power", metric: .power, delegate: delegate, onSelect: select)
+        case .energy: return PowerPage(delegate: delegate, onSelect: select)
         case .sensors: return SensorsCardPage(delegate: delegate)
         case .neural: return NeuralPage(title: "Neural Engine", metric: .power, delegate: delegate, onSelect: select)
         case .sound: return SoundPage(delegate: delegate)

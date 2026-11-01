@@ -74,6 +74,17 @@ public struct BatteryReading: Codable, Sendable, Equatable {
     /// Positive while charging, negative while draining.
     public var watts: Double?
     public var adapterWatts: Int?
+    /// What the whole Mac draws now, from the battery's power telemetry.
+    public var systemWatts: Double?
+    /// Charge the battery holds when full and held when new, mAh.
+    public var fullChargeCapacity: Int?
+    public var designCapacity: Int?
+    /// The cycle count the battery is rated for.
+    public var designCycleCount: Int?
+    /// Plugged in, not charging and short of full: macOS is holding the charge.
+    public var chargeHeld: Bool?
+    public var manufactured: Date?
+    public var lowPowerMode: Bool?
 }
 
 public struct TemperatureSensor: Codable, Sendable, Equatable {

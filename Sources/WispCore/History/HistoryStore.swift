@@ -60,12 +60,17 @@ public final class HistoryStore: @unchecked Sendable {
     /// The first minute this run recorded; the minute rings know nothing before it.
     private var firstMinute: Int?
     public var archive: HourlyArchive?
+    /// The battery level once a minute, kept next to the archive (in memory without one).
+    public let batteryLog: BatteryLog
 
     public init(archive: HourlyArchive? = nil) {
         self.archive = archive
+        // WISP_BATTERY_LOG points the log at another file, for screenshots and tests.
+        let override = ProcessInfo.processInfo.environment["WISP_BATTERY_LOG"].map { URL(fileURLWithPath: $0) }
+        batteryLog = BatteryLog(url: override ?? archive?.url.deletingLastPathComponent().appendingPathComponent("battery.sqlite"))
     }
 
-    static func minute(_ date: Date) -> Int { Int(date.timeIntervalSince1970 / 60) }
+    public static func minute(_ date: Date) -> Int { Int(date.timeIntervalSince1970 / 60) }
 
     // MARK: Recording
 
@@ -219,6 +224,7 @@ public final class HistoryStore: @unchecked Sendable {
             flushSystem(newMinute: minute)
             archiveHours(through: minute / 60)
         }
+        batteryLog.flush()
     }
 
     // MARK: Reading
@@ -299,5 +305,63 @@ public final class HistoryStore: @unchecked Sendable {
                                   minutes: cpu.count)
             }
         }
+    }
+
+    public struct AppEnergy: Sendable, Equatable {
+        public var id: String
+        public var name: String
+        public var kind: AppKind
+        public var bundlePath: String?
+        public var wh: Double
+    }
+
+    /// Energy per app from `start` until now, in watt-hours. `minuteWeight` scales each
+    /// recorded minute (1 for minutes on battery, 0 otherwise, or nil for every minute);
+    /// archived hours are scaled by `hourWeight(hour, minutesRecorded)`. Finished hours
+    /// come from the archive when there is one, the hour in progress from memory.
+    public func appEnergy(since start: Date, now: Date = Date(),
+                          minuteWeight: ((Int) -> Double)? = nil,
+                          hourWeight: ((Int, Int) -> Double)? = nil) -> [AppEnergy] {
+        let startMinute = Self.minute(start), nowMinute = Self.minute(now)
+        var totals: [String: AppEnergy] = [:]
+        func add(_ id: String, _ name: String, _ kind: AppKind, _ path: String?, _ wh: Double) {
+            guard wh > 0 else { return }
+            if totals[id] == nil { totals[id] = AppEnergy(id: id, name: name, kind: kind, bundlePath: path, wh: 0) }
+            totals[id]!.wh += wh
+        }
+        var memoryFrom = max(startMinute, nowMinute - Self.minutes + 1)
+        if let archive {
+            let currentHour = nowMinute / 60
+            memoryFrom = max(startMinute, currentHour * 60)
+            let kinds = lock.withLock { apps.mapValues { ($0.kind, $0.bundlePath) } }
+            for row in archive.rows(since: startMinute / 60) where row.hour < currentHour {
+                // The part of the first hour inside the range.
+                let inside = Double(min(60, max(0, row.hour * 60 + 60 - startMinute))) / 60
+                let weight = (hourWeight?(row.hour, row.minutes) ?? 1) * inside
+                // Apps are keyed by bundle path, so one that has quit still gets its icon.
+                let bundle = row.app.hasSuffix(".app") ? row.app : nil
+                let known = kinds[row.app]
+                add(row.app, row.name, known?.0 ?? (bundle != nil ? .app : (row.app == "system" ? .system : .tool)), known?.1 ?? bundle, row.energyWh * weight)
+            }
+        }
+        let energyIndex = AppMetric.allCases.firstIndex(of: .energy)!
+        lock.withLock {
+            guard memoryFrom < nowMinute else { return }
+            for (id, history) in apps {
+                var wh = 0.0
+                for minute in memoryFrom..<nowMinute {
+                    let watts = history.rings[energyIndex].value(at: minute)
+                    guard !watts.isNaN else { continue }
+                    wh += Double(watts) / 60 * (minuteWeight?(minute) ?? 1)
+                }
+                // The minute in progress is still accumulating.
+                if history.pendingMinute == nowMinute, history.pending[energyIndex].time > 0 {
+                    let pending = history.pending[energyIndex]
+                    wh += pending.sum / 3600 * (minuteWeight?(nowMinute) ?? 1)
+                }
+                add(id, history.name, history.kind, history.bundlePath, wh)
+            }
+        }
+        return totals.values.sorted { $0.wh > $1.wh }
     }
 }

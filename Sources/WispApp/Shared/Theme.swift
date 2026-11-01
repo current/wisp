@@ -142,6 +142,9 @@ enum Theme {
             "Temperatures": "thermometer.medium", "Fans": "fan.fill", "Accessories": "keyboard.fill", "Output": "speaker.wave.2.fill",
             "Input": "mic.fill", "Apps with sound open": "music.note", "Devices": "dot.radiowaves.left.and.right",
             "Disk use": "internaldrive", "Plan limits": "gauge.with.needle.fill", "Running": "sparkles",
+            "Mac draws now": "powerplug.fill", "Adapter": "bolt.fill", "Chip power": "cpu", "Low Power Mode": "leaf.fill",
+            "Screen on": "sun.max.fill", "Drain": "arrow.down.right", "Battery health": "heart.fill",
+            "Battery used by apps": "chart.bar.fill", "Energy used by apps": "chart.bar.fill", "Apps now": "square.grid.2x2.fill",
             "Neural Engine": "brain", "Containers": "shippingbox.fill", "Projects": "folder.fill", "Coding Agents": "sparkles",
         ]
         return table[name] ?? "circle.fill"

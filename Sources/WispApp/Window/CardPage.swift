@@ -430,6 +430,7 @@ final class TimeChart: BitmapView {
         if seconds < 1 { return "Now" }
         if seconds < 90 { return "\(Int(seconds)) s ago" }
         if seconds < 5400 { return "\(Int((seconds / 60).rounded())) min ago" }
+        if seconds >= 172_800 { return "\(Int((seconds / 86400).rounded())) days ago" }
         return "\(Int((seconds / 3600).rounded())) h ago"
     }
 
