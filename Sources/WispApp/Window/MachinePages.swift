@@ -479,6 +479,7 @@ final class NetworkPage: MachinePage {
     private let week = Tile("Last 7 days"), month = Tile("Last 30 days"), busiestTile = Tile("Busiest app")
     private var busiestID: String?
     private var totalsAt = Date.distantPast
+    private lazy var cards = NetworkCards(page: self)
 
     override var demand: Demand { [.appNetwork] }
 
@@ -490,6 +491,7 @@ final class NetworkPage: MachinePage {
         hero.figure.format = { DashboardView.split(Format.rate($0)) }
         busiestTile.onClick = { [weak self] in if let id = self?.busiestID { self?.onSelect(.app(id)) } }
         tiles = [downToday, upToday, week, month, busiestTile]
+        extras = cards.extras
         table.columns = [.init(title: "App", width: 0), .init(title: "Download", width: 150, bar: true), .init(title: "Upload", width: 80),
                          .init(title: "CPU", width: 70), .init(title: "Memory", width: 80)]
         tableTitle.text = cardTitle("Apps", "by download")
@@ -529,6 +531,7 @@ final class NetworkPage: MachinePage {
     }
 
     override func updateApps(_ table: ProcessTable) {
+        cards.update(table: table)
         if let app = busiest(table, by: { $0.networkPerSecond }), app.networkPerSecond > 0 {
             busiestID = app.id
             busiestTile.set(text: app.name)

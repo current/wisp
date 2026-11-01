@@ -38,11 +38,15 @@ public final class Monitor: @unchecked Sendable {
     private var lastSystemSample: UInt64 = 0
 
     public let history: HistoryStore
+    /// Per-app data used per day; persisted only when the history is.
+    public let dataUsage: AppDataUsage
     public let alerts = AlertEngine()
     public var onAlert: (@MainActor (Alert) -> Void)?
 
     public init(history: HistoryStore = HistoryStore()) {
         self.history = history
+        let saves = history.archive != nil && ProcessInfo.processInfo.environment["WISP_NO_SAVE"] == nil
+        dataUsage = AppDataUsage(url: saves ? AppDataUsage.defaultURL : nil)
         jobs = [
             Job(name: "system") { [unowned self] in self.sampleSystem() },
             Job(name: "thermal") { [unowned self] in self.sampleThermal() },
@@ -121,6 +125,13 @@ public final class Monitor: @unchecked Sendable {
             if latestSystem.battery == nil { sampleBattery() }
             return (lock.withLock { latestSystem }, lock.withLock { latestTable }, alerts.recent)
         }
+    }
+
+    /// The per-app network flows of these pids (all flows when nil), or nil when
+    /// per-app network is not being measured. Waits for the monitor queue, so call it
+    /// from a background queue.
+    public func networkFlows(pids: Set<Int32>?) -> [NetworkFlow]? {
+        queue.sync { scanner.network.map { $0.flows(owners: pids) } }
     }
 
     public var currentSystem: SystemSnapshot { lock.withLock { latestSystem } }
@@ -258,6 +269,7 @@ public final class Monitor: @unchecked Sendable {
         let table = scanner.scan(network: wantsNetwork || alerts.needsNetwork)
         lock.withLock { latestTable = table }
         history.record(table: table)
+        dataUsage.record(table)
         var fired = alerts.evaluate(table, history: history)
         if alerts.needsTemperature {
             // Reuse a recent reading when the thermal job is running; otherwise read the CPU sensor now.

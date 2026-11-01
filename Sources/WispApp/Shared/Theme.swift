@@ -142,6 +142,7 @@ enum Theme {
             "Temperatures": "thermometer.medium", "Fans": "fan.fill", "Accessories": "keyboard.fill", "Output": "speaker.wave.2.fill",
             "Input": "mic.fill", "Apps with sound open": "music.note", "Devices": "dot.radiowaves.left.and.right",
             "Disk use": "internaldrive", "Plan limits": "gauge.with.needle.fill", "Running": "sparkles",
+            "Most data": "chart.bar.fill", "Hosts": "server.rack",
             "Neural Engine": "brain", "Containers": "shippingbox.fill", "Projects": "folder.fill", "Coding Agents": "sparkles",
         ]
         return table[name] ?? "circle.fill"

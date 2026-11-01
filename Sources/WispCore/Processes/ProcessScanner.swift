@@ -4,7 +4,12 @@ import Foundation
 /// Per-app network byte rates, keyed by pid. Supplied by NetworkStatistics.
 protocol AppNetworkSource: AnyObject {
     func rates() -> [Int32: (received: Double, sent: Double)]
+    func flows(owners: Set<Int32>?) -> [NetworkFlow]
     func stop()
+}
+
+extension AppNetworkSource {
+    func flows(owners: Set<Int32>?) -> [NetworkFlow] { [] }
 }
 
 /// Walks every process once per pass and turns the kernel's cumulative counters
