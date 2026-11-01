@@ -3,7 +3,7 @@ import IOKit
 import WispCore
 
 enum PageID: String, CaseIterable {
-    case overview, apps, cpu, memory, energy, disk, network, gpu, neural, sound, bluetooth, sensors, ports, docker, agents, settings
+    case overview, apps, cpu, memory, energy, disk, network, gpu, neural, sound, bluetooth, sensors, ports, docker, agents, startup, settings
 
     var title: String {
         switch self {
@@ -22,6 +22,7 @@ enum PageID: String, CaseIterable {
         case .ports: return "Projects"
         case .docker: return "Containers"
         case .agents: return "Coding Agents"
+        case .startup: return "Login & Background"
         case .settings: return "Settings"
         }
     }
@@ -43,13 +44,14 @@ enum PageID: String, CaseIterable {
         case .ports: return "folder"
         case .docker: return "shippingbox"
         case .agents: return "sparkles"
+        case .startup: return "power"
         case .settings: return "gearshape"
         }
     }
 
     static let sections: [(String?, [PageID])] = [
         (nil, [.overview, .apps]),
-        ("Machine", [.cpu, .memory, .gpu, .neural, .energy, .disk, .network, .sound, .bluetooth, .sensors]),
+        ("Machine", [.cpu, .memory, .gpu, .neural, .energy, .disk, .network, .sound, .bluetooth, .sensors, .startup]),
         ("Developer", [.ports, .docker, .agents]),
     ]
 }
@@ -552,6 +554,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return page
         case .docker: return ContainersPage(title: "Containers", metric: .cpu, delegate: delegate, onSelect: select)
         case .agents: return AgentsPage(delegate: delegate, onSelect: select)
+        case .startup: return StartupPage(delegate: delegate, onSelect: select)
         case .settings: return SettingsPage(delegate: delegate)
         }
     }
