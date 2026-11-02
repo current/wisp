@@ -284,9 +284,13 @@ final class TimeChart: BitmapView {
     /// Width of the label column on the right.
     var axisWidth: CGFloat = 40
     private var hoverIndex: Int?
+    /// Labelled spikes (Shared/Charts.swift); clicking one calls `onSpike`.
+    let marks = SpikeMarks()
+    var spikes: [ChartSpike] { get { marks.spikes } set { marks.spikes = newValue; marks.color = primaryColor; needsDisplay = true } }
+    var onSpike: ((ChartSpike) -> Void)?
 
     private var plot: NSRect {
-        NSRect(x: 0, y: 6, width: bounds.width - axisWidth - 6, height: bounds.height - (showsTimeAxis ? 30 : 12))
+        NSRect(x: 0, y: 6 + marks.inset, width: bounds.width - axisWidth - 6, height: bounds.height - (showsTimeAxis ? 30 : 12) - marks.inset)
     }
 
     private var top: Float {
@@ -367,6 +371,11 @@ final class TimeChart: BitmapView {
         }
         }
 
+        marks.draw(in: rect, x: { rect.minX + CGFloat($0) * dx }, top: { [primary, secondary] index in
+            let tops = [primary, secondary].compactMap { index < $0.count && !$0[index].isNaN ? $0[index] : nil }
+            return tops.max().map(y)
+        })
+
         // Time axis: the oldest point and now.
         if showsTimeAxis {
             let span = Double(count - 1) * step
@@ -376,7 +385,7 @@ final class TimeChart: BitmapView {
             now.draw(at: NSPoint(x: rect.maxX - now.size().width, y: rect.maxY + 8))
         }
 
-        if let index = hoverIndex, index < count {
+        if let index = hoverIndex, index < count, marks.hovered == nil {
             let x = rect.minX + CGFloat(index) * dx
             Theme.inkTertiary.withAlphaComponent(0.5).setFill()
             NSRect(x: x, y: rect.minY, width: 1, height: rect.height).fill()
@@ -441,6 +450,7 @@ final class TimeChart: BitmapView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        if marks.hover(at: convert(event.locationInWindow, from: nil)) { needsDisplay = true }
         let x = convert(event.locationInWindow, from: nil).x
         let count = max(primary.count, secondary.count)
         guard count > 1 else { return }
@@ -452,7 +462,12 @@ final class TimeChart: BitmapView {
         }
     }
 
+    override func mouseDown(with event: NSEvent) {
+        if let spike = marks.hit(convert(event.locationInWindow, from: nil)) { onSpike?(spike) } else { super.mouseDown(with: event) }
+    }
+
     override func mouseExited(with event: NSEvent) {
+        _ = marks.hover(at: nil)
         hoverIndex = nil
         needsDisplay = true
     }

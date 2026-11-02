@@ -36,6 +36,8 @@ enum Local {
             reply.append(buffer, count: n)
             if reply.last == 10 { break }
         }
+        // An app from before `why` existed: answer it here instead.
+        if request.command == "why", String(decoding: reply, as: UTF8.self).contains("Unknown command") { return nil }
         return reply.isEmpty ? nil : reply
     }
 
@@ -43,6 +45,7 @@ enum Local {
 
     /// Without the app: two samples a second apart so rates mean something.
     static func sampleAndAnswer(_ request: LocalRequest) -> Data {
+        if request.command == "why" { return Report.json(Monitor().diagnose()) }
         if sampled == nil {
             let monitor = Monitor()
             _ = monitor.fresh(maxAge: 0)

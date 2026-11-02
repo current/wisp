@@ -4,7 +4,7 @@ import Foundation
 /// chosen in Settings > Menu Bar. Each block names the readings it needs, so the
 /// dashboard samples only what it shows.
 public enum DashboardBlock: String, Codable, CaseIterable, Sendable {
-    case cpu, meters, cores, memory, gpu, power, network, disk, sensors, apps, agents
+    case cpu, meters, cores, memory, gpu, power, network, disk, sensors, apps, agents, why
 
     /// What today's dashboard showed: the CPU, the six meters, the core map and the busiest apps.
     public static let defaultLayout: [DashboardBlock] = [.cpu, .meters, .cores, .apps]
@@ -21,6 +21,8 @@ public enum DashboardBlock: String, Codable, CaseIterable, Sendable {
         case .disk: return .disk
         case .sensors: return .thermal
         case .apps, .agents: return .processes
+        // Reads nothing until its button is pressed.
+        case .why: return []
         }
     }
 
