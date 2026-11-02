@@ -20,6 +20,7 @@ extension PageID {
         case .ports: return Theme.blue
         case .docker: return Theme.teal
         case .agents: return Theme.purple
+        case .startup: return Theme.teal
         case .settings: return Theme.gray
         }
     }
