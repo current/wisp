@@ -48,6 +48,7 @@ public final class Monitor: @unchecked Sendable {
             Job(name: "thermal") { [unowned self] in self.sampleThermal() },
             Job(name: "battery") { [unowned self] in self.sampleBattery() },
             Job(name: "processes") { [unowned self] in self.sampleProcesses() },
+            Job(name: "batteryLog") { [unowned self] in self.logBattery() },
         ]
     }
 
@@ -155,6 +156,13 @@ public final class Monitor: @unchecked Sendable {
         case "processes":
             if visible, demand.contains(.processes) { return plan.interval }
             return plan.backgroundProcessInterval
+        case "batteryLog":
+            // The process pass logs the battery when it runs at least once a minute; this
+            // job covers the rest, so the charge history needs no wakeups of its own.
+            guard hasBattery else { return nil }
+            let processes = visible && demand.contains(.processes) ? plan.interval : plan.backgroundProcessInterval
+            if let processes, processes <= 60 { return nil }
+            return 60
         default:
             return nil
         }
@@ -242,7 +250,21 @@ public final class Monitor: @unchecked Sendable {
     private func sampleBattery() {
         var snapshot = lock.withLock { latestSystem }
         snapshot.battery = battery.sample()
+        if let b = snapshot.battery { logBattery((b.percent, b.isCharging, b.isPluggedIn)) }
         publish(snapshot)
+    }
+
+    private lazy var hasBattery = MachinePower.hasBattery
+    private var lastBatteryLog: UInt64 = 0
+
+    /// One charge sample a minute for the history: a power source read, no registry.
+    private func logBattery(_ known: (Double, Bool, Bool)? = nil) {
+        guard hasBattery else { return }
+        let now = MachTime.now
+        if lastBatteryLog != 0, MachTime.seconds(now &- lastBatteryLog) < 55 { return }
+        guard let (percent, charging, plugged) = known ?? BatteryCollector.quick() else { return }
+        lastBatteryLog = now
+        history.batteryLog.record(level: percent, charging: charging, plugged: plugged)
     }
 
     private func publish(_ snapshot: SystemSnapshot) {
@@ -258,6 +280,7 @@ public final class Monitor: @unchecked Sendable {
         let table = scanner.scan(network: wantsNetwork || alerts.needsNetwork)
         lock.withLock { latestTable = table }
         history.record(table: table)
+        logBattery()
         var fired = alerts.evaluate(table, history: history)
         if alerts.needsTemperature {
             // Reuse a recent reading when the thermal job is running; otherwise read the CPU sensor now.
