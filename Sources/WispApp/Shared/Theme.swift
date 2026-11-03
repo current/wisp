@@ -124,7 +124,7 @@ enum Theme {
     /// The symbol for a card or tile by its name; a dot when there is none.
     static func symbol(for name: String) -> String {
         let table: [String: String] = [
-            "CPU": "cpu", "Memory": "memorychip", "GPU": "cube.fill", "Disk": "internaldrive", "Network": "globe",
+            "CPU": "cpu", "Memory": "memorychip", "GPU": "cube.fill", "Disk": "internaldrive", "Storage": "internaldrive", "Network": "globe",
             "Power": "bolt.fill", "Temperature": "thermometer.medium", "Developer": "chevron.left.forwardslash.chevron.right",
             "User": "person.fill", "System": "gearshape.2.fill", "Load average": "gauge.with.dots.needle.50percent",
             "Processes": "square.stack.3d.up.fill", "Busiest app": "crown.fill", "Pressure": "gauge.with.dots.needle.67percent",

@@ -387,7 +387,7 @@ final class OverviewPage: CardPage {
     private let cpu = SummaryCard("CPU", color: PageID.cpu.tint, kind: .cpu)
     private let memory = SummaryCard("Memory", color: PageID.memory.tint, kind: .memory)
     private let gpu = SummaryCard("GPU", color: PageID.gpu.tint, kind: .gpu)
-    private let disk = SummaryCard("Disk", color: PageID.disk.tint, kind: .disk)
+    private let disk = SummaryCard("Storage", color: PageID.disk.tint, kind: .disk)
     private let network = SummaryCard("Network", color: PageID.network.tint)
     private let power = SummaryCard("Power", color: PageID.energy.tint)
     private let thermal = SummaryCard("Temperature", color: PageID.sensors.tint)
