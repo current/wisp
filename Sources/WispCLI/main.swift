@@ -15,6 +15,7 @@ usage: wisp <command> [options]
   docker              running containers
   alerts              recent alerts (needs the app running)
   storage             disk space by kind, what can go, drive health
+  why                 why the Mac is slow right now (looks for about 3 seconds)
   mcp                 run as a read-only MCP server on stdin/stdout
 
   --json              print JSON instead of a table
@@ -60,7 +61,7 @@ if command == "storage" {
     exit(0)
 }
 
-let known = ["status", "apps", "app", "ports", "servers", "agents", "docker", "alerts"]
+let known = ["status", "apps", "app", "ports", "servers", "agents", "docker", "alerts", "why"]
 guard known.contains(command) else {
     FileHandle.standardError.write("wisp: unknown command \(command)\n\n\(usage)".data(using: .utf8)!)
     exit(2)
@@ -162,6 +163,10 @@ case "docker":
         [$0.name, $0.image, $0.ports.joined(separator: ","), $0.cpu.map { String(format: "%.1f%%", $0 * 100) } ?? "–",
          $0.memory.map { Format.memory($0) } ?? "–", $0.status]
     }, right: [3, 4])
+
+case "why":
+    guard let diagnosis = try? decoder.decode(Diagnosis.self, from: data) else { exit(1) }
+    WhyOutput.print(diagnosis)
 
 case "alerts":
     guard let alerts = try? decoder.decode([Alert].self, from: data) else { exit(1) }

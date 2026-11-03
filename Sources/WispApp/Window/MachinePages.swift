@@ -35,6 +35,7 @@ class MachinePage: CardPage {
         tableCard.addSubview(tableTitle)
         tableCard.addSubview(table)
         hero.onRange = { [weak self] _ in self?.refreshChart(force: true) }
+        SpikeLabels.install(on: self)
         table.onSort = { [weak self] _ in
             guard let self, let table = self.lastTable else { return }
             self.fillTable(table)
@@ -104,6 +105,7 @@ class MachinePage: CardPage {
             hero.chart.step = delegate.settings.interval
             hero.chart.primary = history.recent(metric)
             hero.chart.secondary = secondMetric.map { history.recent($0) } ?? []
+            hero.chart.spikes = []
         default:
             let minute = Int(Date().timeIntervalSince1970 / 60)
             guard force || minute != lastMinute else { return }
@@ -112,6 +114,7 @@ class MachinePage: CardPage {
             hero.chart.step = 60
             hero.chart.primary = history.day(metric, minutes: minutes)
             hero.chart.secondary = secondMetric.map { history.day($0, minutes: minutes) } ?? []
+            SpikeLabels.refresh(self, minutes: minutes)
         }
     }
 

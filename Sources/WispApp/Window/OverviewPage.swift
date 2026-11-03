@@ -409,6 +409,7 @@ final class OverviewPage: CardPage {
     private var slowAt = Date.distantPast
     private var lastMinute = 0
     private var agentKinds: [(String, Int)] = []
+    private lazy var diagnosis = DiagnosisCard(delegate: delegate, open: open, select: select)
 
     init(delegate: AppDelegate, open: @escaping (PageID) -> Void, select: @escaping (Selection?) -> Void) {
         self.open = open
@@ -418,7 +419,7 @@ final class OverviewPage: CardPage {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var toolbarItems: [NSView] { [range] }
+    override var toolbarItems: [NSView] { [diagnosis.button, range] }
 
     override func loadView() {
         super.loadView()
@@ -462,6 +463,7 @@ final class OverviewPage: CardPage {
         noticesTitle.text = NSAttributedString(string: "Worth a Look", attributes: [.font: Theme.sans(15, .bold), .foregroundColor: Theme.ink])
         notices.addSubview(noticesTitle)
         notices.addSubview(noticesEmpty)
+        diagnosis.install(in: canvas) { [weak self] in self?.relayout() }
     }
 
     override func arrange(width: CGFloat) -> CGFloat {
@@ -470,7 +472,7 @@ final class OverviewPage: CardPage {
         let columns: CGFloat = wide ? 4 : 2
         let column = (inner - gap * (columns - 1)) / columns
         func x(_ index: CGFloat) -> CGFloat { margin + index * (column + gap) }
-        var y = margin
+        var y = diagnosis.place(x: margin, y: margin, width: inner, gap: gap)
         if wide {
             cpu.frame = NSRect(x: x(0), y: y, width: column * 2 + gap, height: 274)
             memory.frame = NSRect(x: x(2), y: y, width: column, height: 274)

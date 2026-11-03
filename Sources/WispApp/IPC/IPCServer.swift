@@ -105,6 +105,8 @@ final class IPCServer: @unchecked Sendable {
                 reply = Report.json(Responder.Failure(error: "Assistant access is turned off in Wisp's settings."), pretty: false)
             } else if request.command == "quit" {
                 reply = askToQuit(request, table: monitor.currentTable)
+            } else if request.command == "why" {
+                reply = Report.json(monitor.diagnose())
             } else {
                 let now = monitor.fresh()
                 let responder = Responder(system: now.system, table: now.table, history: monitor.history, alerts: now.alerts,

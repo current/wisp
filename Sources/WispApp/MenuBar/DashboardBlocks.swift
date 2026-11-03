@@ -15,6 +15,7 @@ extension DashboardBlock {
         case .sensors: return "Temperature"
         case .apps: return "Apps"
         case .agents: return "Coding agents"
+        case .why: return "Why is it slow?"
         }
     }
 
@@ -32,6 +33,7 @@ extension DashboardBlock {
         case .sensors: return "Hottest sensor and fans"
         case .apps: return "The busiest apps, by tab"
         case .agents: return "Coding agents running now"
+        case .why: return "A three-second check when the Mac drags"
         }
     }
 
@@ -40,6 +42,7 @@ extension DashboardBlock {
         case .meters: return "square.grid.3x2.fill"
         case .sensors: return "thermometer.medium"
         case .agents: return "sparkles"
+        case .why: return "stethoscope"
         default: return Theme.symbol(for: title)
         }
     }
@@ -56,6 +59,7 @@ extension DashboardBlock {
         case .sensors: return PageID.sensors.tint
         case .apps: return Theme.gray
         case .agents: return PageID.agents.tint
+        case .why: return Theme.gray
         }
     }
 }
@@ -102,6 +106,7 @@ class DashboardBlockView: CardView {
         case .memory: return MemoryBlock(block, delegate: delegate)
         case .apps: return AppsBlock(block, delegate: delegate)
         case .agents: return AgentsBlock(block, delegate: delegate)
+        case .why: return WhyBlock(block, delegate: delegate)
         case .gpu, .power, .network, .disk, .sensors: return CompactBlock(block, delegate: delegate)
         }
     }
