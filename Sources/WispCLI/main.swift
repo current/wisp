@@ -14,6 +14,7 @@ usage: wisp <command> [options]
   agents              coding agents and the processes they started
   docker              running containers
   alerts              recent alerts (needs the app running)
+  storage             disk space by kind, what can go, drive health
   mcp                 run as a read-only MCP server on stdin/stdout
 
   --json              print JSON instead of a table
@@ -51,6 +52,11 @@ if command == "help" || command == "--help" || command == "-h" {
 }
 if command == "version" || command == "--version" {
     print("wisp \(Wisp.version)")
+    exit(0)
+}
+
+if command == "storage" {
+    StorageCommand.run(json: json)
     exit(0)
 }
 

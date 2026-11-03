@@ -2,6 +2,8 @@ import Foundation
 
 public enum SystemMetric: String, CaseIterable, Codable, Sendable {
     case cpu, memory, diskRead, diskWrite, networkIn, networkOut, gpu, cpuTemperature, power, battery, cpuSystem
+    /// Free bytes on the startup disk, archived once an hour.
+    case diskFree
 }
 
 public enum AppMetric: String, CaseIterable, Codable, Sendable {
@@ -212,6 +214,7 @@ public final class HistoryStore: @unchecked Sendable {
                 let values = (0..<60).map { ring.value(at: h * 60 + $0) }.filter { !$0.isNaN }
                 if !values.isEmpty { system[metric] = Double(values.reduce(0, +)) / Double(values.count) }
             }
+            if h == hour, let free = StorageVolume.freeBytes() { system[.diskFree] = Double(free) }
             archive.write(hour: h, apps: rows, system: system)
         }
     }
