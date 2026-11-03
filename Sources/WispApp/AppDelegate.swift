@@ -69,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // every 15 minutes so a crash loses little.
         flushTimer = Timer.scheduledTimer(withTimeInterval: 900, repeats: true) { [weak self] _ in
             self?.monitor.history.flushToArchive()
+            self?.monitor.dataUsage.save()
         }
         flushTimer?.tolerance = 120
 
@@ -87,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         monitor.history.flushToArchive()
+        monitor.dataUsage.save()
         IPCServer.shared.stop()
     }
 

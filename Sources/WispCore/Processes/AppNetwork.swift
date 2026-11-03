@@ -32,6 +32,12 @@ final class AppNetwork: AppNetworkSource {
         let pid: String
         let epid: String
         let counts: [(rx: String, tx: String)]
+        let local: String?
+        let remote: String?
+        let provider: String?
+        let tcpState: String?
+        let rxAll: String?
+        let txAll: String?
     }
 
     private static let api: API? = {
@@ -59,11 +65,23 @@ final class AppNetwork: AppNetworkSource {
         return API(create: create, addTCP: addTCP, addUDP: addUDP, queryAll: queryAll, destroy: destroy,
                    setDescription: setDescription, setCounts: setCounts, setRemoved: setRemoved,
                    queryDescription: queryDescription,
-                   keys: Keys(pid: pid, epid: epid, counts: [(rxWiFi, txWiFi), (rxWired, txWired), (rxCell, txCell)]))
+                   keys: Keys(pid: pid, epid: epid, counts: [(rxWiFi, txWiFi), (rxWired, txWired), (rxCell, txCell)],
+                              local: key("kNStatSrcKeyLocal"), remote: key("kNStatSrcKeyRemote"),
+                              provider: key("kNStatSrcKeyProvider"), tcpState: key("kNStatSrcKeyTCPState"),
+                              rxAll: key("kNStatSrcKeyRxBytes"), txAll: key("kNStatSrcKeyTxBytes")))
     }()
 
     private final class Flow {
         var pid: Int32 = 0
+        /// The process holding the socket; `pid` is the app it works for.
+        var process: Int32 = 0
+        var isUDP = false
+        var local: NetworkEndpoint?
+        var remote: NetworkEndpoint?
+        var tcpState = ""
+        /// All interfaces, loopback included; only the connection list reads these.
+        var receivedAll: UInt64 = 0
+        var sentAll: UInt64 = 0
         var received: UInt64 = 0
         var sent: UInt64 = 0
         var reportedReceived: UInt64 = 0
@@ -93,6 +111,11 @@ final class AppNetwork: AppNetworkSource {
                 let pid = (d[keys.pid] as? NSNumber)?.int32Value ?? 0
                 // A daemon working for an app (nsurlsessiond downloading for it) reports the app as EPID.
                 flow.pid = epid > 0 ? epid : pid
+                flow.process = pid
+                if let key = keys.provider { flow.isUDP = (d[key] as? String) == "UDP" }
+                if let key = keys.tcpState { flow.tcpState = (d[key] as? String) ?? "" }
+                if let key = keys.local, let data = d[key] as? Data { flow.local = NetworkEndpoint(sockaddr: data) }
+                if let key = keys.remote, let data = d[key] as? Data { flow.remote = NetworkEndpoint(sockaddr: data) }
             }
             api.setCounts(source) { dictionary in
                 let d = dictionary as NSDictionary
@@ -104,6 +127,8 @@ final class AppNetwork: AppNetworkSource {
                 }
                 flow.received = rx
                 flow.sent = tx
+                if let key = keys.rxAll { flow.receivedAll = (d[key] as? NSNumber)?.uint64Value ?? rx }
+                if let key = keys.txAll { flow.sentAll = (d[key] as? NSNumber)?.uint64Value ?? tx }
             }
             api.setRemoved(source) { [weak self] in
                 guard let self, let flow = self.flows.removeValue(forKey: source) else { return }
@@ -128,6 +153,22 @@ final class AppNetwork: AppNetworkSource {
         guard let manager else { return }
         self.manager = nil
         api.destroy(manager)
+    }
+
+    /// Every open flow of the given apps (by the pid each flow is counted under), or
+    /// of all processes when `owners` is nil, with its counts as of the last `rates()`.
+    func flows(owners: Set<Int32>?) -> [NetworkFlow] {
+        guard manager != nil else { return [] }
+        return queue.sync {
+            var result: [NetworkFlow] = []
+            for (source, flow) in flows where flow.pid > 0 {
+                if let owners, !owners.contains(flow.pid), !owners.contains(flow.process) { continue }
+                result.append(NetworkFlow(id: UInt(bitPattern: source), pid: flow.process, owner: flow.pid,
+                                          isUDP: flow.isUDP, local: flow.local, remote: flow.remote, tcpState: flow.tcpState,
+                                          received: max(flow.receivedAll, flow.received), sent: max(flow.sentAll, flow.sent)))
+            }
+            return result
+        }
     }
 
     /// Bytes per second per process since the previous call. The first call only

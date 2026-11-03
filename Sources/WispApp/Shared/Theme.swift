@@ -145,6 +145,7 @@ enum Theme {
             "Mac draws now": "powerplug.fill", "Adapter": "bolt.fill", "Chip power": "cpu", "Low Power Mode": "leaf.fill",
             "Screen on": "sun.max.fill", "Drain": "arrow.down.right", "Battery health": "heart.fill",
             "Battery used by apps": "chart.bar.fill", "Energy used by apps": "chart.bar.fill", "Apps now": "square.grid.2x2.fill",
+            "Most data": "chart.bar.fill", "Hosts": "server.rack",
             "Neural Engine": "brain", "Containers": "shippingbox.fill", "Projects": "folder.fill", "Coding Agents": "sparkles",
         ]
         return table[name] ?? "circle.fill"

@@ -515,6 +515,7 @@ final class AppDrawer: NSView {
         historyToggle.frame = NSRect(x: inner - 18 - toggleWidth, y: 14, width: toggleWidth, height: 26)
         chart.frame = NSRect(x: 18, y: 50, width: inner - 36, height: 88)
         y = historyCard.frame.maxY + 10
+        y = AppNetworkSection.attach(to: content).arrange(top: y, width: inner)
         y = storageSection.place(in: content, selection: selection, at: y, width: inner)
         let facts = factRows.filter { !$0.isHidden }
         factsCard.isHidden = facts.isEmpty
@@ -607,6 +608,7 @@ final class AppDrawer: NSView {
         gpu.figure.show(gpuShares.isEmpty ? "–" : String(format: "%.0f", share * 100), unit: gpuShares.isEmpty ? "" : "%")
         sampleGPU()
         fillChart()
+        AppNetworkSection.attach(to: content).update(selection: selection, pids: pids, table: table, delegate: delegate)
     }
 
     private func setTitle(_ title: String, _ detail: String) {
