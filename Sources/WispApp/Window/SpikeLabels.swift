@@ -33,7 +33,7 @@ enum SpikeLabels {
         case is MemoryPage: return ([.memory], .memory)
         case is DiskPage: return ([.diskRead, .diskWrite], .disk)
         case is NetworkPage: return ([.networkIn, .networkOut], .network)
-        case is EnergyPage: return ([.power], .power)
+        case is PowerPage: return ([.power], .power)  // the battery hero (charge) draws its own chart and never asks
         default: return nil
         }
     }

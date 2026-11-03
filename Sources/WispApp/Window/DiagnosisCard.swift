@@ -43,8 +43,7 @@ enum DiagnosisRunner {
         switch action {
         case .showApp(let id): select(id)
         case .openPage(let name): if let page = PageID(rawValue: name) { open(page) }
-        case .openStorage:
-            if let url = URL(string: "x-apple.systempreferences:com.apple.settings.Storage") { NSWorkspace.shared.open(url) }
+        case .openStorage: open(.disk)
         case .quitApp(let id):
             guard let app = delegate.table.app(id), let bundleID = app.bundleIdentifier else { return select(id) }
             let alert = NSAlert()

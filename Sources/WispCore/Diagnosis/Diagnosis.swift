@@ -8,7 +8,7 @@ public enum DiagnosisAction: Codable, Sendable, Equatable {
     case quitApp(String)
     /// Open one of Wisp's pages, by its raw name ("sensors", "agents", "docker", "gpu").
     case openPage(String)
-    /// Open Storage in System Settings.
+    /// Open Wisp's Storage page.
     case openStorage
 
     private enum CodingKeys: String, CodingKey { case type, target }
