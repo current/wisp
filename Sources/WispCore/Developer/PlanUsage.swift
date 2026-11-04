@@ -1,7 +1,6 @@
-import CryptoKit
 import Foundation
 
-/// How much of an AI plan's limits is used, per signed-in account on this Mac.
+/// How much of an AI plan's limits is used, per account on this Mac.
 public struct PlanUsage: Codable, Sendable, Equatable, Identifiable {
     public struct Window: Codable, Sendable, Equatable {
         /// "5-hour session", "This week"...
@@ -15,18 +14,19 @@ public struct PlanUsage: Codable, Sendable, Equatable, Identifiable {
     public var account: String
     public var plan: String?
     public var windows: [Window]
+    /// When the tool last reported these figures.
+    public var updated: Date?
     /// Set when the limits could not be read, in words a person can act on.
     public var problem: String?
     public var id: String { provider + ":" + account }
 }
 
-/// Reads plan limits the way each tool does for itself: the sign-in the tool keeps
-/// on this Mac, sent only to the company that issued it. Wisp never refreshes or
-/// stores a sign-in; an expired one is reported so the tool can renew it.
+/// Reads plan limits from what Claude Code and Codex already report on this Mac:
+/// Claude Code hands them to its status line, which Wisp joins (see `ClaudeStatusLine`),
+/// and Codex writes them into its session logs. No sign-in is read and nothing is sent.
 public enum PlanUsageReader {
     /// Claude Code config folders: ~/.claude and any ~/.claude-* with a .claude.json.
-    static func claudeFolders() -> [String] {
-        let home = NSHomeDirectory()
+    public static func claudeFolders(home: String = NSHomeDirectory()) -> [String] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: home)) ?? []
         return names.filter { $0 == ".claude" || ($0.hasPrefix(".claude-") && !$0.contains(".json")) }
             .map { home + "/" + $0 }
@@ -34,149 +34,319 @@ public enum PlanUsageReader {
             .sorted()
     }
 
-    /// Claude Code names its Keychain item after the config folder, except for the default one.
-    static func keychainService(for folder: String) -> String {
-        if folder == NSHomeDirectory() + "/.claude" { return "Claude Code-credentials" }
-        let digest = SHA256.hash(data: Data(folder.utf8)).map { String(format: "%02x", $0) }.joined()
-        return "Claude Code-credentials-" + digest.prefix(8)
+    /// Codex home folders: ~/.codex and any ~/.codex-* that keeps sessions.
+    static func codexFolders(home: String) -> [String] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: home)) ?? []
+        return names.filter { $0 == ".codex" || $0.hasPrefix(".codex-") }
+            .map { home + "/" + $0 }
+            .filter { FileManager.default.fileExists(atPath: $0 + "/sessions") }
+            .sorted()
     }
 
-    /// Asks the `security` tool rather than the Keychain API. Claude Code saves its
-    /// sign-in with that tool, so the item already trusts it and no prompt appears.
-    static func keychainData(service: String) -> Data? {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        task.arguments = ["find-generic-password", "-s", service, "-w"]
-        let out = Pipe()
-        task.standardOutput = out
-        task.standardError = FileHandle.nullDevice
-        guard (try? task.run()) != nil else { return nil }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        task.waitUntilExit()
-        guard task.terminationStatus == 0, !data.isEmpty else { return nil }
-        return data
-    }
-
-    struct ClaudeSignIn {
-        var token: String
-        var expires: Date?
-        var plan: String?
-    }
-
-    static func claudeSignIn(folder: String) -> ClaudeSignIn? {
-        let data = keychainData(service: keychainService(for: folder))
-            ?? FileManager.default.contents(atPath: folder + "/.credentials.json")
-        guard let data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let oauth = json["claudeAiOauth"] as? [String: Any], let token = oauth["accessToken"] as? String else { return nil }
-        let expires = (oauth["expiresAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
-        let plan = (oauth["subscriptionType"] as? String)?.capitalized
-        return ClaudeSignIn(token: token, expires: expires, plan: plan)
-    }
-
-    static func claudeEmail(folder: String) -> String? {
-        let paths = folder == NSHomeDirectory() + "/.claude" ? [NSHomeDirectory() + "/.claude.json", folder + "/.claude.json"] : [folder + "/.claude.json"]
+    /// The account fields Claude Code keeps beside its settings (not the sign-in).
+    static func claudeAccount(folder: String, home: String) -> (email: String?, plan: String?) {
+        let paths = folder == home + "/.claude" ? [home + "/.claude.json", folder + "/.claude.json"] : [folder + "/.claude.json"]
         for path in paths {
             guard let data = FileManager.default.contents(atPath: path),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let email = (json["oauthAccount"] as? [String: Any])?["emailAddress"] as? String else { continue }
-            return email
+                  let account = json["oauthAccount"] as? [String: Any], let email = account["emailAddress"] as? String else { continue }
+            return (email, account["planDisplayName"] as? String)
+        }
+        return (nil, nil)
+    }
+
+    /// Every account with figures, plus connected Claude folders still waiting for their first.
+    public static func readAll(home: String = NSHomeDirectory(), store: URL = ClaudeStatusLine.store, now: Date = Date()) -> [PlanUsage] {
+        var byAccount: [String: PlanUsage] = [:]
+        for folder in claudeFolders(home: home) {
+            let (email, plan) = claudeAccount(folder: folder, home: home)
+            let account = email ?? (folder as NSString).lastPathComponent
+            var usage = PlanUsage(provider: "Claude", account: account, plan: plan, windows: [])
+            if let record = ClaudeStatusLine.read(folder: folder, store: store) {
+                usage.windows = record.windows.map { window($0.name, used: $0.used, resets: $0.resets, now: now) }
+                usage.updated = record.updated
+            } else if ClaudeStatusLine.state(folder: folder) == .connected {
+                usage.problem = "Waiting for Claude Code's next reply"
+            } else {
+                continue
+            }
+            // Two folders signed in to one account: keep the newer figures.
+            let key = "claude:" + account
+            if let existing = byAccount[key], (existing.updated ?? .distantPast) >= (usage.updated ?? .distantPast) { continue }
+            byAccount[key] = usage
+        }
+        for folder in codexFolders(home: home) {
+            guard var usage = codex(folder: folder, now: now) else { continue }
+            usage.account = folder.replacingOccurrences(of: home, with: "~")
+            byAccount["codex:" + folder] = usage
+        }
+        // Accounts with figures first, then by provider and name.
+        return byAccount.values.sorted {
+            ($0.problem == nil ? 0 : 1, $0.provider, $0.account) < ($1.problem == nil ? 0 : 1, $1.provider, $1.account)
+        }
+    }
+
+    /// A window whose reset time has passed has had no use reported since.
+    static func window(_ name: String, used: Double, resets: Date?, now: Date) -> PlanUsage.Window {
+        if let resets, resets <= now { return .init(name: name, used: 0, resets: nil) }
+        return .init(name: name, used: used, resets: resets)
+    }
+
+    static func windowName(minutes: Double?) -> String? {
+        guard let minutes else { return nil }
+        if minutes <= 300 { return "5-hour session" }
+        if minutes >= 6 * 1440 { return "This week" }
+        return nil
+    }
+
+    /// The last limits Codex wrote into its newest session logs.
+    static func codex(folder: String, now: Date) -> PlanUsage? {
+        for file in newestSessions(folder + "/sessions", count: 4) {
+            guard let line = lastLine(containing: "\"rate_limits\":{", in: file),
+                  let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  let payload = json["payload"] as? [String: Any],
+                  let limits = payload["rate_limits"] as? [String: Any] else { continue }
+            var usage = PlanUsage(provider: "Codex", account: "", plan: (limits["plan_type"] as? String)?.capitalized, windows: [])
+            for (key, fallback) in [("primary", "5-hour session"), ("secondary", "This week")] {
+                guard let item = limits[key] as? [String: Any], let percent = item["used_percent"] as? Double else { continue }
+                let resets = (item["resets_at"] as? Double).map(Date.init(timeIntervalSince1970:))
+                usage.windows.append(window(windowName(minutes: item["window_minutes"] as? Double) ?? fallback,
+                                            used: percent / 100, resets: resets, now: now))
+            }
+            guard !usage.windows.isEmpty else { continue }
+            let iso = ISO8601DateFormatter()
+            iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            usage.updated = (json["timestamp"] as? String).flatMap(iso.date(from:))
+                ?? (try? FileManager.default.attributesOfItem(atPath: file)[.modificationDate] as? Date)
+            return usage
         }
         return nil
     }
 
-    /// Every account, read in parallel. Takes as long as the slowest request, a second or two.
-    public static func readAll() async -> [PlanUsage] {
-        await withTaskGroup(of: PlanUsage?.self) { group in
-            var seen = Set<String>()
-            for folder in claudeFolders() {
-                let email = claudeEmail(folder: folder) ?? (folder as NSString).lastPathComponent
-                guard seen.insert("claude:" + email).inserted else { continue }
-                group.addTask { await claude(folder: folder, account: email) }
+    /// Session logs live in sessions/YYYY/MM/DD. A session keeps writing to the day it
+    /// started, so the newest few files of the two latest days are compared by date.
+    static func newestSessions(_ root: String, count: Int) -> [String] {
+        let fm = FileManager.default
+        func sortedDown(_ path: String) -> [String] {
+            ((try? fm.contentsOfDirectory(atPath: path)) ?? []).filter { !$0.hasPrefix(".") }.sorted(by: >).map { path + "/" + $0 }
+        }
+        var days: [String] = []
+        outer: for year in sortedDown(root) {
+            for month in sortedDown(year) {
+                for day in sortedDown(month) {
+                    days.append(day)
+                    if days.count == 2 { break outer }
+                }
             }
-            for folder in [NSHomeDirectory() + "/.codex", NSHomeDirectory() + "/.codex-alt"] where FileManager.default.fileExists(atPath: folder + "/auth.json") {
-                group.addTask { await codex(folder: folder) }
+        }
+        let files = days.flatMap(sortedDown).filter { $0.hasSuffix(".jsonl") }
+        let dated = files.map { ($0, (try? fm.attributesOfItem(atPath: $0)[.modificationDate] as? Date) ?? .distantPast) }
+        return dated.sorted { $0.1 > $1.1 }.prefix(count).map(\.0)
+    }
+
+    /// The last whole line holding `marker`, from the final 256 KB of the file.
+    static func lastLine(containing marker: String, in path: String) -> Data? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > 262_144 ? size - 262_144 : 0)
+        guard let data = try? handle.readToEnd() else { return nil }
+        let needle = Data(marker.utf8)
+        for line in data.split(separator: 10).reversed() where line.range(of: needle) != nil {
+            // Codex writes "rate_limits":{"primary":null...} before the first reply; skip those.
+            if line.range(of: Data("\"used_percent\"".utf8)) != nil { return Data(line) }
+        }
+        return nil
+    }
+}
+
+/// Wisp joins Claude Code's status line to see the plan limits Claude Code itself
+/// reports there. The status line you already have keeps running: Wisp passes it the
+/// same input and prints what it prints. Turning plan limits off puts it back.
+public enum ClaudeStatusLine {
+    public struct Record: Codable, Equatable, Sendable {
+        public struct Window: Codable, Equatable, Sendable {
+            public var name: String
+            public var used: Double
+            public var resets: Date?
+        }
+        public var folder: String
+        public var updated: Date
+        public var windows: [Window]
+    }
+
+    public static var store: URL { Wisp.supportDirectory.appendingPathComponent("plan-limits", isDirectory: true) }
+
+    static func fileName(folder: String) -> String {
+        var name = (folder as NSString).lastPathComponent
+        while name.hasPrefix(".") { name.removeFirst() }
+        return (name.isEmpty ? "claude" : name) + ".json"
+    }
+
+    // MARK: The helper side (`wisp statusline`)
+
+    /// Saves the limits from one status-line input. Writes only when a figure changed
+    /// or the saved one is a minute old, since Claude Code runs the status line often.
+    public static func record(input: Data, folder: String, store: URL = store, now: Date = Date()) {
+        guard let json = try? JSONSerialization.jsonObject(with: input) as? [String: Any],
+              let limits = json["rate_limits"] as? [String: Any] else { return }
+        var windows: [Record.Window] = []
+        for (key, name) in [("five_hour", "5-hour session"), ("seven_day", "This week")] {
+            guard let item = limits[key] as? [String: Any], let percent = item["used_percentage"] as? Double else { continue }
+            windows.append(.init(name: name, used: percent / 100, resets: (item["resets_at"] as? Double).map(Date.init(timeIntervalSince1970:))))
+        }
+        guard !windows.isEmpty else { return }
+        if let saved = read(folder: folder, store: store), saved.windows == windows, now.timeIntervalSince(saved.updated) < 60 { return }
+        let record = Record(folder: folder, updated: now, windows: windows)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .secondsSince1970
+        guard let data = try? encoder.encode(record) else { return }
+        try? FileManager.default.createDirectory(at: store, withIntermediateDirectories: true)
+        try? data.write(to: store.appendingPathComponent(fileName(folder: folder)), options: .atomic)
+    }
+
+    public static func read(folder: String, store: URL = store) -> Record? {
+        guard let data = FileManager.default.contents(atPath: store.appendingPathComponent(fileName(folder: folder)).path) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return try? decoder.decode(Record.self, from: data)
+    }
+
+    // MARK: The command in settings.json
+
+    static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: #"'\''"#) + "'" }
+
+    /// Reads one shell word written by `quote` from the front of `text`.
+    static func unquote(_ text: Substring) -> (word: String, rest: Substring)? {
+        var rest = text
+        var word = ""
+        var any = false
+        while true {
+            if rest.hasPrefix("'") {
+                rest.removeFirst()
+                guard let end = rest.firstIndex(of: "'") else { return nil }
+                word += rest[..<end]
+                rest = rest[rest.index(after: end)...]
+                any = true
+            } else if rest.hasPrefix(#"\'"#) {
+                word += "'"
+                rest = rest.dropFirst(2)
+                any = true
+            } else {
+                break
             }
-            var result: [PlanUsage] = []
-            for await usage in group { if let usage { result.append(usage) } }
-            // Accounts with readable limits first, then by provider and name.
-            return result.sorted { ($0.problem == nil ? 0 : 1, $0.provider, $0.account) < ($1.problem == nil ? 0 : 1, $1.provider, $1.account) }
         }
+        return any ? (word, rest) : nil
     }
 
-    static func claude(folder: String, account: String) async -> PlanUsage? {
-        guard let signIn = claudeSignIn(folder: folder) else { return nil }
-        var usage = PlanUsage(provider: "Claude", account: account, plan: signIn.plan, windows: [])
-        if let expires = signIn.expires, expires < Date() {
-            usage.problem = "Sign-in expired · renews when Claude Code next runs"
-            return usage
-        }
-        var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!, timeoutInterval: 10)
-        request.setValue("Bearer " + signIn.token, forHTTPHeaderField: "Authorization")
-        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        request.setValue("Wisp", forHTTPHeaderField: "User-Agent")
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            usage.problem = "Could not read the limits right now"
-            return usage
-        }
-        let names = ["five_hour": "5-hour session", "seven_day": "This week", "seven_day_opus": "This week, Opus",
-                     "seven_day_sonnet": "This week, Sonnet"]
-        for key in ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"] {
-            guard let window = json[key] as? [String: Any], let utilization = window["utilization"] as? Double else { continue }
-            usage.windows.append(.init(name: names[key] ?? key, used: utilization / 100, resets: date(window["resets_at"])))
-        }
-        return usage
+    /// Runs the helper when it is there and falls back to the old status line when it is
+    /// not, so moving or deleting Wisp never leaves Claude Code without one.
+    public static func command(helper: String, folder: String, original: String?) -> String {
+        let run = #"exec "$W" statusline --folder "# + quote(folder)
+        guard let original, !original.isEmpty else { return "W=\(quote(helper)); [ -x \"$W\" ] && \(run)" }
+        return "W=\(quote(helper)); if [ -x \"$W\" ]; then \(run) --then \(quote(original)); else exec /bin/sh -c \(quote(original)); fi"
     }
 
-    static func codex(folder: String) async -> PlanUsage? {
-        guard let data = FileManager.default.contents(atPath: folder + "/auth.json"),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let tokens = json["tokens"] as? [String: Any], let token = tokens["access_token"] as? String else { return nil }
-        let accountID = tokens["account_id"] as? String
-        let email = (tokens["id_token"] as? String).flatMap(jwtEmail) ?? (folder as NSString).lastPathComponent
-        var usage = PlanUsage(provider: "Codex", account: email, plan: nil, windows: [])
-        var request = URLRequest(url: URL(string: "https://chatgpt.com/backend-api/wham/usage")!, timeoutInterval: 10)
-        request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
-        if let accountID { request.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-Id") }
-        request.setValue("Wisp", forHTTPHeaderField: "User-Agent")
-        guard let (body, response) = try? await URLSession.shared.data(for: request) else {
-            usage.problem = "Could not read the limits right now"
-            return usage
-        }
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200, let result = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
-            usage.problem = status == 401 ? "Sign-in expired · renews when Codex next runs"
-                : "Could not read the limits right now"
-            return usage
-        }
-        usage.plan = (result["plan_type"] as? String)?.capitalized
-        let limits = result["rate_limit"] as? [String: Any] ?? [:]
-        for (key, fallback) in [("primary_window", "5-hour session"), ("secondary_window", "This week")] {
-            guard let window = limits[key] as? [String: Any], let percent = window["used_percent"] as? Double else { continue }
-            let seconds = window["limit_window_seconds"] as? Double
-            let name = seconds.map { $0 >= 86_400 * 6 ? "This week" : ($0 <= 18_000 ? "5-hour session" : fallback) } ?? fallback
-            let resets = (window["reset_after_seconds"] as? Double).map { Date().addingTimeInterval($0) }
-            usage.windows.append(.init(name: name, used: percent / 100, resets: resets))
-        }
-        return usage
+    public struct Parsed: Equatable {
+        public var helper: String
+        public var original: String?
     }
 
-    /// Parses "2026-11-03T23:10:00.130194+00:00"; the formatter does not take six fractional digits.
-    static func date(_ value: Any?) -> Date? {
-        guard let text = value as? String else { return nil }
-        let trimmed = text.replacingOccurrences(of: #"\.\d+"#, with: "", options: .regularExpression)
-        return ISO8601DateFormatter().date(from: trimmed)
+    /// Reads back a command written by `command`; nil for anyone else's.
+    public static func parse(_ command: String) -> Parsed? {
+        guard command.hasPrefix("W='"), command.contains(" statusline --folder "),
+              let (helper, _) = unquote(command.dropFirst(2)) else { return nil }
+        guard let range = command.range(of: " --then ") else { return Parsed(helper: helper, original: nil) }
+        guard let (original, _) = unquote(command[range.upperBound...]) else { return nil }
+        return Parsed(helper: helper, original: original)
     }
 
-    /// The email claim of an OpenAI id token, read without verifying it; it is only a label.
-    static func jwtEmail(_ token: String) -> String? {
-        let parts = token.split(separator: ".")
-        guard parts.count > 1 else { return nil }
-        var base = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        while base.count % 4 != 0 { base += "=" }
-        guard let data = Data(base64Encoded: base), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return json["email"] as? String
+    public enum State: Equatable { case connected, notConnected, unreadable }
+
+    static func settingsURL(folder: String) -> URL {
+        URL(fileURLWithPath: folder + "/settings.json").resolvingSymlinksInPath()
+    }
+
+    static func loadSettings(folder: String) -> [String: Any]? {
+        let url = settingsURL(folder: folder)
+        guard let data = FileManager.default.contents(atPath: url.path) else {
+            return FileManager.default.fileExists(atPath: url.path) ? nil : [:]
+        }
+        if data.allSatisfy({ $0 == 10 || $0 == 32 || $0 == 13 || $0 == 9 }) { return [:] }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    /// Connected means the status line runs this copy of the helper.
+    public static func state(folder: String, helper: String? = nil) -> State {
+        guard let settings = loadSettings(folder: folder) else { return .unreadable }
+        guard let line = settings["statusLine"] as? [String: Any], let command = line["command"] as? String,
+              let parsed = parse(command) else { return .notConnected }
+        if let helper, parsed.helper != helper { return .notConnected }
+        return .connected
+    }
+
+    /// Adds Wisp in front of the folder's status line, keeping the one already set.
+    /// The first time, a copy of settings.json is kept in `backups`.
+    @discardableResult
+    public static func connect(folder: String, helper: String, backups: URL) -> Bool {
+        guard var settings = loadSettings(folder: folder) else { return false }
+        var line = settings["statusLine"] as? [String: Any] ?? [:]
+        var original = line["command"] as? String
+        if let command = original, let parsed = parse(command) {
+            if parsed.helper == helper { return true }
+            original = parsed.original
+        }
+        if (line["type"] as? String).map({ $0 != "command" }) == true { original = nil }
+        backUp(folder: folder, to: backups)
+        line["type"] = "command"
+        line["command"] = command(helper: helper, folder: folder, original: original)
+        settings["statusLine"] = line
+        return save(settings, folder: folder)
+    }
+
+    /// Puts back the status line Wisp wrapped, or removes it if there was none.
+    @discardableResult
+    public static func disconnect(folder: String) -> Bool {
+        guard var settings = loadSettings(folder: folder), var line = settings["statusLine"] as? [String: Any],
+              let command = line["command"] as? String, let parsed = parse(command) else { return true }
+        if let original = parsed.original {
+            line["command"] = original
+            settings["statusLine"] = line
+        } else {
+            settings.removeValue(forKey: "statusLine")
+        }
+        return save(settings, folder: folder)
+    }
+
+    static func backUp(folder: String, to backups: URL) {
+        let url = settingsURL(folder: folder)
+        let target = backups.appendingPathComponent(fileName(folder: folder))
+        guard FileManager.default.fileExists(atPath: url.path), !FileManager.default.fileExists(atPath: target.path) else { return }
+        try? FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+        try? FileManager.default.copyItem(at: url, to: target)
+    }
+
+    static func save(_ settings: [String: Any], folder: String) -> Bool {
+        guard var data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) else { return false }
+        data.append(10)
+        return (try? data.write(to: settingsURL(folder: folder), options: .atomic)) != nil
+    }
+
+    // MARK: Every folder at once
+
+    public static var backups: URL { Wisp.supportDirectory.appendingPathComponent("claude-settings-backup", isDirectory: true) }
+
+    /// Claude folders whose status line does not run `helper` yet.
+    public static func unconnected(helper: String, home: String = NSHomeDirectory()) -> [String] {
+        PlanUsageReader.claudeFolders(home: home).filter { state(folder: $0, helper: helper) == .notConnected }
+    }
+
+    public static func connectAll(helper: String, home: String = NSHomeDirectory()) {
+        for folder in PlanUsageReader.claudeFolders(home: home) { connect(folder: folder, helper: helper, backups: backups) }
+    }
+
+    public static func disconnectAll(home: String = NSHomeDirectory()) {
+        for folder in PlanUsageReader.claudeFolders(home: home) { disconnect(folder: folder) }
     }
 }
 

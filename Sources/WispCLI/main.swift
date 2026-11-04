@@ -26,6 +26,13 @@ its own one-second sample.
 """
 
 var args = Array(CommandLine.arguments.dropFirst())
+
+// Run by Claude Code as its status line (Wisp sets this up when plan limits are on).
+// Kept first and small: it runs after every reply.
+if args.first == "statusline" {
+    StatusLineCommand.run(Array(args.dropFirst()))
+}
+
 let json = args.contains("--json")
 args.removeAll { $0 == "--json" }
 

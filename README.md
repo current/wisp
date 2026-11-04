@@ -169,10 +169,21 @@ reason, and quits it only if you click Quit.
 <summary><b>Plan limits and privacy</b></summary>
 <br>
 
-Plan limits on the Coding Agents page are off until you turn them on. Wisp then
-reads the sign-in Claude Code keeps in your Keychain and the one Codex keeps in
-`~/.codex/auth.json`. It sends each only to the company that issued it, every
-five minutes while the page is open, and never stores, refreshes or logs them.
+Plan limits on the Coding Agents page are off until you turn them on. Wisp
+never reads a sign-in and sends nothing anywhere. It takes the figures the tools
+already report on your Mac:
+
+- **Claude Code** passes your 5-hour and weekly limits to its status line. When
+  you turn plan limits on, Wisp adds itself to the status line in each Claude
+  Code settings file. If you already have a status line, it keeps running and
+  shows the same thing as before. Turning plan limits off puts your old status
+  line back, and a copy of each settings file is kept in
+  `~/Library/Application Support/Wisp/claude-settings-backup`. Claude Code only
+  reports limits on Pro, Max and Ultra plans.
+- **Codex** writes its limits into the session logs in `~/.codex/sessions`,
+  and Wisp reads the latest entry.
+
+The figures are as recent as your last reply in each tool.
 
 </details>
 

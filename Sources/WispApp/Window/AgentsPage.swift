@@ -59,7 +59,7 @@ final class PlanCard: CardView {
         let title = NSMutableAttributedString(attachment: mark)
         title.append(NSAttributedString(string: "  " + usage.provider, attributes: [.font: Theme.sans(14, .medium), .foregroundColor: Theme.ink]))
         name.text = title
-        account.text = Theme.caption(usage.account, size: 9.5)
+        account.text = Theme.caption(usage.account + Self.age(usage.updated, now: now), size: 9.5)
         plan.text = usage.plan ?? ""
         plan.isHidden = usage.plan == nil
         problem.text = Theme.caption(usage.problem ?? "", color: Theme.warn, size: 9.5)
@@ -84,9 +84,17 @@ final class PlanCard: CardView {
         needsLayout = true
     }
 
+    /// Figures are as fresh as the tool's last reply; say so once they are a while old.
+    static func age(_ updated: Date?, now: Date) -> String {
+        guard let updated, now.timeIntervalSince(updated) > 900 else { return "" }
+        let minutes = Int(now.timeIntervalSince(updated) / 60)
+        let text = minutes < 60 ? "\(minutes)m" : (minutes < 1440 ? "\(minutes / 60)h" : "\(minutes / 1440)d")
+        return " · as of " + text + " ago"
+    }
+
     /// When the window resets and, if the current pace would use it up first, when that happens.
     static func pace(_ window: PlanUsage.Window, now: Date) -> (text: String, short: Bool) {
-        guard let resets = window.resets else { return ("", false) }
+        guard let resets = window.resets else { return (window.used == 0 ? "Not used since it reset" : "", false) }
         let left = resets.timeIntervalSince(now)
         guard left > 0 else { return ("Resetting", false) }
         let length: Double = window.name.hasPrefix("5-hour") ? 5 * 3600 : 7 * 86_400
@@ -129,6 +137,8 @@ final class AgentsPage: CardPage {
     private let planOffTitle = TextLine()
     private let planOffDetail = TextLine()
     private lazy var planButton = ActionButton(title: "Show Limits", target: self, action: #selector(turnOnPlans))
+    /// Claude folders whose status line does not send limits to Wisp yet; checked with the limits.
+    private var unconnected: [String] = []
     private let plansTitle = TextLine()
     private var planCards: [PlanCard] = []
     private var plans: [PlanUsage] = []
@@ -160,7 +170,7 @@ final class AgentsPage: CardPage {
         for view in [running, cpu, memory, tokens, planOff, plansTitle, list] as [NSView] { canvas.addSubview(view) }
         for view in [planOffTitle, planOffDetail, planButton] as [NSView] { planOff.addSubview(view) }
         planOffTitle.text = NSAttributedString(string: "Plan limits", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.ink])
-        planOffDetail.text = Theme.caption("Uses the sign-in Claude Code and Codex keep on this Mac, sent only to their own company", color: Theme.inkSecondary)
+        planOffDetail.text = Theme.caption(PlanLimitsSetup.offDetail, color: Theme.inkSecondary)
         plansTitle.text = cardTitle("Plan limits", "")
         list.title.text = cardTitle("Running", "")
         list.empty.text = Theme.caption("No coding agents running. Wisp knows Claude Code, Codex, Cursor Agent, Gemini CLI, Aider, OpenCode and more")
@@ -174,8 +184,19 @@ final class AgentsPage: CardPage {
     override func arrange(width: CGFloat) -> CGFloat {
         let inner = width - margin * 2
         var y = grid([running, cpu, memory, tokens], top: margin, width: width, columns: 4, height: 104) + gap
-        if plansOn {
+        let offered = !plansOn || !unconnected.isEmpty
+        if offered {
+            planOff.isHidden = false
+            planOff.frame = NSRect(x: margin, y: y, width: inner, height: 76)
+            planOffTitle.frame = NSRect(x: 20, y: 16, width: inner - 180, height: 22)
+            planOffDetail.frame = NSRect(x: 20, y: 42, width: inner - 180, height: 14)
+            let size = planButton.intrinsicContentSize
+            planButton.frame = NSRect(x: inner - 20 - size.width, y: (76 - size.height) / 2, width: size.width, height: size.height)
+            y = planOff.frame.maxY + gap
+        } else {
             planOff.isHidden = true
+        }
+        if plansOn {
             plansTitle.isHidden = planCards.isEmpty
             if !planCards.isEmpty {
                 plansTitle.frame = NSRect(x: margin + 2, y: y + 6, width: inner, height: 20)
@@ -185,14 +206,7 @@ final class AgentsPage: CardPage {
                 y = grid(Array(visible), top: y, width: width, columns: 2, height: height) + gap
             }
         } else {
-            planOff.isHidden = false
             plansTitle.isHidden = true
-            planOff.frame = NSRect(x: margin, y: y, width: inner, height: 76)
-            planOffTitle.frame = NSRect(x: 20, y: 16, width: inner - 180, height: 22)
-            planOffDetail.frame = NSRect(x: 20, y: 42, width: inner - 180, height: 14)
-            let size = planButton.intrinsicContentSize
-            planButton.frame = NSRect(x: inner - 20 - size.width, y: (76 - size.height) / 2, width: size.width, height: size.height)
-            y = planOff.frame.maxY + gap
         }
         list.frame = NSRect(x: margin, y: y, width: inner, height: list.wantedHeight)
         return list.frame.maxY + margin
@@ -211,14 +225,19 @@ final class AgentsPage: CardPage {
             }
         }
         guard plansOn else { return }
-        // Limits move slowly and each read is a request to the provider: every five minutes.
-        if Date().timeIntervalSince(plansAt) > 300, !plansBusy {
+        // Limits are small local files that change after each reply: once a minute.
+        if Date().timeIntervalSince(plansAt) > 60, !plansBusy {
             plansBusy = true
-            Task { [weak self] in
-                let result = await PlanUsageReader.readAll()
-                self?.plansBusy = false
-                self?.plansAt = Date()
-                self?.show(result)
+            let helper = PlanLimitsSetup.helper
+            DispatchQueue.global(qos: .utility).async {
+                let result = PlanUsageReader.readAll()
+                let unconnected = helper.map { ClaudeStatusLine.unconnected(helper: $0) } ?? []
+                DispatchQueue.main.async { [weak self] in
+                    self?.plansBusy = false
+                    self?.plansAt = Date()
+                    self?.unconnected = unconnected
+                    self?.show(result)
+                }
             }
         }
         // The token count reads only what the session logs gained since last time.
@@ -285,7 +304,8 @@ final class AgentsPage: CardPage {
             if index < result.count { card.show(result[index], now: now) }
         }
         plansTitle.text = cardTitle("Plan limits", result.isEmpty ? "" : "\(result.count)")
-        if result.isEmpty { caption.text = Theme.caption("No Claude Code or Codex sign-in found on this Mac") }
+        if result.isEmpty, unconnected.isEmpty { caption.text = Theme.caption("No Claude Code or Codex limits on this Mac yet") }
+        showPlanState()
         relayout()
     }
 
@@ -293,6 +313,15 @@ final class AgentsPage: CardPage {
         if !plansOn {
             tokens.set(text: "Off")
             tokens.set(note: "Turn on with plan limits")
+            planOffTitle.text = NSAttributedString(string: "Plan limits", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.ink])
+            planOffDetail.text = Theme.caption(PlanLimitsSetup.offDetail, color: Theme.inkSecondary)
+            planButton.title = "Show Limits"
+        } else if !unconnected.isEmpty {
+            let count = unconnected.count
+            planOffTitle.text = NSAttributedString(string: "Claude Code limits", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.ink])
+            planOffDetail.text = Theme.caption(count == 1 ? "One Claude Code setup does not send its limits to Wisp yet"
+                                                          : "\(count) Claude Code setups do not send their limits to Wisp yet", color: Theme.inkSecondary)
+            planButton.title = "Connect"
         }
     }
 
@@ -303,10 +332,35 @@ final class AgentsPage: CardPage {
 
     @objc private func turnOnPlans() {
         delegate.change { $0.planUsage = true }
+        PlanLimitsSetup.apply(on: true)
+        unconnected = []
+        showPlanState()
         plansAt = .distantPast
         tokensAt = .distantPast
         tokens.set(text: "…")
         tokens.set(note: "Counting")
         relayout()
+    }
+}
+
+/// Turning plan limits on adds Wisp to each Claude Code status line; turning them off
+/// puts the old status lines back. Codex needs nothing: it writes its limits to its logs.
+@MainActor
+enum PlanLimitsSetup {
+    static let offDetail = "Adds Wisp to Claude Code's status line and reads Codex's logs. No sign-ins, nothing sent"
+
+    /// The `wisp` helper inside this copy of the app; nil when running outside a bundle.
+    static var helper: String? {
+        let path = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/wisp").path
+        return FileManager.default.isExecutableFile(atPath: path) ? path : nil
+    }
+
+    static func apply(on: Bool) {
+        if on {
+            guard let helper else { return }
+            ClaudeStatusLine.connectAll(helper: helper)
+        } else {
+            ClaudeStatusLine.disconnectAll()
+        }
     }
 }

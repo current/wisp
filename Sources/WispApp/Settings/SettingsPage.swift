@@ -276,15 +276,18 @@ final class SettingsPage: NSViewController, Page {
                     }),
                 ]),
                 SettingsGroup("Plan limits", [
-                    .control("Show AI plan limits and tokens used today", "Uses the sign-in Claude Code and Codex keep on this Mac, sent only to the company that issued it.",
-                             toggle(s.planUsage) { [unowned self] on in delegate.change { $0.planUsage = on } }),
+                    .control("Show AI plan limits and tokens used today", "Adds Wisp to Claude Code's status line (yours keeps working) and reads Codex's session logs. No sign-ins are read and nothing is sent.",
+                             toggle(s.planUsage) { [unowned self] on in
+                                 delegate.change { $0.planUsage = on }
+                                 PlanLimitsSetup.apply(on: on)
+                             }),
                 ]),
             ]
         case .about:
             return [
                 SettingsGroup(nil, [.custom(AboutCard(), 168)]),
                 SettingsGroup("Privacy", [
-                    .control("Nothing leaves this Mac", "No analytics, no updater. History lives in ~/Library/Application Support/Wisp. Plan limits, when on, are the only network requests.", nil),
+                    .control("Nothing leaves this Mac", "No analytics, no updater, no network requests beyond looking up host names. History lives in ~/Library/Application Support/Wisp.", nil),
                 ]),
             ]
         }
