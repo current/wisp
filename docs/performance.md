@@ -11,9 +11,9 @@ core.
 90 seconds: menu bar only, then each app's window on its overview, CPU, memory
 and disk pages, both windows 1300 by 800 points. Wisp is relaunched for every
 scenario with its shipped update intervals (2 s window, 3 s menu bar). Its
-window is kept off the screen and told to update as if shown; Vitals' window is
+window is kept off the screen and told to update as if shown. Vitals' window is
 moved to the right edge of the screen with a 24 point strip showing. Neither
-app is brought forward, so the Mac stays usable while it runs. Vitals 1.9.7,
+app is brought forward, and the Mac can be used while it runs. Vitals 1.9.7,
 release build of Wisp, evening of 3 November.
 
 | Scenario  | App    | Mean  | Median | p95   | Memory | Idle wakeups/s |
@@ -30,7 +30,7 @@ release build of Wisp, evening of 3 November.
 | Disk      | Vitals | 5.42% | 6.85%  | 13.0% | 254 MB | 84.0           |
 
 The menu bar figure is higher than the morning runs below (0.09 to 0.25%) on a
-busier machine; run-to-run spread for a process this quiet is about that size.
+busier machine. Run-to-run spread for a process this quiet is about that size.
 
 Two fixes came out of this suite. Cards were clipping their children to rounded
 corners, and AppKit was switching the app tables and the memory waffle to
@@ -48,9 +48,9 @@ separate runs vary by.
 
 | App    | Mean        | Median | p95       | Max        | Memory        |
 |--------|-------------|--------|-----------|------------|---------------|
-| Wisp   | 0.09–0.25%  | 0.00%  | 0.5–1.5%  | 0.7–1.8%   | 18 MB         |
-| Vitals | 1.31–1.79%  | 0.00–0.10% | 5.7–7.0% | 13.8–16.7% | 249–412 MB |
-| Stats  | 1.26–1.36%  | 1.20–1.30% | 2.3–2.5% | 2.5–2.8%   | 187 MB        |
+| Wisp   | 0.09 to 0.25%  | 0.00%  | 0.5 to 1.5%  | 0.7 to 1.8%   | 18 MB         |
+| Vitals | 1.31 to 1.79%  | 0.00 to 0.10% | 5.7 to 7.0% | 13.8 to 16.7% | 249 to 412 MB |
+| Stats  | 1.26 to 1.36%  | 1.20 to 1.30% | 2.3 to 2.5% | 2.5 to 2.8%   | 187 MB        |
 
 ## With something open
 
@@ -69,7 +69,7 @@ After the custom window (floating glass sidebar, app drawer, per-app GPU time),
 
 | Wisp showing                  | Mean  | Median | p95  | Memory |
 |-------------------------------|-------|--------|------|--------|
-| Overview                      | 2.5–2.8% | 3.1–4.0% | 5.5–6.1% | 50 MB |
+| Overview                      | 2.5 to 2.8% | 3.1 to 4.0% | 5.5 to 6.1% | 50 MB |
 | Apps page                     | 4.8%  | 5.3%   | 12%  | 62 MB  |
 | CPU page with the app drawer  | 4.2%  | 5.5%   | 8.4% | 65 MB  |
 | Same, motion turned off       | 3.5%  | 4.5%   | 6.9% | 62 MB  |
@@ -87,7 +87,7 @@ the window server runs. An earlier build rolled the numbers with
 `CATransition`, which renders snapshots inside the app through Metal: the
 dashboard then held 241 MB instead of 37 MB.
 
-## What keeps it cheap
+## How it stays light
 
 - One timer drives all work. Each job runs only when something on screen needs
   it, and only at that thing's interval. With the window closed, the menu bar
@@ -99,7 +99,7 @@ dashboard then held 241 MB instead of 37 MB.
 - Per-app network comes from the NetworkStatistics framework in about 2 ms.
   `nettop` would cost more than a full core.
 - Power comes from IOReport energy counters, read in-process. Nothing runs as
-  root. Wisp starts no child processes in the menu bar or on most pages. Login &
+  root. Wisp doesn't start child processes in the menu bar or on most pages. Login &
   Background runs `launchctl print` twice a minute while it is open, and Storage
   runs `tmutil listlocalsnapshots` once per scan.
 - Each menu bar item is drawn into one bitmap and replaced only when its text
@@ -114,7 +114,7 @@ dashboard then held 241 MB instead of 37 MB.
   about 190 MB of Metal buffers. Found so far: `CATransition`, `masksToBounds`
   on a rounded view with content, a shadow without a `shadowPath` (on every
   clickable card it held 300 MB and tripled the overview's CPU), and AppKit
-  switching a view that redraws often to asynchronous drawing. Charts therefore
+  switching a view that redraws often to asynchronous drawing. Charts
   draw into their own bitmap (`BitmapView`), and hover feedback is a border
   colour, not a shadow. `WISP_DRAWER=<app> WISP_DUMP_LAYERS=1` lists any layer
   that still draws asynchronously.
