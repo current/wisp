@@ -4,7 +4,7 @@
 
 <h1 align="center">Wisp</h1>
 
-<p align="center">See which app is using your Mac, from a monitor that barely uses it.</p>
+<p align="center">Find out which app is slowing your Mac down and why, from a monitor that barely uses it.</p>
 
 <p align="center">
   <a href="https://wisp-mac.com">Website</a>
@@ -25,9 +25,11 @@
 
 Activity Monitor lists processes, and Chrome alone is forty of them. Wisp adds
 them up under the app they belong to and shows CPU, memory, GPU, power, disk and
-network per app, with a day of history by the minute and a year by the hour. It
-also keeps an eye on what developers leave running: dev servers and their ports,
-Docker containers, and coding agents like Claude Code and Codex.
+network per app, with a day of history by the minute and a year by the hour.
+Click Why Is It Slow? and it tells you in a sentence what is holding the Mac
+back. It also shows where your disk space went, what starts at login, and what
+developers leave running: dev servers and their ports, Docker containers, and
+coding agents like Claude Code and Codex.
 
 ## What it costs
 
@@ -73,8 +75,22 @@ this light and how to measure it yourself.</sub>
 
 <p>
 <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/why-dark.png">
+  <img src="docs/images/why-light.png" alt="Why Is It Slow? on the Overview page: limactl is holding 20 GB and macOS has compressed 12 GB to make room, and 21 dev servers are using 6.2 GB together. Each finding has a Show button.">
+</picture>
+</p>
+
+<p>
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/drawer-dark.png">
-  <img src="docs/images/drawer-light.png" alt="Click any app: the drawer for the Aside browser shows 14 GB of memory, its CPU, power, GPU, disk and network, and what is inside it, with windows using 68% of its memory.">
+  <img src="docs/images/drawer-light.png" alt="Click any app: the drawer for the Aside browser shows 13 GB of memory, its CPU, power, GPU, disk and network, and what is inside it, with windows using 59% of its memory.">
+</picture>
+</p>
+
+<p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/storage-dark.png">
+  <img src="docs/images/storage-light.png" alt="The Storage page: 171 GB free of 995 GB, the disk split into apps, developer folders, documents and System Data, and the Developer list with Colima at 76 GB, Rust target folders at 50 GB and node_modules in 101 projects at 30 GB.">
 </picture>
 </p>
 
@@ -94,9 +110,17 @@ this light and how to measure it yourself.</sub>
 
 <br>
 
-- CPU, memory, GPU, Neural Engine, power, disk, network, sound, Bluetooth and
-  sensors, each with live, hourly and daily charts and the apps behind the
-  numbers. GPU time per app comes from the driver.
+- CPU, memory, GPU, Neural Engine, battery, storage, network, sound, Bluetooth
+  and sensors, each with live, hourly and daily charts and the apps behind the
+  numbers. Spikes on the charts are labelled with the app that caused them. GPU
+  time per app comes from the driver.
+- Storage: what fills the disk, including System Data and developer folders
+  like node_modules, DerivedData and VM disks. Items that are safe to remove go
+  to the Trash after you confirm.
+- Per app: the hosts it is connected to, the data it used this month, and the
+  disk space it takes, including caches and containers.
+- Login & Background: every launch agent, daemon and helper, who made it and
+  what it costs, with leftovers from deleted apps flagged.
 - Every project with something running, its servers and ports, and servers idle
   for 30 minutes. Containers from Docker Desktop, OrbStack, Colima, Rancher
   Desktop and Lima.
@@ -107,7 +131,7 @@ this light and how to measure it yourself.</sub>
 
 ## Install
 
-Download `Wisp-0.1.0.zip` from the
+Download `Wisp-0.2.0.zip` from the
 [latest release](https://github.com/current/wisp/releases/latest), unzip it and
 drag Wisp to Applications. You need macOS 15 or later on Apple silicon; Wisp
 looks its best on macOS 26.
@@ -140,6 +164,8 @@ ln -s /Applications/Wisp.app/Contents/Helpers/wisp /usr/local/bin/wisp
 wisp status              # the machine now and the five busiest apps
 wisp apps --sort memory
 wisp app Safari          # one app, its processes and the last hour
+wisp why                 # what is slowing the Mac down right now
+wisp storage             # disk space by kind and what can go
 wisp ports               # dev servers by project
 wisp agents
 wisp docker
