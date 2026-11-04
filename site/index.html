@@ -10,7 +10,7 @@
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://wisp-mac.com/">
 <meta property="og:title" content="Wisp: a system monitor for your Mac">
-<meta property="og:description" content="Free and open source. Lives in the menu bar on 19 MB of memory.">
+<meta property="og:description" content="A free, open-source system monitor for macOS that groups processes by app. 19 MB of memory with only the menu bar open.">
 <meta property="og:image" content="https://wisp-mac.com/assets/icon-512.png">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="icon" href="assets/icon-64.png" type="image/png" sizes="64x64">
@@ -49,8 +49,8 @@
 <main id="main">
   <section class="hero wrap" id="top">
     <img class="hero-icon" src="assets/icon-256.png" width="112" height="112" alt="Wisp app icon">
-    <h1>See what your Mac is doing</h1>
-    <p class="lede">Wisp is a free, open-source system monitor for the menu bar. It shows which apps use your CPU, memory, power, disk and network, and uses almost nothing itself.</p>
+    <h1>Which app is slowing your Mac down?</h1>
+    <p class="lede">Wisp is a free, open-source system monitor for macOS. It groups processes by app and shows what each app uses: CPU, memory, GPU, power, disk and network.</p>
     <div class="cta">
       <a class="btn btn-primary" href="https://github.com/current/wisp/releases/latest">Download for Mac</a>
       <a class="btn btn-plain" href="https://github.com/current/wisp">Source on GitHub <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M5 3l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
@@ -85,16 +85,16 @@
 
       <div class="captions">
         <article class="cap" data-step="0">
-          <h3>Your whole Mac on one page</h3>
-          <p>CPU, memory, GPU, disk, network, power and temperature, with recent history behind each figure and a short list of anything worth a look.</p>
+          <h3>Overview</h3>
+          <p>CPU, memory, GPU, disk, network, power and temperature, each with the last few minutes, hour or day. Why Is It Slow? names what is holding the Mac back.</p>
         </article>
         <article class="cap" data-step="1">
-          <h3>Open any app to see what is inside it</h3>
+          <h3>Apps</h3>
           <p>Processes are grouped under the app that owns them. Its drawer shows the browser tabs, GPU process and extensions inside, its GPU time and last hour, and Quit or Force Quit.</p>
           <img class="cap-media" src="assets/cpu-drawer-1280.webp" srcset="assets/cpu-drawer-1280.webp 1280w, assets/cpu-drawer-2400.webp 2400w" sizes="92vw" width="1280" height="803" loading="lazy" alt="Wisp's CPU page with the drawer for Google Chrome open: 16 GB of memory, 229.6 percent CPU, and a breakdown showing tabs use 91 percent of its memory">
         </article>
         <article class="cap" data-step="2">
-          <h3>Or leave it in the menu bar</h3>
+          <h3>Menu bar</h3>
           <p>Show CPU, memory, network, disk, GPU, temperature, power or battery as text or a small graph. Click it for a dashboard with every core and the busiest apps.</p>
           <img class="cap-media pop" src="assets/menubar-860.webp" width="430" height="888" loading="lazy" alt="Wisp's menu bar dashboard: CPU at 43 percent, meters for memory, GPU, power, network, disk and battery, a heat map of 14 cores and the five busiest apps">
         </article>
@@ -104,7 +104,7 @@
 
   <section class="section wrap" id="performance" aria-labelledby="perf-title">
     <div class="section-head center">
-      <h2 id="perf-title">Light enough to leave on all day</h2>
+      <h2 id="perf-title">Performance</h2>
       <p class="lede">Menu bar only, measured side by side on the same M3 Max over the same 90 seconds</p>
     </div>
     <div class="perf-grid">
@@ -132,7 +132,7 @@
 
   <section class="section wrap" id="features" aria-labelledby="feat-title">
     <div class="section-head">
-      <h2 id="feat-title">More than CPU and memory</h2>
+      <h2 id="feat-title">Pages</h2>
       <p class="lede">A page for every part of the Mac, and for the dev servers, containers and coding agents you leave running.</p>
     </div>
     <div class="feat-grid">
@@ -157,11 +157,11 @@
       </article>
       <article class="card feat" style="--c: var(--orange-text); --tint: rgba(255, 141, 40, .10)">
         <h3 class="card-title t-orange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projects and containers</h3>
-        <p>Dev servers and the ports they hold, with idle ones marked. Docker, OrbStack and Colima containers too, without the CLI.</p>
+        <p>Dev servers and their ports, with idle ones marked. Docker, OrbStack and Colima containers too, without the CLI.</p>
       </article>
       <article class="card feat" style="--c: var(--red-text); --tint: rgba(255, 56, 60, .08)">
         <h3 class="card-title t-red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 21h4"/></svg>Alerts</h3>
-        <p>A notification when an app holds a core for minutes or keeps growing in memory.</p>
+        <p>A notification when an app uses a full core for minutes or keeps growing in memory.</p>
       </article>
       <article class="card feat" style="--c: var(--green-text); --tint: rgba(52, 199, 89, .10)">
         <h3 class="card-title t-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="3"/><path d="M7 9.5l3 2.5-3 2.5M12.5 15h4.5"/></svg>CLI and MCP server</h3>
@@ -173,7 +173,7 @@
   <section class="section wrap download" id="download" aria-labelledby="dl-title">
     <img class="download-icon" src="assets/icon-256.png" width="128" height="128" loading="lazy" alt="">
     <h2 id="dl-title">Free and open source</h2>
-    <p class="lede">MIT licensed. Nothing runs as root, and a year of per-app history stays on your Mac.</p>
+    <p class="lede">MIT licensed. Wisp doesn't run anything as root and keeps a year of per-app history on your Mac.</p>
     <div class="cta">
       <a class="btn btn-primary" href="https://github.com/current/wisp/releases/latest">Download for Mac</a>
       <a class="btn btn-plain" href="https://github.com/current/wisp">Source on GitHub <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M5 3l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
