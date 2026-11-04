@@ -15,7 +15,7 @@ brew install --cask current/tap/wisp
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
-  <img src="docs/images/overview-light.png" alt="The Overview page with Why Is It Slow? open. It says limactl is holding 20 GB and macOS has compressed 13 GB to make room, and that 15 dev servers are using 4.6 GB together. Below are the CPU, memory and GPU cards.">
+  <img src="docs/images/overview-light.png" alt="The Overview page with Why Is It Slow? open. It says limactl is holding 20 GB and macOS has compressed 12 GB to make room, and that 15 dev servers are using 4.7 GB together. Below are the CPU, memory and GPU cards.">
 </picture>
 
 ## Why is my Mac slow?
@@ -36,7 +36,7 @@ containers, and its last hour.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/apps-dark.png">
-  <img src="docs/images/apps-light.png" alt="The Apps page with the drawer open for the Aside browser: 14 GB of memory, 259.8% CPU, and windows using 62% of its memory across 43 processes.">
+  <img src="docs/images/apps-light.png" alt="The Apps page with the drawer open for the Aside browser: 50 processes using 8.2 GB of memory and 4.8% CPU, split into windows, extensions, GPU and helpers.">
 </picture>
 
 ## Storage
@@ -48,7 +48,7 @@ after a confirmation. Wisp does not delete files itself.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/storage-dark.png">
-  <img src="docs/images/storage-light.png" alt="The Storage page: 172 GB free of 995 GB, and the Developer list with Colima at 76 GB, Rust target folders at 50 GB and node_modules in 101 projects at 30 GB.">
+  <img src="docs/images/storage-light.png" alt="The Storage page: 164 GB free of 995 GB, and the Developer list with Colima at 76 GB and Rust target folders in 6 projects at 50 GB.">
 </picture>
 
 ## Other pages
