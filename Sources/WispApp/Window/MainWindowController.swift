@@ -450,6 +450,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Draws the window's layers into a PNG, from inside the app, so a window kept off
     /// the screen can still be looked at. Liquid Glass is drawn by the window server and
     /// does not appear; everything Wisp draws itself does.
+    /// Corner radius of a macOS 26 window with a toolbar, in points.
+    static let cornerRadius: CGFloat = 26
+
     func writeSnapshot(to url: URL) {
         guard let window, let frameView = window.contentView?.superview, let layer = frameView.layer else { return }
         frameView.layoutSubtreeIfNeeded()
@@ -459,6 +462,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                                       bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
         context.scaleBy(x: scale, y: scale)
+        // The window server rounds the corners and draws the edge of a real window; do the
+        // same so the picture looks like the window and not a square of background.
+        let outline = CGPath(roundedRect: CGRect(origin: .zero, size: size), cornerWidth: Self.cornerRadius, cornerHeight: Self.cornerRadius, transform: nil)
+        context.addPath(outline)
+        context.clip()
         effectiveAppearanceRender(frameView) { layer.render(in: context) }
         // A window kept off the screen is never the key window, so its buttons draw grey.
         // Paint them as they look on the window you are using.
@@ -478,6 +486,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             context.setLineWidth(0.5)
             context.strokeEllipse(in: dot.insetBy(dx: 0.25, dy: 0.25))
         }
+        let dark = window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        context.addPath(CGPath(roundedRect: CGRect(origin: .zero, size: size).insetBy(dx: 0.25, dy: 0.25),
+                               cornerWidth: Self.cornerRadius - 0.25, cornerHeight: Self.cornerRadius - 0.25, transform: nil))
+        context.setStrokeColor(CGColor(gray: dark ? 1 : 0, alpha: dark ? 0.2 : 0.14))
+        context.setLineWidth(0.5)
+        context.strokePath()
         guard let image = context.makeImage() else { return }
         let rep = NSBitmapImageRep(cgImage: image)
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
