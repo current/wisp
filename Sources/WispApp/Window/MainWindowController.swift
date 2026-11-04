@@ -203,7 +203,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             let delay = ProcessInfo.processInfo.environment["WISP_SNAPSHOT_DELAY"].flatMap(Double.init) ?? 5
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 self?.writeSnapshot(to: URL(fileURLWithPath: path))
-                NSApp.terminate(nil)
+                // WISP_SNAPSHOT_DARK=<file.png> then switches to dark and takes a second
+                // picture of the same moment, so light and dark show the same findings.
+                guard let dark = ProcessInfo.processInfo.environment["WISP_SNAPSHOT_DARK"] else { return NSApp.terminate(nil) }
+                NSApp.appearance = NSAppearance(named: .darkAqua)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.writeSnapshot(to: URL(fileURLWithPath: dark))
+                    NSApp.terminate(nil)
+                }
             }
         }
         // WISP_LAYER_REPORT=<file> lists, after 8 s, every layer that can make Core Animation
