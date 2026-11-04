@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Terms · Wisp</title>
+<meta name="description" content="Terms for using Wisp and this website.">
+<link rel="canonical" href="https://wisp-mac.com/terms.html">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="icon" href="assets/icon-64.png" type="image/png" sizes="64x64">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="nav" aria-label="Site">
+  <a class="brand" href="/" aria-label="Wisp home">
+    <img src="assets/icon-64.png" width="30" height="30" alt="">
+    <span>Wisp</span>
+  </a>
+  <nav class="nav-links" aria-label="Pages">
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="https://github.com/current/wisp">GitHub</a>
+  </nav>
+</header>
+<main class="doc" id="main">
+<h1>Terms</h1>
+<p class="fine">Last updated 4 November 2026</p>
+
+<h2>License</h2>
+<p>Wisp is free and open source under the <a href="https://github.com/current/wisp/blob/main/LICENSE">MIT License</a>. You can use, copy, change and share it, including commercially, as long as the license notice comes with it.</p>
+
+<h2>No warranty</h2>
+<p>Wisp is provided as is, without warranty of any kind, as the MIT License says. Its figures come from macOS and may differ from Activity Monitor or System Settings. Don't rely on Wisp alone where a wrong number matters.</p>
+
+<h2>Changes Wisp makes to your Mac</h2>
+<p>Wisp only changes things when you ask it to, and asks first where the change is hard to undo:</p>
+<ul>
+  <li>Quit and Force Quit end the app you picked. Force Quit can lose unsaved work.</li>
+  <li>Storage moves the items you pick to the Trash after a confirmation. It never empties the Trash. Check the Trash before you empty it.</li>
+  <li>Containers can stop or restart a container you pick.</li>
+  <li>Plan limits edit the <code>statusLine</code> setting in each Claude Code settings file and keep a copy of the original in <code>~/Library/Application Support/Wisp/claude-settings-backup</code>. Turning plan limits off puts the old setting back.</li>
+  <li>An AI assistant connected to the MCP server can ask Wisp to quit an app. Wisp shows you the request, and nothing quits unless you click Quit.</li>
+</ul>
+
+<h2>Unsigned builds</h2>
+<p>Wisp is signed ad hoc and not notarized by Apple. The Homebrew cask removes the quarantine flag after installing, and the release notes list each zip's SHA-256 so you can check it. You can also build Wisp from source.</p>
+
+<h2>Trademarks</h2>
+<p>Mac, macOS and Apple silicon are trademarks of Apple Inc. Other product names belong to their owners. Wisp is not affiliated with Apple or with the makers of the apps it shows.</p>
+
+<h2>Contact</h2>
+<p>Open an issue at <a href="https://github.com/current/wisp/issues">github.com/current/wisp/issues</a>.</p>
+</main>
+<footer class="footer">
+  <div class="wrap fine">
+    <span>Wisp · MIT License</span>
+    <span><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></span>
+  </div>
+</footer>
+</body>
+</html>

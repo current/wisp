@@ -260,3 +260,14 @@ html:not(.motion) .win-over { display: none; }
   html { scroll-behavior: auto; }
   .btn, .seg button { transition: none; }
 }
+
+/* ---------- Privacy and Terms ---------- */
+.doc { width: min(680px, 100% - 2 * var(--gutter)); margin: 128px auto 72px; }
+.doc h1 { font-size: 34px; line-height: 1.15; margin: 0 0 6px; }
+.doc h2 { font-size: 20px; line-height: 1.3; margin: 36px 0 8px; }
+.doc p, .doc li { font-size: 17px; line-height: 1.55; }
+.doc p { margin: 0 0 14px; }
+.doc ul { margin: 0 0 14px; padding-left: 22px; }
+.doc li { margin-bottom: 6px; }
+.doc code { font: 15px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--fill); padding: 1px 5px; border-radius: 5px; }
+.install { display: inline-block; margin: 18px 0 4px; font: 15px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--card); border: 1px solid var(--hair-strong); padding: 10px 14px; border-radius: 10px; user-select: all; }

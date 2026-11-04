@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Privacy · Wisp</title>
+<meta name="description" content="What Wisp and this website collect: nothing about you.">
+<link rel="canonical" href="https://wisp-mac.com/privacy.html">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="icon" href="assets/icon-64.png" type="image/png" sizes="64x64">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="nav" aria-label="Site">
+  <a class="brand" href="/" aria-label="Wisp home">
+    <img src="assets/icon-64.png" width="30" height="30" alt="">
+    <span>Wisp</span>
+  </a>
+  <nav class="nav-links" aria-label="Pages">
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="https://github.com/current/wisp">GitHub</a>
+  </nav>
+</header>
+<main class="doc" id="main">
+<h1>Privacy</h1>
+<p class="fine">Last updated 4 November 2026</p>
+
+<h2>The app</h2>
+<p>Wisp has no analytics, no crash reporting, no updater and no account. It does not send anything about you or your Mac to anyone, including us.</p>
+<p>The only network traffic Wisp causes is reverse DNS lookups. When the Network page or an app's drawer is open, Wisp asks your Mac's own resolver for the names of the hosts your apps are connected to, the same lookup <code>nettop</code> or Activity Monitor would need. The lookups go wherever your Mac normally sends DNS queries.</p>
+<p>What Wisp keeps stays on your Mac, in <code>~/Library/Application Support/Wisp</code>: a day of history by the minute, a year by the hour, alert history, storage scan results and settings. Delete that folder and it is gone.</p>
+<p>Some pages read files other tools keep on your Mac, and only while you have the feature on or the page open:</p>
+<ul>
+  <li>Coding Agents reads Claude Code's session logs in <code>~/.claude</code> to count tokens used today.</li>
+  <li>Plan limits, if you turn them on, add Wisp to Claude Code's status line and read Codex's session logs in <code>~/.codex/sessions</code>. Wisp never reads either tool's sign-in. Turning plan limits off restores your previous status line.</li>
+  <li>Storage measures folders on your disk and, with Full Disk Access, the parts of your Library macOS protects. It reads sizes and dates, not file contents.</li>
+</ul>
+<p>The <code>wisp</code> command and the MCP server answer on a socket only your user account can open. An AI assistant you connect to the MCP server sees what the command prints, and anything it sees is handled under that assistant's own privacy policy.</p>
+
+<h2>This website</h2>
+<p>wisp-mac.com is a static page hosted on Vercel. It doesn't set cookies or run analytics. Vercel keeps standard server logs (IP address, time, page requested, browser), as described in <a href="https://vercel.com/legal/privacy-policy">Vercel's privacy policy</a>. The page loads the GSAP animation library from jsDelivr, which also sees your IP address under <a href="https://www.jsdelivr.com/terms/privacy-policy-jsdelivr-net">its own policy</a>.</p>
+<p>Downloads come from GitHub Releases and Homebrew, which have their own policies.</p>
+
+<h2>Questions</h2>
+<p>Open an issue at <a href="https://github.com/current/wisp/issues">github.com/current/wisp/issues</a>.</p>
+</main>
+<footer class="footer">
+  <div class="wrap fine">
+    <span>Wisp · MIT License</span>
+    <span><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></span>
+  </div>
+</footer>
+</body>
+</html>
