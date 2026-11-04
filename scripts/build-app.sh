@@ -13,9 +13,12 @@ fi
 version=$(sed -n 's/.*version = "\(.*\)".*/\1/p' Sources/WispCore/Support/Wisp.swift)
 build_number=$(git rev-list --count HEAD 2>/dev/null || echo 1)
 
-swift build -c "$config" ${archs[@]+"${archs[@]}"} --product WispApp
-swift build -c "$config" ${archs[@]+"${archs[@]}"} --product wisp
-bin=$(swift build -c "$config" ${archs[@]+"${archs[@]}"} --show-bin-path)
+# SwiftPM records the deployment target as the SDK version, so macOS would treat Wisp as
+# an app built for macOS 15 and draw it without Liquid Glass. Record the real SDK.
+link=(-Xlinker -platform_version -Xlinker macos -Xlinker 15.0 -Xlinker "$(xcrun --show-sdk-version)")
+swift build -c "$config" ${archs[@]+"${archs[@]}"} --product WispApp "${link[@]}"
+swift build -c "$config" ${archs[@]+"${archs[@]}"} --product wisp "${link[@]}"
+bin=$(swift build -c "$config" ${archs[@]+"${archs[@]}"} --show-bin-path "${link[@]}")
 
 app=build/Wisp.app
 rm -rf "$app"
