@@ -5,3 +5,6 @@ dist/
 *.xcodeproj/xcuserdata/
 DerivedData/
 .DS_Store
+.claude/settings.local.json*
+trajector-doctor-*.tar.gz
+trajector-doctor-*/
