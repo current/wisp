@@ -7,7 +7,11 @@ processes are one row, with its CPU, memory, GPU, power, disk and network use,
 and you can open that row to see which windows, extensions and helpers the
 numbers come from.
 
-[wisp-mac.com](https://wisp-mac.com) · [Download](https://github.com/current/wisp/releases/latest) · [Changelog](CHANGELOG.md) · [Performance](docs/performance.md)
+[wisp-mac.com](https://wisp-mac.com) · [Changelog](CHANGELOG.md) · [Performance](docs/performance.md) · [Privacy](https://wisp-mac.com/privacy.html)
+
+```sh
+brew install --cask current/tap/wisp
+```
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
@@ -91,13 +95,20 @@ has the method and what Wisp does to stay at these numbers.
 
 ## Install
 
-Download `Wisp-0.2.0.zip` from the
-[latest release](https://github.com/current/wisp/releases/latest), unzip it and
-drag Wisp to Applications. It needs macOS 15 or later on Apple silicon and looks
-best on macOS 26.
+```sh
+brew install --cask current/tap/wisp
+```
 
-The build is not notarized, so macOS stops the first launch. Open System
-Settings > Privacy & Security and click Open Anyway, or run:
+Wisp needs macOS 15 or later on Apple silicon and looks best on macOS 26. It is
+signed ad hoc and not notarized. The cask removes macOS's quarantine flag from
+`Wisp.app` after installing, so the first launch doesn't stop at Open Anyway. It
+also links the `wisp` command.
+
+Without Homebrew, download `Wisp-0.2.0.zip` from the
+[latest release](https://github.com/current/wisp/releases/latest), check its
+SHA-256 against the release notes, unzip it and drag Wisp to Applications. On the
+first launch, open System Settings > Privacy & Security and click Open Anyway,
+or run:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Wisp.app
@@ -112,7 +123,7 @@ scripts/build-app.sh && open build/Wisp.app
 
 ### Command line
 
-The app includes a `wisp` command:
+The app includes a `wisp` command. Homebrew links it for you; with the zip, run:
 
 ```sh
 ln -s /Applications/Wisp.app/Contents/Helpers/wisp /usr/local/bin/wisp
