@@ -153,6 +153,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         root.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(rootResized), name: NSView.frameDidChangeNotification, object: root)
         window.delegate = self
+        // Switching between light and dark makes AppKit lay out the title bar again, which
+        // puts the window buttons back in the corner. Move them once it has.
+        appearanceObservation = window.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.placeWindowButtons() } }
+        }
         if !window.setFrameUsingName("WispMain") { window.center() }
         // For screenshots while other apps are in use.
         if ProcessInfo.processInfo.environment["WISP_FLOAT"] != nil { window.level = .floating }
@@ -368,6 +373,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// The window buttons sit inside the floating sidebar, on its padding, rather
     /// than in the window corner where AppKit puts them.
     private var buttonSpacing: CGFloat?
+    private var appearanceObservation: NSKeyValueObservation?
 
     private func placeWindowButtons() {
         guard let window, !window.styleMask.contains(.fullScreen),
@@ -456,6 +462,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func writeSnapshot(to url: URL) {
         guard let window, let frameView = window.contentView?.superview, let layer = frameView.layer else { return }
         frameView.layoutSubtreeIfNeeded()
+        placeWindowButtons()
         let scale = window.backingScaleFactor
         let size = frameView.bounds.size
         guard let context = CGContext(data: nil, width: Int(size.width * scale), height: Int(size.height * scale), bitsPerComponent: 8,
