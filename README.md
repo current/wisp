@@ -7,7 +7,7 @@
 <p align="center">See which app is using your Mac, from a monitor that barely uses it.</p>
 
 <p align="center">
-  <a href="https://wisp-mac-gamma.vercel.app">Website</a>
+  <a href="https://wisp-mac.com">Website</a>
   &nbsp;&middot;&nbsp;
   <a href="#install">Install</a>
   &nbsp;&middot;&nbsp;
