@@ -517,8 +517,23 @@ final class NameCell: NSTableCellView {
 }
 
 /// A borderless search field puts its field editor across the whole field, so the
-/// caret and typed text sat under the magnifier. Edit inside the text rect instead.
+/// caret and typed text sat under the magnifier, and it draws its text about 3 pt
+/// above the icon. Text and editing both use one line, centred on the field.
 final class InsetSearchFieldCell: NSSearchFieldCell {
+    private func centred(_ base: NSRect, in rect: NSRect) -> NSRect {
+        guard let font else { return base }
+        let line = ceil(NSLayoutManager().defaultLineHeight(for: font))
+        return NSRect(x: base.minX, y: rect.minY + floor((rect.height - line) / 2), width: base.width, height: line)
+    }
+
+    override func searchTextRect(forBounds rect: NSRect) -> NSRect {
+        centred(super.searchTextRect(forBounds: rect), in: rect)
+    }
+
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        centred(super.drawingRect(forBounds: rect), in: rect)
+    }
+
     override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
         super.edit(withFrame: searchTextRect(forBounds: rect), in: controlView, editor: textObj, delegate: delegate, event: event)
     }
