@@ -25,6 +25,8 @@ enum Theme {
     static let inkTertiary = dynamic(0xB0B0B4, 0x636366)
     static let track = dynamic(0xEBEBED, 0x3A3A3E)
     static let hover = dynamic(0xF0F0F2, 0x323236)
+    /// Every other row of a table, quieter than hover.
+    static let stripe = dynamic(0xF6F6F7, 0x2F2F32)
     static let fill = dynamic(0xF5F5F7, 0x323236)
 
     static let accent = dynamic(0x0088FF, 0x0A91FF)

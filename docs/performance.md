@@ -99,7 +99,9 @@ dashboard then held 241 MB instead of 37 MB.
 - Per-app network comes from the NetworkStatistics framework in about 2 ms.
   `nettop` would cost more than a full core.
 - Power comes from IOReport energy counters, read in-process. Nothing runs as
-  root and Wisp starts no child processes.
+  root. Wisp starts no child processes in the menu bar or on most pages. Login &
+  Background runs `launchctl print` twice a minute while it is open, and Storage
+  runs `tmutil listlocalsnapshots` once per scan.
 - Each menu bar item is drawn into one bitmap and replaced only when its text
   changes. Separate text fields and images cost about 2 ms per redraw.
 - Table cells are laid out by hand and draw their own text. A new value marks

@@ -551,6 +551,9 @@ final class ColumnTable: BitmapView {
             } else if index == hoverRow {
                 Theme.hover.setFill()
                 NSBezierPath(roundedRect: NSRect(x: 0, y: y + 1, width: bounds.width, height: rowHeight - 2), xRadius: 6, yRadius: 6).fill()
+            } else if index % 2 == 1 {
+                Theme.stripe.setFill()
+                NSBezierPath(roundedRect: NSRect(x: 0, y: y + 1, width: bounds.width, height: rowHeight - 2), xRadius: 6, yRadius: 6).fill()
             }
             for (column, text) in row.cells.enumerated() where column < columns.count {
                 let frame = frames[column].offsetBy(dx: 0, dy: y)

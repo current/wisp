@@ -42,7 +42,16 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
     private unowned let delegate: AppDelegate
     private let onSelect: (Selection?) -> Void
     let outline = NSOutlineView()
-    private let search = NSSearchField()
+    private let search: NSSearchField = {
+        let field = NSSearchField()
+        let cell = InsetSearchFieldCell(textCell: "")
+        cell.isEditable = true
+        cell.isSelectable = true
+        cell.isScrollable = true
+        cell.usesSingleLineMode = true
+        field.cell = cell
+        return field
+    }()
     private let summary = TextLine()
     private let titleLabel = Style.label("Apps")
     var toolbarHeading: (NSView, NSView)? { (titleLabel, summary) }
@@ -208,6 +217,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
                 restoringSelection = false
             }
             lastOrder = flatOrder()
+            restripe()
         }
         if let pending = pendingSelection, let target = nodes["app:" + pending], outline.row(forItem: target) >= 0 {
             pendingSelection = nil
@@ -384,6 +394,19 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         (outlineView.makeView(withIdentifier: AppRowView.identifier, owner: nil) as? AppRowView) ?? AppRowView()
     }
 
+    func outlineView(_ outlineView: NSOutlineView, didAdd rowView: NSTableRowView, forRow row: Int) {
+        (rowView as? AppRowView)?.striped = row % 2 == 1
+    }
+
+    /// Rows that move without being re-added (an app expanded above them) keep their
+    /// old stripe; set them all again after any change in shape.
+    private func restripe() {
+        outline.enumerateAvailableRowViews { rowView, row in (rowView as? AppRowView)?.striped = row % 2 == 1 }
+    }
+
+    func outlineViewItemDidExpand(_ notification: Notification) { restripe() }
+    func outlineViewItemDidCollapse(_ notification: Notification) { restripe() }
+
     /// With the drawer open the page is narrow; the least used columns step aside
     /// so CPU and memory stay in view.
     override func viewDidLayout() {
@@ -493,14 +516,59 @@ final class NameCell: NSTableCellView {
     }
 }
 
+/// A borderless search field puts its field editor across the whole field, so the
+/// caret and typed text sat under the magnifier. Edit inside the text rect instead.
+final class InsetSearchFieldCell: NSSearchFieldCell {
+    override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
+        super.edit(withFrame: searchTextRect(forBounds: rect), in: controlView, editor: textObj, delegate: delegate, event: event)
+    }
+
+    override func select(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, start selStart: Int, length selLength: Int) {
+        super.select(withFrame: searchTextRect(forBounds: rect), in: controlView, editor: textObj, delegate: delegate,
+                     start: selStart, length: selLength)
+    }
+}
+
 /// Selection as a soft rounded wash in the accent colour, not the system's solid
 /// bar; the row text keeps its colours.
 final class AppRowView: NSTableRowView {
     static let identifier = NSUserInterfaceItemIdentifier("WispRow")
 
+    /// Every other row's quiet stripe: a plain rounded layer the compositor fills, with
+    /// no drawing and no clipping (drawing it costs a backing store per row).
+    private let stripe = CALayer()
+    var striped = false { didSet { showStripe() } }
+    /// The selection wash is drawn under sublayers, so a selected row drops its stripe.
+    override var isSelected: Bool { didSet { showStripe() } }
+
+    private func showStripe() {
+        let hidden = !striped || isSelected
+        if stripe.isHidden != hidden { stripe.isHidden = hidden }
+    }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         identifier = Self.identifier
+        wantsLayer = true
+        stripe.cornerRadius = 8
+        stripe.isHidden = true
+        stripe.actions = ["hidden": NSNull(), "bounds": NSNull(), "position": NSNull(), "backgroundColor": NSNull()]
+        layer?.addSublayer(stripe)
+        updateStripeColor()
+    }
+
+    override func layout() {
+        super.layout()
+        stripe.frame = bounds.insetBy(dx: 4, dy: 1)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateStripeColor()
+    }
+
+    private func updateStripeColor() {
+        effectiveAppearance.performAsCurrentDrawingAppearance { stripe.backgroundColor = Theme.stripe.cgColor }
     }
 
     required init?(coder: NSCoder) { fatalError() }
