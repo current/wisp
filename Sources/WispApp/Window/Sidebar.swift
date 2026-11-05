@@ -21,6 +21,7 @@ extension PageID {
         case .docker: return Theme.teal
         case .agents: return Theme.purple
         case .startup: return Theme.teal
+        case .cleanup: return Theme.cyan
         case .settings: return Theme.gray
         }
     }

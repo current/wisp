@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dashboard: DashboardPopover!
     private var mainWindow: MainWindowController?
     private let notifier = Notifier()
+    let cleanUp = CleanUpCenter()
     private var displayAsleep = false
     private var flushTimer: Timer?
     private let launchDate = Date()
@@ -50,6 +51,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             monitor.alerts.onChange = { recent in try? JSONEncoder().encode(recent).write(to: insights, options: .atomic) }
         }
         notifier.onOpen = { [weak self] appID in self?.showWindow(selecting: appID) }
+        notifier.onClean = { [weak self] info in self?.cleanUp.handle(info) }
+        cleanUp.notify = { [weak self] id, title, body, info in self?.notifier.post(id: id, title: title, body: body, info: info, thread: "clean") }
+        cleanUp.open = { [weak self] body in self?.openCleanUp(body) }
+        cleanUp.start()
         monitor.update(rules: settings.alerts)
 
         let center = NSWorkspace.shared.notificationCenter
@@ -70,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         flushTimer = Timer.scheduledTimer(withTimeInterval: 900, repeats: true) { [weak self] _ in
             self?.monitor.history.flushToArchive()
             self?.monitor.dataUsage.save()
+            self?.cleanUp.checkSchedule()
         }
         flushTimer?.tolerance = 120
 
@@ -230,6 +236,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showPage(_ page: PageID) {
         showWindow()
         mainWindow?.show(page)
+    }
+
+    func openCleanUp(_ body: (CleanUpPage) -> Void) {
+        showPage(.cleanup)
+        if let page = mainWindow?.page(.cleanup) as? CleanUpPage { body(page) }
     }
 
     /// Settings live in the main window, as its last page.

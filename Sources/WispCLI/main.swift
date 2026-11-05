@@ -15,6 +15,10 @@ usage: wisp <command> [options]
   docker              running containers
   alerts              recent alerts (needs the app running)
   storage             disk space by kind, what can go, drive health
+  clean               what Clean Up can remove, by tab; changes nothing
+      --tab junk|developer|large|leftovers|uninstall
+      --apply                                 move the items marked safe to the Trash
+      --history                               past cleans
   why                 why the Mac is slow right now (looks for about 3 seconds)
   mcp                 run as a read-only MCP server on stdin/stdout
 
@@ -60,6 +64,11 @@ if command == "help" || command == "--help" || command == "-h" {
 }
 if command == "version" || command == "--version" {
     print("wisp \(Wisp.version)")
+    exit(0)
+}
+
+if command == "clean" {
+    CleanCommand.run(Array(args.dropFirst()), json: json)
     exit(0)
 }
 
