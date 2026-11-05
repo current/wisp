@@ -75,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         flushTimer = Timer.scheduledTimer(withTimeInterval: 900, repeats: true) { [weak self] _ in
             self?.monitor.history.flushToArchive()
             self?.monitor.dataUsage.save()
-            self?.cleanUp.checkSchedule()
+            MainActor.assumeIsolated { self?.cleanUp.checkSchedule() }
         }
         flushTimer?.tolerance = 120
 

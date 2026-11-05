@@ -274,7 +274,7 @@ public struct Cleaner: Sendable {
     public var exclusions: [String]
     public var guards: CleanGuards
     /// Checks on the selection as a whole (see `CleanRegistry.selectionChecks`).
-    public var selectionChecks: [(Set<String>) -> Bool] = CleanRegistry.selectionChecks
+    public var selectionChecks: [@Sendable (Set<String>) -> Bool] = CleanRegistry.selectionChecks
 
     /// Package managers write these while they install; a project with one this fresh is busy.
     static let lockfiles = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock", "Cargo.lock",

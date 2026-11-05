@@ -13,21 +13,18 @@ public enum CleanRegistry {
             ProjectArtifactScanner(staleAfter: TimeInterval(CleanSettings.load().staleProjectDays) * 86_400),
             WorktreeScanner(),
             LeftoversScanner(),
-            LargeFilesScanner(),
         ]
     }
 
     /// Checks on a whole selection, given the item ids; each returns false when the
     /// selection must not be cleaned together. One line per check, e.g.
-    /// `LargeFileIndex.shared.keepsACopy,` so a clean never removes every copy of a file.
-    public static var selectionChecks: [(Set<String>) -> Bool] {
+    public static var selectionChecks: [@Sendable (Set<String>) -> Bool] {
         [
-            LargeFileIndex.shared.keepsACopy,
         ]
     }
 
     /// Nil when `items` may be cleaned together, otherwise the reason they may not.
-    public static func selectionRefusal(_ items: [CleanItem], checks: [(Set<String>) -> Bool] = selectionChecks) -> String? {
+    public static func selectionRefusal(_ items: [CleanItem], checks: [@Sendable (Set<String>) -> Bool] = selectionChecks) -> String? {
         let ids = Set(items.map(\.id))
         return checks.allSatisfy { $0(ids) } ? nil : "This would remove every copy of a file. Keep at least one copy ticked off"
     }
