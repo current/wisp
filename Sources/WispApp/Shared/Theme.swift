@@ -13,10 +13,17 @@ enum Theme {
     }()
     // Tahoe: a light grey content area, white cards with a hairline edge, system
     // colours and SF Pro throughout. Every colour has a dark value.
-    static let ground = dynamic(0xF5F5F7, 0x1D1D1F)
+    static let ground = dynamic(0xF2F2F5, 0x1D1D1F)
     static let panel = dynamic(0xFFFFFF, 0x252527)
-    static let card = dynamic(0xFFFFFF, 0x2A2A2D)
-    static let cardBorder = dynamic(0xE2E2E5, 0x3A3A3E)
+    static let card = dynamic(0xFFFFFF, 0x272729)
+    static let cardBorder = dynamic(0xE2E2E5, 0x363638)
+    /// The sidebar where there is no window-server material behind it (snapshots).
+    static let sidebarFill = dynamic(0xECEDF1, 0x2A2B30)
+    /// The hairline between the sidebar and the page.
+    static let sidebarEdge = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.1) : NSColor(white: 0, alpha: 0.08)
+    }
+    static let sidebarHeader = dynamic(0x9A9AA0, 0x636368)
     static let selectionWash = dynamic(0xE5F1FF, 0x1E3550)
     static let cardBorderHover = dynamic(0xC9C9CE, 0x55555B)
     static let rule = dynamic(0xE8E8EA, 0x36363A)

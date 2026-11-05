@@ -52,9 +52,9 @@ enum PageID: String, CaseIterable {
     }
 
     static let sections: [(String?, [PageID])] = [
-        (nil, [.overview, .apps]),
-        ("Machine", [.cpu, .memory, .gpu, .neural, .energy, .disk, .cleanup, .network, .sound, .bluetooth, .sensors, .startup]),
-        ("Developer", [.ports, .docker, .agents]),
+        (nil, [.overview, .apps, .cleanup]),
+        ("Machine", [.cpu, .memory, .gpu, .neural, .energy, .disk, .network, .sound, .bluetooth, .sensors]),
+        ("Developer", [.ports, .docker, .agents, .startup]),
     ]
 }
 
@@ -112,7 +112,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var current: Page?
     private(set) var currentID: PageID = .apps
 
-    static let sidebarWidth: CGFloat = 248
+    static let sidebarWidth: CGFloat = 262
     static let drawerWidth: CGFloat = 400
     static let inset: CGFloat = 8
 
@@ -186,6 +186,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         delegate.observeTable { [weak self] table in
             guard let self, self.isVisible else { return }
             self.current?.update(table: table)
+            self.sidebar.update(table: table)
             if self.drawerOpen { self.drawer.update(table: table) }
         }
         delegate.windowVisible = true
@@ -330,8 +331,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func place(animated: Bool) {
         let bounds = root.bounds
         let inset = Self.inset
-        sidebar.frame = NSRect(x: inset, y: inset, width: Self.sidebarWidth, height: bounds.height - inset * 2)
-        let left = inset + Self.sidebarWidth
+        // The sidebar runs to the window's edges; the window's own corners round its left side.
+        sidebar.frame = NSRect(x: 0, y: 0, width: Self.sidebarWidth, height: bounds.height)
+        let left = Self.sidebarWidth
         // `drawerProgress` runs 0 to 1 as the drawer opens: the page gives up its
         // right edge at the same rate the drawer slides in, so they move as one.
         // When the page would be left narrower than 480 pt, the drawer lies over it instead.
@@ -372,8 +374,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         return family + " · Apple " + Sidebar.machineName()
     }()
 
-    /// The window buttons sit inside the floating sidebar, on its padding, rather
-    /// than in the window corner where AppKit puts them.
+    /// The window buttons sit on the sidebar's padding, a little lower and further in
+    /// than where AppKit puts them.
     private var buttonSpacing: CGFloat?
     private var appearanceObservation: NSKeyValueObservation?
 
@@ -388,10 +390,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let height: CGFloat = 50
         let containerFrame = NSRect(x: 0, y: window.frame.height - height, width: window.frame.width, height: height)
         if container.frame != containerFrame { container.frame = containerFrame }
-        let left = Self.inset + 20
+        let left: CGFloat = 20
         for (index, button) in [close, mini, zoom].enumerated() {
             let origin = NSPoint(x: left + CGFloat(index) * spacing,
-                                 y: titlebar.bounds.height - (Self.inset + 22) - button.frame.height / 2)
+                                 y: titlebar.bounds.height - 23 - button.frame.height / 2)
             if button.frame.origin != origin { button.setFrameOrigin(origin) }
         }
     }

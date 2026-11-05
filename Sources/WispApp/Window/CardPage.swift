@@ -9,10 +9,12 @@ class CardPage: NSViewController, Page {
     unowned let delegate: AppDelegate
     let scroll = NSScrollView()
     let canvas = Canvas()
-    let margin: CGFloat = 24
+    /// Space at the page's sides and foot; the first row of cards starts right under the toolbar.
+    static let margin: CGFloat = 22
+    var margin: CGFloat { Self.margin }
     let gap: CGFloat = 12
     /// The toolbar floats over the top of the page; content starts under it and scrolls beneath.
-    static let topInset: CGFloat = Toolbar.height + 4 - 24
+    static let topInset: CGFloat = Toolbar.height - margin
     private var arrangedWidth: CGFloat = 0
 
     final class Canvas: DrawnView {

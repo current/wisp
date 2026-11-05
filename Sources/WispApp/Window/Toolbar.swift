@@ -5,7 +5,7 @@ import AppKit
 /// page scrolls under it, as in a Tahoe window.
 @MainActor
 final class Toolbar: NSView {
-    static let height: CGFloat = 60
+    static let height: CGFloat = 62
     private let defaultTitle = TextLine()
     private let defaultSubtitle = TextLine()
     private var heading: (NSView, NSView)?
@@ -62,22 +62,22 @@ final class Toolbar: NSView {
 
     override func layout() {
         super.layout()
-        var right = bounds.width - 16
+        var right = bounds.width - CardPage.margin
         for capsule in capsules.reversed() {
             let width = capsule.naturalWidth
-            capsule.frame = NSRect(x: right - width, y: 13, width: width, height: 34)
+            capsule.frame = NSRect(x: right - width, y: 14, width: width, height: 34)
             right -= width + 10
         }
         if let (title, subtitle) = heading {
-            let width = max(80, right - 24 - 12)
-            title.frame = NSRect(x: 24, y: 13 - scrolled, width: width, height: 19)
-            subtitle.frame = NSRect(x: 24, y: 32 - scrolled, width: width, height: 14)
+            let width = max(80, right - CardPage.margin - 12)
+            title.frame = NSRect(x: CardPage.margin, y: 14 - scrolled, width: width, height: 19)
+            subtitle.frame = NSRect(x: CardPage.margin, y: 33 - scrolled, width: width, height: 14)
             // The heading belongs to the page: it scrolls away with it and fades as it goes.
             let fade = max(0, min(1, 1 - scrolled / 28))
             title.alphaValue = fade
             subtitle.alphaValue = fade
         }
-        compact.frame = NSRect(x: 16, y: 13, width: min(compact.naturalWidth, max(80, right - 26)), height: 34)
+        compact.frame = NSRect(x: CardPage.margin, y: 14, width: min(compact.naturalWidth, max(80, right - CardPage.margin - 10)), height: 34)
     }
 
     /// The page scrolled to `offset` points from its top. The heading moves with the

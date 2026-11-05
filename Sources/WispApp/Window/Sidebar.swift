@@ -133,19 +133,20 @@ final class NavRow: DrawnView {
             NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
         }
         // Tahoe source list: a plain symbol in the accent colour, the name, the figure.
-        IconTile.glyph(page.symbol, tint: Theme.blue, size: 17, appearance: effectiveAppearance)
-            .draw(in: NSRect(x: 9, y: (bounds.height - 17) / 2, width: 17, height: 17), from: .zero, operation: .sourceOver,
+        IconTile.glyph(page.symbol, tint: Theme.blue, size: 16, appearance: effectiveAppearance)
+            .draw(in: NSRect(x: 10.5, y: (bounds.height - 16) / 2, width: 16, height: 16), from: .zero, operation: .sourceOver,
                   fraction: 1, respectFlipped: true, hints: nil)
         let valueAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular),
                                                               .foregroundColor: valueWarns ? Theme.warn : Theme.inkSecondary]
         let valueWidth = value.isEmpty ? 0 : ceil((value as NSString).size(withAttributes: valueAttributes).width)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
-        (page.title as NSString).draw(with: NSRect(x: 33, y: (bounds.height - 16) / 2, width: bounds.width - 45 - valueWidth, height: 16),
+        (page.title as NSString).draw(with: NSRect(x: 36, y: (bounds.height - 16) / 2, width: bounds.width - 50 - valueWidth, height: 16),
                                       options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                      attributes: [.font: Theme.sans(13), .foregroundColor: Theme.ink, .paragraphStyle: paragraph])
+                                      attributes: [.font: Theme.sans(13, selected ? .semibold : .regular), .foregroundColor: Theme.ink,
+                                                   .paragraphStyle: paragraph])
         if !value.isEmpty {
-            (value as NSString).draw(at: NSPoint(x: bounds.width - 8 - valueWidth, y: (bounds.height - 15) / 2), withAttributes: valueAttributes)
+            (value as NSString).draw(at: NSPoint(x: bounds.width - 10 - valueWidth, y: (bounds.height - 15) / 2), withAttributes: valueAttributes)
         }
     }
 
@@ -164,9 +165,8 @@ final class NavRow: DrawnView {
     override func accessibilityPerformPress() -> Bool { onClick?(); return true }
 }
 
-/// The floating sidebar: brand, pages in sections with live figures, settings.
-/// It sits on Liquid Glass where the system has it. Behind it is only the window's
-/// ground, which never changes, so the glass has nothing to re-render.
+/// The sidebar: pages in sections with live figures, settings at the foot. It runs the
+/// full height of the window on a frosted surface tinted by the page's colours.
 @MainActor
 final class Sidebar: NSView {
     var onSelect: ((PageID) -> Void)?
@@ -180,12 +180,17 @@ final class Sidebar: NSView {
     /// fan out of it. Leaving folds them back in.
     private(set) var inSettings = false
     private(set) var rows: [NavRow] = []
-    private var headers: [TextLine] = []
+    private var headers: [SectionHeader] = []
+    /// Sections folded shut from their header; kept between launches.
+    private var collapsed = Set(UserDefaults.standard.stringArray(forKey: "WispSidebarCollapsed") ?? [])
     private let brand = TextLine()
     private let machine = TextLine()
     private let highlight = CALayer()
     private let surface: NSView
     private let content = FlippedContent()
+    /// The hairline on the right edge, against the page, and the one over the Settings row.
+    private let edge = CALayer()
+    private let footRule = CALayer()
     private let settingsRow = NavRowButton(title: "Settings", symbol: PageID.settings.symbol)
     private var selectedPage: PageID?
 
@@ -195,29 +200,16 @@ final class Sidebar: NSView {
     }
 
     override init(frame: NSRect) {
-        if #available(macOS 26.0, *), !Theme.solidPanels {
-            let glass = NSGlassEffectView()
-            glass.cornerRadius = 16
-            glass.style = .regular
-            surface = glass
-        } else {
-            let card = CardView()
-            card.fill = Theme.panel
-            card.radius = 16
-            surface = card
-        }
+        surface = SidebarSurface()
         super.init(frame: frame)
         addSubview(surface)
-        if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView {
-            glass.contentView = content
-        } else {
-            surface.addSubview(content)
-        }
+        surface.addSubview(content)
         content.wantsLayer = true
-        // Glass does not clip its content view; keep every row inside the rounded panel.
-        content.layer?.cornerRadius = 16
-        content.layer?.cornerCurve = .continuous
         content.layer?.masksToBounds = true
+        for rule in [edge, footRule] {
+            rule.actions = ["position": NSNull(), "bounds": NSNull(), "opacity": NSNull()]
+            content.layer?.addSublayer(rule)
+        }
         // The selection is a soft grey fill, as in a Tahoe source list.
         highlight.cornerRadius = 9
         highlight.cornerCurve = .continuous
@@ -225,14 +217,13 @@ final class Sidebar: NSView {
         content.layer?.addSublayer(highlight)
 
         for (title, pages) in PageID.sections {
+            let header = SectionHeader(title: title.map { $0.prefix(1).uppercased() + $0.dropFirst().lowercased() } ?? "")
+            header.collapsed = title.map(collapsed.contains) ?? false
             if let title {
-                let header = TextLine(NSAttributedString(string: title.prefix(1).uppercased() + title.dropFirst().lowercased(),
-                                                         attributes: [.font: Theme.sans(11, .semibold), .foregroundColor: Theme.inkSecondary]))
-                headers.append(header)
+                header.onClick = { [weak self] in self?.toggle(section: title) }
                 content.addSubview(header)
-            } else {
-                headers.append(TextLine())
             }
+            headers.append(header)
             for page in pages {
                 let row = NavRow(page: page)
                 row.onClick = { [weak self] in self?.onSelect?(page) }
@@ -252,6 +243,7 @@ final class Sidebar: NSView {
             sectionRows.append(row)
             content.addSubview(row)
         }
+        settingsRow.showsLive = true
         content.addSubview(settingsRow)
     }
 
@@ -273,9 +265,23 @@ final class Sidebar: NSView {
         super.layout()
         surface.frame = bounds
         content.frame = surface.bounds
+        placeRules()
         guard !moving else { return }
         apply(frames())
         placeHighlight(animated: false)
+    }
+
+    private func placeRules() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        edge.frame = CGRect(x: bounds.width - 0.5, y: 0, width: 0.5, height: bounds.height)
+        footRule.frame = CGRect(x: 12, y: bounds.height - 50, width: bounds.width - 24, height: 0.5)
+        footRule.opacity = inSettings ? 0 : 1
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            edge.backgroundColor = Theme.sidebarEdge.cgColor
+            footRule.backgroundColor = Theme.sidebarEdge.cgColor
+        }
+        CATransaction.commit()
     }
 
     /// Where every row goes in the current mode, and how visible it is.
@@ -283,39 +289,68 @@ final class Sidebar: NSView {
         let width = bounds.width
         var result: [(NSView, NSRect, CGFloat)] = []
         // The first row sits under the window buttons, which live on the sidebar.
-        var y: CGFloat = 44
+        var y: CGFloat = 43
         var rowIndex = 0
         let pagesAlpha: CGFloat = inSettings ? 0 : 1
         let lift: CGFloat = inSettings ? -10 : 0
         // A short window closes the rows up rather than run them past the Settings row.
         let headerCount = CGFloat(PageID.sections.filter { $0.0 != nil }.count)
-        let roomPerRow = (bounds.height - 44 - 44 - headerCount * 30) / CGFloat(rows.count)
-        let pitch = max(22, min(28, roomPerRow.rounded(.down)))
+        let roomPerRow = (bounds.height - 43 - 58 - headerCount * 33) / CGFloat(rows.count)
+        let pitch = max(22, min(30, roomPerRow.rounded(.down)))
         for (sectionIndex, (title, pages)) in PageID.sections.enumerated() {
+            let shut = title.map(collapsed.contains) ?? false
             if title != nil {
-                y += pitch < 28 ? 8 : 12
-                result.append((headers[sectionIndex], NSRect(x: 19, y: y + lift, width: width - 38, height: 14), pagesAlpha))
-                y += 18
+                y += pitch < 30 ? 6 : 10
+                result.append((headers[sectionIndex], NSRect(x: 10, y: y + lift, width: width - 20, height: 22), pagesAlpha))
+                y += 23
             }
             for _ in pages {
-                result.append((rows[rowIndex], NSRect(x: 10, y: y + lift, width: width - 20, height: pitch), pagesAlpha))
-                y += pitch
+                // A folded section's rows tuck under its header.
+                result.append((rows[rowIndex], NSRect(x: 10, y: (shut ? y - pitch : y) + lift, width: width - 20, height: pitch), shut ? 0 : pagesAlpha))
+                if !shut { y += pitch }
                 rowIndex += 1
             }
         }
-        let bottom = NSRect(x: 10, y: bounds.height - 38, width: width - 20, height: 28)
-        let top = NSRect(x: 10, y: 44, width: width - 20, height: 28)
+        let bottom = NSRect(x: 10, y: bounds.height - 42, width: width - 20, height: 30)
+        let top = NSRect(x: 10, y: 43, width: width - 20, height: 30)
         let settingsFrame = inSettings ? top : bottom
         // A short window hides the settings row rather than draw it over the pages.
         result.append((settingsRow, settingsFrame, 1))
         for (index, row) in sectionRows.enumerated() {
-            let open = NSRect(x: 10, y: 44 + 36 + CGFloat(index) * 28, width: width - 20, height: 28)
+            let open = NSRect(x: 10, y: 43 + 38 + CGFloat(index) * 30, width: width - 20, height: 30)
             result.append((row, inSettings ? open : settingsFrame, inSettings ? 1 : 0))
         }
         return result
     }
 
     private var moving = false
+
+    private func toggle(section title: String) {
+        if collapsed.contains(title) { collapsed.remove(title) } else { collapsed.insert(title) }
+        UserDefaults.standard.set(Array(collapsed), forKey: "WispSidebarCollapsed")
+        for (header, (name, _)) in zip(headers, PageID.sections) { header.collapsed = name.map(collapsed.contains) ?? false }
+        let targets = frames()
+        guard window != nil, !Theme.reduceMotion, !MainWindowController.background else {
+            apply(targets)
+            return placeHighlight(animated: false)
+        }
+        for (view, _, alpha) in targets where alpha > 0 { view.isHidden = false }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.28
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+            context.allowsImplicitAnimation = true
+            for (view, frame, alpha) in targets {
+                view.animator().frame = frame
+                view.animator().alphaValue = alpha
+            }
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                for (view, _, alpha) in targets where alpha == 0 { view.isHidden = true }
+                self?.placeHighlight(animated: false)
+            }
+        }
+        placeHighlight(animated: false)
+    }
 
     private func apply(_ frames: [(NSView, NSRect, CGFloat)]) {
         for (view, frame, alpha) in frames {
@@ -329,6 +364,8 @@ final class Sidebar: NSView {
     func showSettings(_ open: Bool) {
         guard open != inSettings else { return }
         inSettings = open
+        settingsRow.showsLive = !open
+        placeRules()
         settingsRow.symbol = open ? "ri:arrow-left-s-line" : PageID.settings.symbol
         settingsRow.setAccessibilityLabel(open ? "Back" : "Settings")
         let targets = frames()
@@ -402,7 +439,7 @@ final class Sidebar: NSView {
         highlight.frame = to
         highlight.opacity = 1
         highlight.backgroundColor = (effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor.white.withAlphaComponent(0.1) : NSColor.black.withAlphaComponent(0.075)).cgColor
+            ? NSColor.white.withAlphaComponent(0.13) : NSColor.black.withAlphaComponent(0.075)).cgColor
         CATransaction.commit()
         guard animated, !Theme.reduceMotion, from.height > 0, abs(from.minY - to.minY) > 1 else { return }
         stretch(from: from, to: to)
@@ -438,6 +475,7 @@ final class Sidebar: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        placeRules()
         placeHighlight(animated: false)
     }
 
@@ -450,8 +488,10 @@ final class Sidebar: NSView {
         if let power = s.power, let cpu = power.cpu { values[.energy] = String(format: "%.0f W", cpu + (power.gpu ?? 0) + (power.ane ?? 0)) }
         if let ane = s.power?.ane { values[.neural] = ane < 0.05 ? "Idle" : String(format: "%.1f W", ane) }
         if let net = s.network { values[.network] = Format.rate(net.receivedBytesPerSecond + net.sentBytesPerSecond) }
-        if let disk = s.disk { values[.disk] = Format.rate(disk.readBytesPerSecond + disk.writeBytesPerSecond) }
         if let celsius = s.thermal?.cpuCelsius { values[.sensors] = Format.celsius(celsius) }
+        // Storage shows the free space, as the Storage page leads with it.
+        if let disk = s.disk, disk.volumeTotal > 0 { values[.disk] = Format.bytes(disk.volumeFree) }
+        if let apps = rows.first(where: { $0.page == .apps })?.value { values[.apps] = apps }
         for row in rows {
             row.value = values[row.page] ?? ""
             switch row.page {
@@ -463,10 +503,118 @@ final class Sidebar: NSView {
     }
 }
 
+extension Sidebar {
+    /// How many apps are running, beside Apps.
+    func update(table: ProcessTable) {
+        rows.first { $0.page == .apps }?.value = "\(table.apps.count)"
+    }
+}
+
+/// A section's name over its rows, with a chevron that folds the section shut.
+final class SectionHeader: DrawnView {
+    let title: String
+    var collapsed = false { didSet { if collapsed != oldValue { needsDisplay = true; setAccessibilityExpanded(!collapsed) } } }
+    var onClick: (() -> Void)?
+    private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
+
+    init(title: String) {
+        self.title = title
+        super.init(frame: .zero)
+        setAccessibilityElement(!title.isEmpty)
+        setAccessibilityRole(.disclosureTriangle)
+        setAccessibilityLabel(title)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard !title.isEmpty else { return }
+        (title as NSString).draw(at: NSPoint(x: 10, y: (bounds.height - 14) / 2),
+                                 withAttributes: [.font: Theme.sans(11, .semibold), .foregroundColor: Theme.sidebarHeader, .kern: 0.11])
+        // The chevron points down while open; it is quiet until the pointer is over the header.
+        let side: CGFloat = 12
+        let chevron = IconTile.glyph(collapsed ? "ri:arrow-left-s-line" : "ri:arrow-down-s-line",
+                                     tint: hovering ? Theme.inkSecondary : Theme.sidebarHeader, size: side, appearance: effectiveAppearance)
+        chevron.draw(in: NSRect(x: bounds.width - 10 - side, y: (bounds.height - side) / 2, width: side, height: side),
+                     from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
+    }
+    override func accessibilityPerformPress() -> Bool { onClick?(); return true }
+}
+
+/// The sidebar's frosted surface: a pale ground with the page's blue, indigo and orange
+/// carried softly under it. Gradient layers, drawn by the render server; nothing redraws.
+final class SidebarSurface: NSView {
+    private let base = CAGradientLayer()
+    private let glows = [CAGradientLayer(), CAGradientLayer(), CAGradientLayer()]
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.addSublayer(base)
+        for glow in glows {
+            glow.type = .radial
+            glow.startPoint = CGPoint(x: 0.5, y: 0.5)
+            glow.endPoint = CGPoint(x: 1, y: 1)
+            layer?.addSublayer(glow)
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func layout() {
+        super.layout()
+        paint()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        paint()
+    }
+
+    private func paint() {
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        base.frame = bounds
+        base.colors = (dark ? [0x303137, 0x28292F] : [0xF6F7FA, 0xEDEEF3]).map { Theme.hex($0).cgColor }
+        // Centre (fraction of width and height), size (fraction of width and height), colour.
+        let spots: [(CGPoint, CGSize, UInt32, CGFloat)] = [
+            (CGPoint(x: 0.95, y: 0.18), CGSize(width: 1.3, height: 0.42), dark ? 0x0A84FF : 0x007AFF, dark ? 0.24 : 0.11),
+            (CGPoint(x: 0.9, y: 0.5), CGSize(width: 1.2, height: 0.38), dark ? 0x7D7AFF : 0x5856D6, dark ? 0.16 : 0.08),
+            (CGPoint(x: 0.95, y: 0.84), CGSize(width: 1.3, height: 0.42), dark ? 0xFF9F0A : 0xFF9500, dark ? 0.12 : 0.09),
+        ]
+        for (glow, (centre, size, color, alpha)) in zip(glows, spots) {
+            let width = bounds.width * size.width, height = bounds.height * size.height
+            glow.frame = CGRect(x: bounds.width * centre.x - width / 2, y: bounds.height * centre.y - height / 2, width: width, height: height)
+            glow.colors = [Theme.hex(color, alpha: alpha).cgColor, Theme.hex(color, alpha: alpha * 0.45).cgColor, Theme.hex(color, alpha: 0).cgColor]
+            glow.locations = [0, 0.45, 1]
+        }
+        CATransaction.commit()
+    }
+}
+
 /// The settings row at the foot of the sidebar.
 final class NavRowButton: DrawnView {
     let title: String
     var symbol: String { didSet { if symbol != oldValue { needsDisplay = true } } }
+    /// A green dot and "Live" on the right, while the window's figures update.
+    var showsLive = false { didSet { if showsLive != oldValue { needsDisplay = true } } }
     var onClick: (() -> Void)?
     var selected = false { didSet { if selected != oldValue { needsDisplay = true } } }
     private var hovering = false { didSet { needsDisplay = true } }
@@ -487,11 +635,22 @@ final class NavRowButton: DrawnView {
             Theme.ink.withAlphaComponent(0.05).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
         }
-        IconTile.glyph(symbol, tint: Theme.blue, size: 17, appearance: effectiveAppearance)
-            .draw(in: NSRect(x: 9, y: (bounds.height - 17) / 2, width: 17, height: 17), from: .zero, operation: .sourceOver,
+        IconTile.glyph(symbol, tint: Theme.blue, size: 16, appearance: effectiveAppearance)
+            .draw(in: NSRect(x: 10.5, y: (bounds.height - 16) / 2, width: 16, height: 16), from: .zero, operation: .sourceOver,
                   fraction: 1, respectFlipped: true, hints: nil)
-        (title as NSString).draw(at: NSPoint(x: 33, y: (bounds.height - 16) / 2),
-                                 withAttributes: [.font: Theme.sans(13), .foregroundColor: Theme.ink])
+        (title as NSString).draw(at: NSPoint(x: 36, y: (bounds.height - 16) / 2),
+                                 withAttributes: [.font: Theme.sans(13, selected ? .semibold : .regular), .foregroundColor: Theme.ink])
+        if showsLive {
+            let attributes: [NSAttributedString.Key: Any] = [.font: Theme.sans(11), .foregroundColor: Theme.inkSecondary]
+            let width = ceil(("Live" as NSString).size(withAttributes: attributes).width)
+            let x = bounds.width - 10 - width
+            ("Live" as NSString).draw(at: NSPoint(x: x, y: (bounds.height - 14) / 2), withAttributes: attributes)
+            let dot = NSRect(x: x - 12, y: bounds.height / 2 - 3, width: 6, height: 6)
+            Theme.green.withAlphaComponent(0.18).setFill()
+            NSBezierPath(ovalIn: dot.insetBy(dx: -3, dy: -3)).fill()
+            Theme.green.setFill()
+            NSBezierPath(ovalIn: dot).fill()
+        }
     }
 
     override func updateTrackingAreas() {

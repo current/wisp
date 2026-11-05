@@ -94,7 +94,7 @@ final class CleanUpPage: CardPage {
         scroll.frame = root.bounds
         let showsFooter = tab != .history && !(tab == .uninstall && uninstall.chosen == nil)
         footer.isHidden = !showsFooter
-        footer.frame = NSRect(x: margin, y: root.bounds.height - CleanFooter.height - 16, width: max(0, root.bounds.width - margin * 2),
+        footer.frame = NSRect(x: margin, y: root.bounds.height - CleanFooter.height - margin, width: max(0, root.bounds.width - margin * 2),
                               height: CleanFooter.height)
         let bottom = showsFooter ? CleanFooter.height + 24 : 0
         if scroll.contentInsets.bottom != bottom { scroll.contentInsets.bottom = bottom }

@@ -136,10 +136,10 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         let root = GroundView()
         root.addSubview(card)
         NSLayoutConstraint.activate([
-            card.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
-            card.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
-            card.topAnchor.constraint(equalTo: root.topAnchor, constant: Toolbar.height + 4),
-            card.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
+            card.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: CardPage.margin),
+            card.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -CardPage.margin),
+            card.topAnchor.constraint(equalTo: root.topAnchor, constant: Toolbar.height),
+            card.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -CardPage.margin),
             scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 6),
             scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -6),
             scroll.topAnchor.constraint(equalTo: card.topAnchor, constant: 4),
