@@ -138,8 +138,12 @@ class CardView: NSView {
 
     override func updateLayer() {
         guard let layer else { return }
-        layer.backgroundColor = fill.cgColor
-        layer.borderColor = (hovering ? Theme.cardBorderHover : stroke).cgColor
+        // Hover calls this from a mouse event, where the current appearance is not the
+        // view's; resolve the colours in the view's own appearance or dark cards turn white.
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer.backgroundColor = fill.cgColor
+            layer.borderColor = (hovering ? Theme.cardBorderHover : stroke).cgColor
+        }
         layer.borderWidth = stroke == .clear ? 0 : 0.5
         layer.cornerRadius = radius
         layer.cornerCurve = .continuous
