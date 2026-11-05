@@ -16,11 +16,12 @@ final class SettingsPage: NSViewController, Page {
             case .display: return "paintbrush"
             case .alerts: return "bell.badge"
             case .assistants: return "sparkles"
+            case .cleanUp: return "wand.and.sparkles"
             case .about: return "info.circle"
             }
         }
 
-        case general, menuBar, display, alerts, assistants, about
+        case general, menuBar, display, alerts, assistants, cleanUp, about
 
         var title: String {
             switch self {
@@ -29,6 +30,7 @@ final class SettingsPage: NSViewController, Page {
             case .display: return "Display"
             case .alerts: return "Alerts"
             case .assistants: return "Assistants"
+            case .cleanUp: return "Clean Up"
             case .about: return "About"
             }
         }
@@ -40,6 +42,7 @@ final class SettingsPage: NSViewController, Page {
             case .display: return "paintbrush.fill"
             case .alerts: return "bell.badge.fill"
             case .assistants: return "sparkles"
+            case .cleanUp: return "wand.and.sparkles"
             case .about: return "info"
             }
         }
@@ -51,6 +54,7 @@ final class SettingsPage: NSViewController, Page {
             case .display: return Theme.dynamic(0xD9487A, 0xEB6F98)
             case .alerts: return Theme.dynamic(0xE0662A, 0xF0864E)
             case .assistants: return Theme.dynamic(0x6E56E0, 0x9480F0)
+            case .cleanUp: return PageID.cleanup.tint
             case .about: return Theme.dynamic(0x1F9D72, 0x4ACB98)
             }
         }
@@ -88,7 +92,7 @@ final class SettingsPage: NSViewController, Page {
         scroll.autoresizingMask = [.width, .height]
         root.addSubview(scroll)
         view = root
-        // WISP_TAB=<0-5> opens on a given section, for screenshots.
+        // WISP_TAB=<0-6> opens on a given section, for screenshots.
         let start = ProcessInfo.processInfo.environment["WISP_TAB"].flatMap(Int.init).flatMap { Section.allCases.indices.contains($0) ? Section.allCases[$0] : nil }
         show(start ?? .general, animated: false)
     }
@@ -283,6 +287,8 @@ final class SettingsPage: NSViewController, Page {
                              }),
                 ]),
             ]
+        case .cleanUp:
+            return CleanUpSettings.groups(delegate.cleanUp, rebuild: { [unowned self] in rebuild() })
         case .about:
             return [
                 SettingsGroup(nil, [.custom(AboutCard(), 168)]),

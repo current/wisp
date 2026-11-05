@@ -44,6 +44,11 @@ final class StoragePage: DiskPage {
 
     private let reclaimCard = CardView(), reclaimTitle = TextLine(), reclaimNote = TextLine(), reclaimList = StorageList()
     private var reclaimButtons: [ActionButton] = []
+    private lazy var cleanUpButton: ActionButton = {
+        let button = ActionButton(title: "Clean Up", target: self, action: #selector(openCleanUp))
+        button.secondary = true
+        return button
+    }()
     private var reclaimItems: [ReclaimItem] = []
 
     private let historyCard = CardView(), historyTitle = TextLine(), chart = SpaceChart(), grewTitle = TextLine(), grewList = StorageList()
@@ -76,7 +81,7 @@ final class StoragePage: DiskPage {
         crumbs.onPick = { [weak self] index in self?.goBack(to: index) }
         list.onOpen = { [weak self] row in self?.open(row) }
 
-        for view in [reclaimTitle, reclaimNote, reclaimList] as [NSView] { reclaimCard.addSubview(view) }
+        for view in [reclaimTitle, reclaimNote, reclaimList, cleanUpButton] as [NSView] { reclaimCard.addSubview(view) }
         reclaimTitle.text = title("Could go to the Trash", symbol: "trash.fill")
 
         for view in [historyTitle, chart, grewTitle, grewList] as [NSView] { historyCard.addSubview(view) }
@@ -136,6 +141,8 @@ final class StoragePage: DiskPage {
         onDemand.removeAll()
         index.rescan()
     }
+
+    @objc private func openCleanUp() { delegate.showPage(.cleanup) }
 
     @objc private func openAccessSettings() { NSWorkspace.shared.open(StorageAccess.settingsURL) }
 
@@ -705,6 +712,8 @@ final class StoragePage: DiskPage {
 
         width = reclaimCard.bounds.width - 40
         reclaimTitle.frame = NSRect(x: 20, y: 16, width: width, height: 22)
+        let cleanUpSize = cleanUpButton.intrinsicContentSize
+        cleanUpButton.frame = NSRect(x: 20 + width - cleanUpSize.width, y: 14, width: cleanUpSize.width, height: cleanUpSize.height)
         reclaimNote.frame = NSRect(x: 20, y: 42, width: width, height: 16)
         let buttonWidth: CGFloat = 104
         reclaimList.frame = NSRect(x: 20, y: 66, width: width - buttonWidth - 14, height: reclaimList.naturalHeight)

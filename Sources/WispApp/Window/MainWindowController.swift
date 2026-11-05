@@ -3,7 +3,7 @@ import IOKit
 import WispCore
 
 enum PageID: String, CaseIterable {
-    case overview, apps, cpu, memory, energy, disk, network, gpu, neural, sound, bluetooth, sensors, ports, docker, agents, startup, settings
+    case overview, apps, cpu, memory, energy, disk, network, gpu, neural, sound, bluetooth, sensors, ports, docker, agents, startup, cleanup, settings
 
     var title: String {
         switch self {
@@ -23,6 +23,7 @@ enum PageID: String, CaseIterable {
         case .docker: return "Containers"
         case .agents: return "Coding Agents"
         case .startup: return "Login & Background"
+        case .cleanup: return "Clean Up"
         case .settings: return "Settings"
         }
     }
@@ -45,13 +46,14 @@ enum PageID: String, CaseIterable {
         case .docker: return "shippingbox"
         case .agents: return "sparkles"
         case .startup: return "power"
+        case .cleanup: return "wand.and.sparkles"
         case .settings: return "gearshape"
         }
     }
 
     static let sections: [(String?, [PageID])] = [
         (nil, [.overview, .apps]),
-        ("Machine", [.cpu, .memory, .gpu, .neural, .energy, .disk, .network, .sound, .bluetooth, .sensors, .startup]),
+        ("Machine", [.cpu, .memory, .gpu, .neural, .energy, .disk, .cleanup, .network, .sound, .bluetooth, .sensors, .startup]),
         ("Developer", [.ports, .docker, .agents]),
     ]
 }
@@ -583,6 +585,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case .docker: return ContainersPage(title: "Containers", metric: .cpu, delegate: delegate, onSelect: select)
         case .agents: return AgentsPage(delegate: delegate, onSelect: select)
         case .startup: return StartupPage(delegate: delegate, onSelect: select)
+        case .cleanup: return CleanUpPage(delegate: delegate)
         case .settings: return SettingsPage(delegate: delegate)
         }
     }
@@ -617,6 +620,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     override func cancelOperation(_ sender: Any?) {
         if drawerOpen { select(nil) }
     }
+
+    func page(_ id: PageID) -> Page? { pages[id] }
 
     func showSettings(_ section: SettingsPage.Section) {
         (pages[.settings] as? SettingsPage)?.show(section)
