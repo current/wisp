@@ -143,6 +143,7 @@ final class StatusBar {
         var content = StatusImage.Content()
         content.size = setting.size
         content.weight = setting.weight
+        content.captionWeight = setting.captionWeight
         if wantsGraph {
             let ceiling = reading.ceiling > 0 ? reading.ceiling : max(graph.filter { !$0.isNaN }.max() ?? 1, 1)
             content.graph = (graph, ceiling)

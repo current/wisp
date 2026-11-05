@@ -17,6 +17,7 @@ enum StatusImage {
         var steadySample: String?
         var size: MenuTextSize = .regular
         var weight: MenuWeight = .regular
+        var captionWeight: MenuWeight = .semibold
     }
 
     /// Room for the tallest layout, two lines, on every menu bar height macOS uses.
@@ -29,7 +30,7 @@ enum StatusImage {
         let leadColor = lead ?? value ?? .black
         let valueColor = value ?? lead ?? .black
         let height = Self.height
-        let fonts = Fonts(content.size, content.weight, above: content.captionAbove)
+        let fonts = Fonts(content.size, content.weight, content.captionWeight, above: content.captionAbove)
         let valueAttributes: [NSAttributedString.Key: Any] = [.font: fonts.value, .foregroundColor: valueColor]
         let lineAttributes: [NSAttributedString.Key: Any] = [.font: fonts.line, .foregroundColor: valueColor]
         let captionAttributes: [NSAttributedString.Key: Any] = [.font: fonts.caption, .foregroundColor: leadColor, .kern: content.captionAbove ? 0.3 : 0.1]
@@ -154,8 +155,8 @@ enum StatusImage {
 
         private static var cache: [String: Fonts] = [:]
 
-        init(_ size: MenuTextSize, _ weight: MenuWeight, above: Bool) {
-            let key = "\(size.rawValue).\(weight.rawValue).\(above)"
+        init(_ size: MenuTextSize, _ weight: MenuWeight, _ captionWeight: MenuWeight, above: Bool) {
+            let key = "\(size.rawValue).\(weight.rawValue).\(captionWeight.rawValue).\(above)"
             if let cached = Self.cache[key] {
                 self = cached
                 return
@@ -169,18 +170,23 @@ enum StatusImage {
             case (.regular, true): points = (12.5, 9, 8)
             case (.large, true): points = (14, 10, 8.5)
             }
-            let base: NSFont.Weight
-            switch weight {
-            case .regular: base = .regular
-            case .medium: base = .medium
-            case .semibold: base = .semibold
-            case .bold: base = .bold
-            }
+            let base = weight.font
             value = Theme.digits(points.value, base)
-            line = Theme.digits(points.line, base == .regular ? .medium : base)
-            // Small caps-height text needs more weight than the figure to read at all.
-            caption = Theme.sans(points.caption, base == .bold ? .heavy : .semibold)
+            line = Theme.digits(points.line, weight == .light || weight == .regular ? .medium : base)
+            caption = Theme.sans(points.caption, captionWeight.font)
             Self.cache[key] = self
+        }
+    }
+}
+
+extension MenuWeight {
+    var font: NSFont.Weight {
+        switch self {
+        case .light: return .light
+        case .regular: return .regular
+        case .medium: return .medium
+        case .semibold: return .semibold
+        case .bold: return .bold
         }
     }
 }

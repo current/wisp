@@ -340,10 +340,11 @@ final class SettingsPage: NSViewController, Page {
                 changeItem(index) { $0.caption = text }
             }
             rows.append(.nested("Label text", "Up to six characters. Empty shows \(item.metric.caption).", field))
+            rows.append(.nested("Label weight", nil, popup(item.captionWeight, \.title) { $0.captionWeight = $1 }))
         }
         rows += [
             .nested("Text size", nil, popup(item.size, \.title) { $0.size = $1 }),
-            .nested("Weight", nil, popup(item.weight, \.title) { $0.weight = $1 }),
+            .nested("Number weight", nil, popup(item.weight, \.title) { $0.weight = $1 }),
             .nested("Colour", nil, popup(item.color, \.title, rebuilds: true) { $0.color = $1 }),
         ]
         if item.color.isFixed {
@@ -352,7 +353,7 @@ final class SettingsPage: NSViewController, Page {
         rows += [
             .nested("Keep a steady width", "Leaves room for the widest reading, so the items to its left stay put.",
                     SettingsControls.toggle(item.steady) { [unowned self] on in changeItem(index) { $0.steady = on } }),
-            .nested("Use this look for every item", "Label style, size, weight, colour and width. Label text stays per item.",
+            .nested("Use this look for every item", "Label style, size, weights, colour and width. Label text stays per item.",
                     SettingsControls.pill("Apply to All") { [unowned self] in
                         delegate.change { settings in
                             let look = settings.menuItems[index]

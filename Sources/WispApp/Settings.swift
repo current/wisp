@@ -92,7 +92,7 @@ enum MenuTextSize: String, Codable, CaseIterable {
 }
 
 enum MenuWeight: String, Codable, CaseIterable {
-    case regular, medium, semibold, bold
+    case light, regular, medium, semibold, bold
 
     var title: String { rawValue.capitalized }
 }
@@ -135,6 +135,8 @@ struct MenuItemSetting: Codable, Equatable {
     var caption = ""
     var size: MenuTextSize = .regular
     var weight: MenuWeight = .regular
+    /// The text label's own weight; small text usually wants more than the figure.
+    var captionWeight: MenuWeight = .semibold
     var color: MenuColor = .standard
     var colorPart: MenuColorPart = .all
     /// Reserve room for the widest reading, so the items to the left do not shift.
@@ -153,6 +155,7 @@ struct MenuItemSetting: Codable, Equatable {
         label = other.label
         size = other.size
         weight = other.weight
+        captionWeight = other.captionWeight
         color = other.color
         colorPart = other.colorPart
         steady = other.steady
@@ -167,6 +170,7 @@ struct MenuItemSetting: Codable, Equatable {
         caption = (try? c.decode(String.self, forKey: .caption)) ?? ""
         size = (try? c.decode(MenuTextSize.self, forKey: .size)) ?? .regular
         weight = (try? c.decode(MenuWeight.self, forKey: .weight)) ?? .regular
+        captionWeight = (try? c.decode(MenuWeight.self, forKey: .captionWeight)) ?? .semibold
         color = (try? c.decode(MenuColor.self, forKey: .color)) ?? .standard
         colorPart = (try? c.decode(MenuColorPart.self, forKey: .colorPart)) ?? .all
         steady = (try? c.decode(Bool.self, forKey: .steady)) ?? false
@@ -259,7 +263,7 @@ struct AppSettings: Codable, Equatable {
         for metric in MenuMetric.allCases where !settings.menuItems.contains(where: { $0.metric == metric }) {
             settings.menuItems.append(MenuItemSetting(metric: metric, enabled: false, style: .number))
         }
-        // WISP_MENU=cpu.above.large,memory.icon.blue,... shows given menu bar items, for screenshots.
+        // WISP_MENU=cpu.above.large.label-light,memory.icon.blue,... shows given menu bar items, for screenshots.
         if let list = ProcessInfo.processInfo.environment["WISP_MENU"] {
             let wanted = list.split(separator: ",").map { $0.split(separator: ".").map(String.init) }
             settings.menuItems = settings.menuItems.map { item in
@@ -279,6 +283,7 @@ struct AppSettings: Codable, Equatable {
                     if let color = MenuColor(rawValue: word) { item.color = color }
                     if let part = MenuColorPart(rawValue: word) { item.colorPart = part }
                     if word == "steady" { item.steady = true }
+                    if word.hasPrefix("label-"), let weight = MenuWeight(rawValue: String(word.dropFirst(6))) { item.captionWeight = weight }
                 }
                 settings.menuItems.remove(at: index)
                 settings.menuItems.insert(item, at: 0)
