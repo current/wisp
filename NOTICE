@@ -1,4 +1,4 @@
-Wisp includes data from the following project.
+Wisp includes data and icons from the following projects.
 
 macmon (https://github.com/vladkens/macmon)
 The AppleCLPC energy report IDs for macOS 27 in Sources/WispCore/System/PowerCollector.swift
@@ -25,3 +25,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Remix Icon (https://remixicon.com)
+The sidebar and card icons in Sources/WispApp/Shared/RemixIcon.swift are path data from
+Remix Icon 4.8.0 by Remix Design. They are used under the Remix Icon License v1.0
+(https://github.com/Remix-Design/RemixIcon/blob/master/License) and are not covered by
+Wisp's MIT license.

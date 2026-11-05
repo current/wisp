@@ -11,13 +11,13 @@ final class SettingsPage: NSViewController, Page {
         /// The outline symbol the sidebar shows, as for pages.
         var sidebarSymbol: String {
             switch self {
-            case .general: return "gearshape"
-            case .menuBar: return "menubar.rectangle"
-            case .display: return "paintbrush"
-            case .alerts: return "bell.badge"
-            case .assistants: return "sparkles"
-            case .cleanUp: return "wand.and.sparkles"
-            case .about: return "info.circle"
+            case .general: return "ri:settings-3-line"
+            case .menuBar: return "ri:layout-top-line"
+            case .display: return "ri:palette-line"
+            case .alerts: return "ri:notification-3-line"
+            case .assistants: return "ri:sparkling-line"
+            case .cleanUp: return "ri:magic-line"
+            case .about: return "ri:information-line"
             }
         }
 

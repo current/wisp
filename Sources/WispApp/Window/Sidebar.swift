@@ -50,6 +50,9 @@ enum IconTile {
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
             appearance.performAsCurrentDrawingAppearance {
+                if RemixIcon.isRemix(symbol) {
+                    return RemixIcon.draw(symbol, in: NSRect(x: 0, y: 0, width: size, height: size), color: tint)
+                }
                 let config = NSImage.SymbolConfiguration(pointSize: size * 0.82, weight: .regular)
                     .applying(.init(paletteColors: [tint]))
                 if let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
@@ -84,6 +87,10 @@ enum IconTile {
                 let rect = NSRect(x: 0, y: 0, width: size, height: size)
                 (solid ? tint : tint.withAlphaComponent(dark ? 0.24 : 0.14)).setFill()
                 NSBezierPath(roundedRect: rect, xRadius: size * 0.28, yRadius: size * 0.28).fill()
+                if RemixIcon.isRemix(symbol) {
+                    let side = size * 0.64
+                    return RemixIcon.draw(symbol, in: rect.insetBy(dx: (size - side) / 2, dy: (size - side) / 2), color: solid ? .white : tint)
+                }
                 let config = NSImage.SymbolConfiguration(pointSize: size * 0.52, weight: .semibold)
                     .applying(.init(paletteColors: [solid ? .white : tint]))
                 if let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
@@ -126,8 +133,8 @@ final class NavRow: DrawnView {
             NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
         }
         // Tahoe source list: a plain symbol in the accent colour, the name, the figure.
-        IconTile.glyph(page.symbol, tint: Theme.blue, size: 16, appearance: effectiveAppearance)
-            .draw(in: NSRect(x: 9, y: (bounds.height - 16) / 2, width: 16, height: 16), from: .zero, operation: .sourceOver,
+        IconTile.glyph(page.symbol, tint: Theme.blue, size: 17, appearance: effectiveAppearance)
+            .draw(in: NSRect(x: 9, y: (bounds.height - 17) / 2, width: 17, height: 17), from: .zero, operation: .sourceOver,
                   fraction: 1, respectFlipped: true, hints: nil)
         let valueAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular),
                                                               .foregroundColor: valueWarns ? Theme.warn : Theme.inkSecondary]
@@ -179,7 +186,7 @@ final class Sidebar: NSView {
     private let highlight = CALayer()
     private let surface: NSView
     private let content = FlippedContent()
-    private let settingsRow = NavRowButton(title: "Settings", symbol: "gearshape")
+    private let settingsRow = NavRowButton(title: "Settings", symbol: PageID.settings.symbol)
     private var selectedPage: PageID?
 
     final class FlippedContent: NSView {
@@ -322,7 +329,7 @@ final class Sidebar: NSView {
     func showSettings(_ open: Bool) {
         guard open != inSettings else { return }
         inSettings = open
-        settingsRow.symbol = open ? "chevron.left" : "gearshape"
+        settingsRow.symbol = open ? "ri:arrow-left-s-line" : PageID.settings.symbol
         settingsRow.setAccessibilityLabel(open ? "Back" : "Settings")
         let targets = frames()
         guard window != nil, !Theme.reduceMotion else {
@@ -480,8 +487,8 @@ final class NavRowButton: DrawnView {
             Theme.ink.withAlphaComponent(0.05).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
         }
-        IconTile.glyph(symbol, tint: Theme.blue, size: 16, appearance: effectiveAppearance)
-            .draw(in: NSRect(x: 9, y: (bounds.height - 16) / 2, width: 16, height: 16), from: .zero, operation: .sourceOver,
+        IconTile.glyph(symbol, tint: Theme.blue, size: 17, appearance: effectiveAppearance)
+            .draw(in: NSRect(x: 9, y: (bounds.height - 17) / 2, width: 17, height: 17), from: .zero, operation: .sourceOver,
                   fraction: 1, respectFlipped: true, hints: nil)
         (title as NSString).draw(at: NSPoint(x: 33, y: (bounds.height - 16) / 2),
                                  withAttributes: [.font: Theme.sans(13), .foregroundColor: Theme.ink])

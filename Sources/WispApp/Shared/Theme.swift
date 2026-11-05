@@ -126,8 +126,9 @@ enum Theme {
     /// The symbol for a card or tile by its name; a dot when there is none.
     static func symbol(for name: String) -> String {
         let table: [String: String] = [
-            "CPU": "cpu", "Memory": "memorychip", "GPU": "cube.fill", "Disk": "internaldrive", "Storage": "internaldrive", "Network": "globe",
-            "Power": "bolt.fill", "Temperature": "thermometer.medium", "Developer": "chevron.left.forwardslash.chevron.right",
+            "CPU": PageID.cpu.symbol, "Memory": PageID.memory.symbol, "GPU": PageID.gpu.symbol, "Disk": PageID.disk.symbol,
+            "Storage": PageID.disk.symbol, "Network": PageID.network.symbol,
+            "Power": "bolt.fill", "Temperature": PageID.sensors.symbol, "Developer": "chevron.left.forwardslash.chevron.right",
             "User": "person.fill", "System": "gearshape.2.fill", "Load average": "gauge.with.dots.needle.50percent",
             "Processes": "square.stack.3d.up.fill", "Busiest app": "crown.fill", "Pressure": "gauge.with.dots.needle.67percent",
             "Available": "tray.fill", "Swap used": "arrow.left.arrow.right", "Compressed": "arrow.down.right.and.arrow.up.left",
@@ -139,16 +140,17 @@ enum Theme {
             "Battery temperature": "thermometer.medium", "Cycle count": "arrow.triangle.2.circlepath", "Maximum capacity": "battery.100percent",
             "Open ports": "point.3.connected.trianglepath.dotted", "Published ports": "point.3.connected.trianglepath.dotted",
             "Closest to its limit": "exclamationmark.triangle.fill", "Agents running": "sparkles", "Tokens today": "text.bubble.fill",
-            "Apps": "square.grid.2x2.fill", "Cores": "cpu", "By kind": "chart.pie.fill", "Volumes": "internaldrive.fill",
+            "Apps": PageID.apps.symbol, "Cores": PageID.cpu.symbol, "By kind": "chart.pie.fill", "Volumes": "internaldrive.fill",
             "Battery": "battery.100percent", "Keeping this Mac awake": "cup.and.saucer.fill", "Worth a look": "lightbulb.fill",
-            "Temperatures": "thermometer.medium", "Fans": "fan.fill", "Accessories": "keyboard.fill", "Output": "speaker.wave.2.fill",
+            "Temperatures": PageID.sensors.symbol, "Fans": "fan.fill", "Accessories": "keyboard.fill", "Output": "speaker.wave.2.fill",
             "Input": "mic.fill", "Apps with sound open": "music.note", "Devices": "dot.radiowaves.left.and.right",
             "Disk use": "internaldrive", "Plan limits": "gauge.with.needle.fill", "Running": "sparkles",
             "Mac draws now": "powerplug.fill", "Adapter": "bolt.fill", "Chip power": "cpu", "Low Power Mode": "leaf.fill",
             "Screen on": "sun.max.fill", "Drain": "arrow.down.right", "Battery health": "heart.fill",
             "Battery used by apps": "chart.bar.fill", "Energy used by apps": "chart.bar.fill", "Apps now": "square.grid.2x2.fill",
             "Most data": "chart.bar.fill", "Hosts": "server.rack",
-            "Neural Engine": "brain", "Containers": "shippingbox.fill", "Projects": "folder.fill", "Coding Agents": "sparkles",
+            "Neural Engine": PageID.neural.symbol, "Containers": PageID.docker.symbol, "Projects": PageID.ports.symbol,
+            "Coding Agents": PageID.agents.symbol,
         ]
         return table[name] ?? "circle.fill"
     }
