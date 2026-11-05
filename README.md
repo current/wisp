@@ -15,15 +15,14 @@ brew install --cask current/tap/wisp
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
-  <img src="docs/images/overview-light.png" alt="The Overview page with Why Is It Slow? open. It says limactl is holding 20 GB and macOS has compressed 12 GB to make room, and that 15 dev servers are using 4.7 GB together. Below are the CPU, memory and GPU cards.">
+  <img src="docs/images/overview-light.png" alt="Wisp on a MacBook Pro: the Overview page with CPU, memory, GPU, storage, network, power and temperature cards, and the menu bar dashboard open beside it.">
 </picture>
 
 ## Why is my Mac slow?
 
 The Why Is It Slow? button on Overview checks memory pressure, swap, CPU use per
 app, Spotlight indexing and the dev servers you left running, then lists what it
-found with a button to the app. In the screenshot above, a Lima VM was using
-20 GB. `wisp why` runs the same check in a terminal.
+found with a button to the app. `wisp why` runs the same check in a terminal.
 
 The Hour and Day charts label each spike with the app that caused it.
 
@@ -36,7 +35,7 @@ containers, and its last hour.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/apps-dark.png">
-  <img src="docs/images/apps-light.png" alt="The Apps page with the drawer open for the Aside browser: 50 processes using 8.2 GB of memory and 4.8% CPU, split into windows, extensions, GPU and helpers.">
+  <img src="docs/images/apps-light.png" alt="The Apps page with the drawer open for the Aside browser: 58 processes using 9.2 GB of memory, split into windows, extensions, the main process and the GPU.">
 </picture>
 
 ## Storage
@@ -48,7 +47,7 @@ button opens the page below.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/storage-dark.png">
-  <img src="docs/images/storage-light.png" alt="The Storage page: 164 GB free of 995 GB, and the Developer list with Colima at 76 GB and Rust target folders in 6 projects at 50 GB.">
+  <img src="docs/images/storage-light.png" alt="The Storage page: 429 GB free of 995 GB, and the Developer list with Colima at 48 GB, simulators at 18 GB and node_modules in 46 projects at 14 GB.">
 </picture>
 
 ## Clean Up
@@ -77,6 +76,11 @@ never uses sudo or empties the Trash.
 Scans run only while the page is open. A scheduled clean and a watcher for
 deleted apps are in Settings, both off by default.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/cleanup-dark.png">
+  <img src="docs/images/cleanup-light.png" alt="The Clean Up page on its Developer tab: 33 GB in 27 items, with Xcode device support at 7.0 GB and npm, Cargo, pnpm, uv, Homebrew and Go caches below, each marked Safe to clean or Check first.">
+</picture>
+
 ## Other pages
 
 - Battery: health, charge history and the apps that used the most energy.
@@ -98,7 +102,7 @@ The menu bar item opens a dashboard you can rearrange in Settings.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-dark.png">
-  <img src="docs/images/dashboard-light.png" width="320" alt="The menu bar dashboard: CPU at 15%, meters for memory, GPU, power, network, disk and battery, and the five busiest apps.">
+  <img src="docs/images/dashboard-light.png" width="380" alt="The menu bar dashboard under its menu bar item: CPU at 21%, meters for memory, GPU, power, network, disk and battery, and the five busiest apps.">
 </picture>
 
 ## Performance
