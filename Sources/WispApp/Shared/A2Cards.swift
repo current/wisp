@@ -443,8 +443,8 @@ final class A2Keys: BitmapView {
 
     var naturalHeight: CGFloat { rows == 0 ? 0 : CGFloat(rows) * Self.keyHeight + CGFloat(rows - 1) * rowGap }
 
-    private func width(_ key: Key) -> CGFloat {
-        let indent: CGFloat = key.color == nil ? 0 : 13
+    private func width(_ key: Key, squares: Bool = true) -> CGFloat {
+        let indent: CGFloat = key.color == nil || !squares ? 0 : 13
         let label = (key.label as NSString).size(withAttributes: [.font: Self.labelFont]).width
         let value = (key.value as NSString).size(withAttributes: [.font: Self.valueFont]).width
         return ceil(max(label, value)) + indent
@@ -453,32 +453,54 @@ final class A2Keys: BitmapView {
     override func draw(_ dirtyRect: NSRect) {
         guard !keys.isEmpty else { return }
         var origins: [NSPoint] = []
+        // Room each key may use; text past it is truncated rather than drawn over its neighbour.
+        var room: [CGFloat] = []
+        var squares = true
         switch arrangement {
         case .spread:
-            let widths = keys.map(width)
+            var widths = keys.map { width($0) }
+            let gap: CGFloat = 8
+            // A narrow card drops the colour squares first, then splits the width evenly.
+            if widths.reduce(0, +) + gap * CGFloat(keys.count - 1) > bounds.width {
+                squares = false
+                widths = keys.map { width($0, squares: false) }
+            }
+            if widths.reduce(0, +) + gap * CGFloat(keys.count - 1) > bounds.width {
+                let even = (bounds.width - gap * CGFloat(keys.count - 1)) / CGFloat(keys.count)
+                widths = keys.map { _ in even }
+            }
             let space = keys.count > 1 ? (bounds.width - widths.reduce(0, +)) / CGFloat(keys.count - 1) : 0
             var x: CGFloat = 0
             for width in widths {
                 origins.append(NSPoint(x: x, y: 0))
+                room.append(width)
                 x += width + space
             }
         case .columns(let count):
             let column = (bounds.width - 8 * CGFloat(count - 1)) / CGFloat(count)
             for index in keys.indices {
                 origins.append(NSPoint(x: CGFloat(index % count) * (column + 8), y: CGFloat(index / count) * (Self.keyHeight + rowGap)))
+                room.append(column)
             }
         }
-        for (key, origin) in zip(keys, origins) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        for (index, (key, origin)) in zip(keys, origins).enumerated() {
             var x = origin.x
-            if let color = key.color {
+            let limit = origin.x + room[index]
+            if squares, let color = key.color {
                 color.setFill()
                 let baseline = origin.y + Self.labelFont.ascender
                 NSBezierPath(roundedRect: NSRect(x: x, y: baseline - 7, width: 7, height: 7), xRadius: 2, yRadius: 2).fill()
                 x += 13
             }
-            (key.label as NSString).draw(at: NSPoint(x: x, y: origin.y), withAttributes: [.font: Self.labelFont, .foregroundColor: A2.secondary])
-            (key.value as NSString).draw(at: NSPoint(x: x, y: origin.y + Self.labelLine + 3),
-                                         withAttributes: [.font: Self.valueFont, .foregroundColor: A2.primary])
+            let width = max(0, limit - x)
+            (key.label as NSString).draw(with: NSRect(x: x, y: origin.y, width: width, height: Self.labelLine + 2),
+                                         options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                         attributes: [.font: Self.labelFont, .foregroundColor: A2.secondary, .paragraphStyle: paragraph])
+            (key.value as NSString).draw(with: NSRect(x: x, y: origin.y + Self.labelLine + 3, width: width, height: Self.keyHeight),
+                                         options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                         attributes: [.font: Self.valueFont, .foregroundColor: A2.primary, .paragraphStyle: paragraph])
         }
     }
 

@@ -88,7 +88,9 @@ final class WindowGround: NSView {
     override var isFlipped: Bool { true }
     override var wantsUpdateLayer: Bool { true }
     override var mouseDownCanMoveWindow: Bool { true }
-    override func updateLayer() { layer?.backgroundColor = Theme.ground.cgColor }
+    /// The window's root stays clear where the sidebar's glass needs the desktop behind it.
+    var paints = true
+    override func updateLayer() { layer?.backgroundColor = paints ? Theme.ground.cgColor : NSColor.clear.cgColor }
 }
 
 @MainActor
@@ -105,6 +107,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let root = WindowGround()
     private let sidebar = Sidebar()
     private let container = WindowGround()
+    /// Ground right of the sidebar, under the page and the drawer's margins, when the window is clear.
+    private let pageGround = WindowGround()
     private let toolbar = Toolbar()
     let drawer: AppDrawer
     private var drawerOpen = false
@@ -125,7 +129,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.title = "Wisp"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.backgroundColor = Theme.ground
+        // Liquid Glass shows what is behind the window, so the window is clear under the
+        // sidebar; the page paints its own ground. Snapshots have no glass and stay opaque.
+        if Sidebar.usesGlass {
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            root.paints = false
+        } else {
+            window.backgroundColor = Theme.ground
+        }
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 900, height: 620)
         // Test runs (sizes, parked or background windows) must not change the size people saved.
@@ -137,6 +149,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         root.wantsLayer = true
         container.wantsLayer = true
+        pageGround.wantsLayer = true
+        root.addSubview(pageGround)
         root.addSubview(container)
         root.addSubview(toolbar)
         root.addSubview(sidebar)
@@ -334,6 +348,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // The sidebar runs to the window's edges; the window's own corners round its left side.
         sidebar.frame = NSRect(x: 0, y: 0, width: Self.sidebarWidth, height: bounds.height)
         let left = Self.sidebarWidth
+        pageGround.frame = NSRect(x: left, y: 0, width: max(0, bounds.width - left), height: bounds.height)
         // `drawerProgress` runs 0 to 1 as the drawer opens: the page gives up its
         // right edge at the same rate the drawer slides in, so they move as one.
         // When the page would be left narrower than 480 pt, the drawer lies over it instead.

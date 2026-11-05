@@ -166,8 +166,9 @@ final class NavRow: DrawnView {
 }
 
 /// The sidebar: pages in sections with live figures, settings at the foot. It runs the
-/// full height of the window on Liquid Glass over a tint in the page's colours. Behind
-/// the glass is only that tint, which never changes, so the glass has nothing to re-render.
+/// full height of the window on Liquid Glass, which shows the desktop behind the window.
+/// The window's own corners round its left side. Snapshots, which have no glass, use a
+/// tinted surface in its place.
 @MainActor
 final class Sidebar: NSView {
     var onSelect: ((PageID) -> Void)?
@@ -188,10 +189,11 @@ final class Sidebar: NSView {
     private let machine = TextLine()
     private let highlight = CALayer()
     private let surface: NSView
-    /// Clips the glass to the sidebar: the glass is wider, so only its left corners, which
-    /// follow the window's, are rounded and the edge against the page is straight.
-    private let glassClip = FlippedContent()
-    private var glass: NSView?
+
+    static var usesGlass: Bool {
+        if #available(macOS 26.0, *) { return !Theme.solidPanels }
+        return false
+    }
     private let content = FlippedContent()
     /// The hairline on the right edge, against the page, and the one over the Settings row.
     private let edge = CALayer()
@@ -205,19 +207,16 @@ final class Sidebar: NSView {
     }
 
     override init(frame: NSRect) {
-        surface = SidebarSurface()
-        super.init(frame: frame)
-        addSubview(surface)
-        if #available(macOS 26.0, *), !Theme.solidPanels {
+        if #available(macOS 26.0, *), Self.usesGlass {
             let glass = NSGlassEffectView()
             glass.style = .regular
-            glass.cornerRadius = MainWindowController.cornerRadius
-            glassClip.wantsLayer = true
-            glassClip.layer?.masksToBounds = true
-            glassClip.addSubview(glass)
-            addSubview(glassClip)
-            self.glass = glass
+            glass.cornerRadius = 0
+            surface = glass
+        } else {
+            surface = SidebarSurface()
         }
+        super.init(frame: frame)
+        addSubview(surface)
         addSubview(content)
         content.wantsLayer = true
         content.layer?.masksToBounds = true
@@ -279,8 +278,6 @@ final class Sidebar: NSView {
     override func layout() {
         super.layout()
         surface.frame = bounds
-        glassClip.frame = bounds
-        glass?.frame = NSRect(x: 0, y: 0, width: bounds.width + MainWindowController.cornerRadius * 2, height: bounds.height)
         content.frame = bounds
         placeRules()
         guard !moving else { return }
