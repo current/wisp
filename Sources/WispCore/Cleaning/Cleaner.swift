@@ -212,7 +212,8 @@ public enum CleanPathRules {
 
     /// Nil when Wisp may move `path` to the Trash, otherwise the plain reason it may not.
     /// Allowed: below a top-level folder of the home folder (two levels down inside
-    /// ~/Library), app bundles directly in /Applications, and nothing that a link carries
+    /// ~/Library), app bundles in /Applications or one plain folder down (as
+    /// `InstalledApps` lists them), and nothing that a link carries
     /// somewhere else. The path must exist.
     public static func refusal(_ path: String, home: String) -> String? {
         let parts = path.split(separator: "/", omittingEmptySubsequences: false)
@@ -230,7 +231,7 @@ public enum CleanPathRules {
         return nil
     }
 
-    private static func refusal(resolved path: String, homeReal: String) -> String? {
+    static func refusal(resolved path: String, homeReal: String) -> String? {
         if path == homeReal { return "It is your home folder" }
         if path.hasPrefix(homeReal + "/") {
             let relative = String(path.dropFirst(homeReal.count + 1))
@@ -241,7 +242,8 @@ public enum CleanPathRules {
             return nil
         }
         let parts = path.split(separator: "/")
-        if parts.count == 2, parts[0] == "Applications", parts[1].hasSuffix(".app") {
+        let inApplications = parts.count == 2 || (parts.count == 3 && (String(parts[1]) as NSString).pathExtension.isEmpty)
+        if inApplications, parts[0] == "Applications", parts[parts.count - 1].hasSuffix(".app") {
             if let id = bundleID(at: path), id.hasPrefix("com.apple."),
                !id.hasPrefix("com.apple.InstallAssistant"), !id.hasPrefix("com.apple.dt.") {
                 return "It comes with macOS"

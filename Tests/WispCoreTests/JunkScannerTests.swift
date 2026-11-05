@@ -152,12 +152,27 @@ final class FakeHome {
         let scanner = InstallerScanner(applications: home.path + "/Applications", readsGuardedFolders: { true })
         let items = scanner.scan(home.context(excluded: ["Documents/Xcode_27.xip"]))
         #expect(Set(items.map(\.name)) == ["Install macOS Tahoe", "Tool.dmg", "Driver.pkg", "UniversalMac_27.0_Restore.ipsw"])
-        #expect(items.allSatisfy { $0.safety == .checkFirst && $0.tab == .junk })
+        #expect(items.allSatisfy { $0.safety == .checkFirst && $0.tab == .junk && !$0.checkedByDefault })
         let ipsw = try #require(items.first { $0.name.hasSuffix(".ipsw") })
         #expect(ipsw.detail == "A system image. Only needed to set up a Mac, a device or a virtual machine.")
 
         let withoutAccess = InstallerScanner(applications: home.path + "/Applications", readsGuardedFolders: { false })
         #expect(withoutAccess.scan(home.context()).map(\.name) == ["Install macOS Tahoe"])
+    }
+
+    @Test func installersInsideProjectsAreLeftOut() {
+        let home = FakeHome()
+        home.file("Documents/crosswire/.git/HEAD")
+        home.file("Documents/crosswire/build/virtual-hid/Driver.pkg", bytes: 2 * Self.mb)
+        home.file("Documents/crosswire/dist/App.dmg", bytes: 2 * Self.mb)
+        home.file("Documents/worktree/.git", text: "gitdir: /elsewhere")
+        home.file("Documents/worktree/Release.dmg", bytes: 2 * Self.mb)
+        home.file("Desktop/export/build/Tool.pkg", bytes: 2 * Self.mb)
+        home.file("Downloads/Setup.dmg", bytes: 2 * Self.mb)
+        home.file("Downloads/drivers/Driver.pkg", bytes: 2 * Self.mb)
+
+        let scanner = InstallerScanner(applications: home.path + "/Applications", readsGuardedFolders: { true })
+        #expect(Set(scanner.scan(home.context()).map(\.paths[0])) == [home.path + "/Downloads/Setup.dmg", home.path + "/Downloads/drivers/Driver.pkg"])
     }
 
     @Test func snapshotsKeepTheNewest() {

@@ -780,6 +780,12 @@ final class AppDrawer: NSView {
         finder.toolTip = "Show in Finder"
         finder.onPress = { [weak self] in self?.reveal() }
         buttons.append(finder)
+        if case .app(let id) = selection, let app = delegate.table.app(id), let path = app.bundlePath,
+           InstalledApps.isUninstallable(path: path, bundleID: app.bundleIdentifier) {
+            let uninstall = GlassPill("Uninstall…")
+            uninstall.onPress = { [weak self] in self?.delegate.openCleanUp { $0.showUninstall(of: path) } }
+            buttons.append(uninstall)
+        }
         if canQuit {
             let force = GlassPill("Force Quit…", kind: .destructive)
             force.onPress = { [weak self] in self?.forceQuit() }

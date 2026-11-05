@@ -35,7 +35,12 @@ enum CleanIcons {
         guard let path = item.paths.first else { return symbol(item.tab.symbol) }
         if let cached = cache[path] { return cached }
         guard FileManager.default.fileExists(atPath: path) else { return symbol(item.tab.symbol) }
-        return store(path, NSWorkspace.shared.icon(forFile: path))
+        return file(path)
+    }
+
+    /// The Finder icon of a file or app bundle.
+    static func file(_ path: String) -> NSImage {
+        cache[path] ?? store(path, NSWorkspace.shared.icon(forFile: path))
     }
 
     private static func symbol(_ name: String) -> NSImage {
@@ -100,6 +105,8 @@ final class CleanList: BitmapView {
     }
     var onToggle: (([String], Bool) -> Void)?
     var onExclude: ((CleanItem) -> Void)?
+    /// Set for a list of rows that open something (the Uninstall tab's apps) instead of ticking.
+    var onOpen: ((Row) -> Void)? { didSet { needsDisplay = true } }
     private var offsets: [CGFloat] = []
     private var total: CGFloat = 0
     private var hovered: Int? {
@@ -134,13 +141,14 @@ final class CleanList: BitmapView {
     }
 
     private var checkable: Bool { rows.contains { $0.check != nil } }
+    private func opens(_ row: Row) -> Bool { onOpen != nil && row.kind == .item && row.check == nil }
 
     override func draw(_ dirtyRect: NSRect) {
         guard !rows.isEmpty else { return }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         let reveals = rows.contains { $0.item?.paths.isEmpty == false && $0.check != nil }
-        let rightEdge = bounds.width - (reveals ? 34 : 0)
+        let rightEdge = bounds.width - (reveals || rows.contains(where: opens) ? 34 : 0)
         let valueWidth: CGFloat = 132
         for index in rows.indices {
             let frame = frame(index)
@@ -148,7 +156,7 @@ final class CleanList: BitmapView {
             if frame.minY > dirtyRect.maxY { break }
             let row = rows[index]
             var x: CGFloat = 0
-            if index == hovered, row.check != nil {
+            if index == hovered, row.check != nil || opens(row) {
                 Theme.hover.setFill()
                 NSBezierPath(roundedRect: frame.insetBy(dx: -8, dy: row.kind == .heading ? 2 : 1), xRadius: 8, yRadius: 8).fill()
             }
@@ -187,7 +195,12 @@ final class CleanList: BitmapView {
                 let labelAttributes: [NSAttributedString.Key: Any] = [.font: Theme.sans(11.5), .foregroundColor: row.labelWarns ? Theme.warn : Theme.inkSecondary]
                 let labelSize = (row.label as NSString).size(withAttributes: labelAttributes)
                 (row.label as NSString).draw(at: NSPoint(x: rightEdge - labelSize.width, y: frame.minY + 27), withAttributes: labelAttributes)
-                if reveals, row.item?.paths.isEmpty == false, row.check != nil {
+                if opens(row) {
+                    let rect = revealRect(index)
+                    IconTile.glyph("chevron.right", tint: index == hovered ? Theme.inkSecondary : Theme.inkTertiary, size: 12, appearance: effectiveAppearance)
+                        .draw(in: NSRect(x: rect.midX - 6, y: rect.midY - 6, width: 12, height: 12), from: .zero, operation: .sourceOver,
+                              fraction: 1, respectFlipped: true, hints: nil)
+                } else if reveals, row.item?.paths.isEmpty == false, row.check != nil {
                     let rect = revealRect(index)
                     if index == hovered, revealHovered {
                         Theme.ink.withAlphaComponent(0.07).setFill()
@@ -243,8 +256,13 @@ final class CleanList: BitmapView {
 
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        guard let index = index(at: point), let check = rows[index].check else { return }
+        guard let index = index(at: point) else { return }
         let row = rows[index]
+        if opens(row) {
+            onOpen?(row)
+            return
+        }
+        guard let check = row.check else { return }
         if row.kind == .item, let item = row.item, !item.paths.isEmpty, revealRect(index).contains(point) {
             return reveal(item)
         }
@@ -278,19 +296,24 @@ final class CleanList: BitmapView {
     }
 }
 
-/// The bar under the list: how much is ticked and the two ways to clean.
+/// The bar under the list: how much is ticked and the two ways to clean. On the
+/// Uninstall tab the safe button gives way to one that asks a running app to quit.
 final class CleanFooter: CardView {
     let selection = TextLine()
     let safeButton: ActionButton
     let cleanButton: ActionButton
+    let quitButton: ActionButton
     static let height: CGFloat = 56
 
-    init(target: AnyObject, safe: Selector, clean: Selector) {
+    init(target: AnyObject, safe: Selector, clean: Selector, quit: Selector) {
         safeButton = ActionButton(title: "Clean Safe Items…", target: target, action: safe)
         safeButton.secondary = true
         cleanButton = ActionButton(title: "Clean Selected…", target: target, action: clean)
+        quitButton = ActionButton(title: "Quit", target: target, action: quit)
+        quitButton.secondary = true
+        quitButton.isHidden = true
         super.init()
-        for view in [selection, safeButton, cleanButton] as [NSView] { addSubview(view) }
+        for view in [selection, safeButton, quitButton, cleanButton] as [NSView] { addSubview(view) }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -302,10 +325,13 @@ final class CleanFooter: CardView {
 
     override func layout() {
         super.layout()
-        let clean = cleanButton.intrinsicContentSize, safe = safeButton.intrinsicContentSize
-        cleanButton.frame = NSRect(x: bounds.width - 16 - clean.width, y: (bounds.height - clean.height) / 2, width: clean.width, height: clean.height)
-        safeButton.frame = NSRect(x: cleanButton.frame.minX - 10 - safe.width, y: (bounds.height - safe.height) / 2, width: safe.width, height: safe.height)
-        selection.frame = NSRect(x: 20, y: (bounds.height - 18) / 2, width: max(0, safeButton.frame.minX - 36), height: 18)
+        var right = bounds.width - 16
+        for button in [cleanButton, safeButton, quitButton] where !button.isHidden {
+            let size = button.intrinsicContentSize
+            button.frame = NSRect(x: right - size.width, y: (bounds.height - size.height) / 2, width: size.width, height: size.height)
+            right -= size.width + 10
+        }
+        selection.frame = NSRect(x: 20, y: (bounds.height - 18) / 2, width: max(0, right - 26), height: 18)
     }
 }
 
