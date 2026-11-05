@@ -30,24 +30,24 @@ enum PageID: String, CaseIterable {
 
     var symbol: String {
         switch self {
-        case .overview: return "ri:layout-grid-line"
-        case .apps: return "ri:apps-line"
-        case .cpu: return "ri:cpu-line"
-        case .memory: return "ri:ram-2-line"
-        case .energy: return MachinePower.hasBattery ? "ri:battery-2-line" : "ri:plug-line"
-        case .disk: return "ri:hard-drive-3-line"
-        case .network: return "ri:global-line"
-        case .gpu: return "ri:box-3-line"
-        case .neural: return "ri:brain-line"
-        case .sound: return "ri:volume-up-line"
-        case .bluetooth: return "ri:bluetooth-line"
-        case .sensors: return "ri:temp-hot-line"
-        case .ports: return "ri:folder-line"
-        case .docker: return "ri:ship-line"
-        case .agents: return "ri:sparkling-line"
-        case .startup: return "ri:shut-down-line"
-        case .cleanup: return "ri:magic-line"
-        case .settings: return "ri:settings-3-line"
+        case .overview: return "square.grid.2x2"
+        case .apps: return "list.bullet.rectangle"
+        case .cpu: return "cpu"
+        case .memory: return "memorychip"
+        case .energy: return MachinePower.hasBattery ? "battery.75percent" : "bolt"
+        case .disk: return "internaldrive"
+        case .network: return "network"
+        case .gpu: return "cube.transparent"
+        case .neural: return "brain"
+        case .sound: return "speaker.wave.2"
+        case .bluetooth: return "dot.radiowaves.left.and.right"
+        case .sensors: return "thermometer.medium"
+        case .ports: return "folder"
+        case .docker: return "shippingbox"
+        case .agents: return "sparkles"
+        case .startup: return "power"
+        case .cleanup: return "wand.and.sparkles"
+        case .settings: return "gearshape"
         }
     }
 
@@ -414,7 +414,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidResize(_ notification: Notification) { placeWindowButtons() }
-    func windowDidBecomeKey(_ notification: Notification) { placeWindowButtons() }
+    func windowDidBecomeKey(_ notification: Notification) { placeWindowButtons(); applyBlur() }
     func windowDidResignKey(_ notification: Notification) { placeWindowButtons() }
     func windowDidExitFullScreen(_ notification: Notification) { placeWindowButtons() }
 
@@ -651,6 +651,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidChangeOcclusionState(_ notification: Notification) {
         delegate.windowVisible = isVisible
+        applyBlur()
+    }
+
+    /// The window server keeps the radius for the window; set it once the window has a number.
+    private var blurApplied = false
+    static let blurRadius = 60
+
+    private func applyBlur() {
+        guard !blurApplied, Sidebar.usesGlass, let window else { return }
+        blurApplied = WindowBlur.apply(Self.blurRadius, to: window)
     }
 
     func windowDidMiniaturize(_ notification: Notification) { delegate.windowVisible = false }

@@ -50,9 +50,6 @@ enum IconTile {
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
             appearance.performAsCurrentDrawingAppearance {
-                if RemixIcon.isRemix(symbol) {
-                    return RemixIcon.draw(symbol, in: NSRect(x: 0, y: 0, width: size, height: size), color: tint)
-                }
                 let config = NSImage.SymbolConfiguration(pointSize: size * 0.82, weight: .regular)
                     .applying(.init(paletteColors: [tint]))
                 if let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
@@ -87,10 +84,6 @@ enum IconTile {
                 let rect = NSRect(x: 0, y: 0, width: size, height: size)
                 (solid ? tint : tint.withAlphaComponent(dark ? 0.24 : 0.14)).setFill()
                 NSBezierPath(roundedRect: rect, xRadius: size * 0.28, yRadius: size * 0.28).fill()
-                if RemixIcon.isRemix(symbol) {
-                    let side = size * 0.64
-                    return RemixIcon.draw(symbol, in: rect.insetBy(dx: (size - side) / 2, dy: (size - side) / 2), color: solid ? .white : tint)
-                }
                 let config = NSImage.SymbolConfiguration(pointSize: size * 0.52, weight: .semibold)
                     .applying(.init(paletteColors: [solid ? .white : tint]))
                 if let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
@@ -205,7 +198,11 @@ final class Sidebar: NSView {
     }
 
     override init(frame: NSRect) {
-        if Self.usesGlass {
+        if Self.usesGlass, WindowBlur.available {
+            // The window server blurs the desktop under the clear window (MainWindowController
+            // sets the radius); this only lays the frosted wash over it.
+            surface = SidebarWash()
+        } else if Self.usesGlass {
             // Of the behind-window materials, this one keeps the most of the desktop's colour.
             let blur = NSVisualEffectView()
             blur.material = .fullScreenUI
@@ -380,7 +377,7 @@ final class Sidebar: NSView {
         inSettings = open
         settingsRow.showsLive = !open
         placeRules()
-        settingsRow.symbol = open ? "ri:arrow-left-s-line" : PageID.settings.symbol
+        settingsRow.symbol = open ? "chevron.left" : PageID.settings.symbol
         settingsRow.setAccessibilityLabel(open ? "Back" : "Settings")
         let targets = frames()
         guard window != nil, !Theme.reduceMotion else {
@@ -547,7 +544,7 @@ final class SectionHeader: DrawnView {
                                  withAttributes: [.font: Theme.sans(11, .semibold), .foregroundColor: Theme.sidebarHeader, .kern: 0.11])
         // The chevron points down while open; it is quiet until the pointer is over the header.
         let side: CGFloat = 12
-        let chevron = IconTile.glyph(collapsed ? "ri:arrow-left-s-line" : "ri:arrow-down-s-line",
+        let chevron = IconTile.glyph(collapsed ? "chevron.right" : "chevron.down",
                                      tint: hovering ? Theme.inkSecondary : Theme.sidebarHeader, size: side, appearance: effectiveAppearance)
         chevron.draw(in: NSRect(x: bounds.width - 10 - side, y: (bounds.height - side) / 2, width: side, height: side),
                      from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
@@ -566,6 +563,44 @@ final class SectionHeader: DrawnView {
         if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
     }
     override func accessibilityPerformPress() -> Bool { onClick?(); return true }
+}
+
+/// The wash over the blurred desktop: white in light mode, a grey in dark, a little
+/// stronger at the top, as in the mockup's glass.
+final class SidebarWash: NSView {
+    private let gradient = CAGradientLayer()
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.addSublayer(gradient)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func layout() {
+        super.layout()
+        paint()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        paint()
+    }
+
+    private func paint() {
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        gradient.frame = bounds
+        gradient.colors = dark
+            ? [Theme.hex(0x3A3C44, alpha: 0.55).cgColor, Theme.hex(0x26282E, alpha: 0.5).cgColor]
+            : [Theme.hex(0xFCFCFE, alpha: 0.62).cgColor, Theme.hex(0xF0F1F5, alpha: 0.52).cgColor]
+        CATransaction.commit()
+    }
 }
 
 /// The sidebar's frosted surface: a pale ground with the page's blue, indigo and orange
