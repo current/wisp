@@ -414,7 +414,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidResize(_ notification: Notification) { placeWindowButtons() }
-    func windowDidBecomeKey(_ notification: Notification) { placeWindowButtons(); applyBlur() }
+    func windowDidBecomeKey(_ notification: Notification) { placeWindowButtons() }
     func windowDidResignKey(_ notification: Notification) { placeWindowButtons() }
     func windowDidExitFullScreen(_ notification: Notification) { placeWindowButtons() }
 
@@ -651,16 +651,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidChangeOcclusionState(_ notification: Notification) {
         delegate.windowVisible = isVisible
-        applyBlur()
-    }
-
-    /// The window server keeps the radius for the window; set it once the window has a number.
-    private var blurApplied = false
-    static let blurRadius = 60
-
-    private func applyBlur() {
-        guard !blurApplied, Sidebar.usesGlass, let window else { return }
-        blurApplied = WindowBlur.apply(Self.blurRadius, to: window)
     }
 
     func windowDidMiniaturize(_ notification: Notification) { delegate.windowVisible = false }

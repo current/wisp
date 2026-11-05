@@ -198,11 +198,7 @@ final class Sidebar: NSView {
     }
 
     override init(frame: NSRect) {
-        if Self.usesGlass, WindowBlur.available {
-            // The window server blurs the desktop under the clear window (MainWindowController
-            // sets the radius); this only lays the frosted wash over it.
-            surface = SidebarWash()
-        } else if Self.usesGlass {
+        if Self.usesGlass {
             // Of the behind-window materials, this one keeps the most of the desktop's colour.
             let blur = NSVisualEffectView()
             blur.material = .fullScreenUI
@@ -563,44 +559,6 @@ final class SectionHeader: DrawnView {
         if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
     }
     override func accessibilityPerformPress() -> Bool { onClick?(); return true }
-}
-
-/// The wash over the blurred desktop: white in light mode, a grey in dark, a little
-/// stronger at the top, as in the mockup's glass.
-final class SidebarWash: NSView {
-    private let gradient = CAGradientLayer()
-
-    init() {
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.addSublayer(gradient)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override var isFlipped: Bool { true }
-    override var mouseDownCanMoveWindow: Bool { true }
-
-    override func layout() {
-        super.layout()
-        paint()
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        paint()
-    }
-
-    private func paint() {
-        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        gradient.frame = bounds
-        gradient.colors = dark
-            ? [Theme.hex(0x3A3C44, alpha: 0.55).cgColor, Theme.hex(0x26282E, alpha: 0.5).cgColor]
-            : [Theme.hex(0xFCFCFE, alpha: 0.62).cgColor, Theme.hex(0xF0F1F5, alpha: 0.52).cgColor]
-        CATransaction.commit()
-    }
 }
 
 /// The sidebar's frosted surface: a pale ground with the page's blue, indigo and orange
