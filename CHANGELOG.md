@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+Added:
+
+- Clean Up page with Junk, Developer, Large Files, Leftovers, Uninstall and
+  History tabs. Items go to the Trash after a review. Simulators, local
+  snapshots and Homebrew casks are removed by their own tools, listed apart.
+  Folders in use, dirty git repositories and open apps are skipped.
+- `wisp clean` and `wisp uninstall APP`, which list by default and remove with
+  `--apply`. MCP tools `list_cleanable` and `uninstall_plan`, which only list.
+- Uninstall button in the app drawer.
+- Scheduled clean and a deleted-app watcher in Settings, both off by default.
+
+Changed:
+
+- The Storage page only reads the disk and links to Clean Up.
+
 ## 0.2.0, 4 November 2026
 
 Added:

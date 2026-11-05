@@ -43,13 +43,39 @@ containers, and its last hour.
 
 The Storage page splits the disk into apps, developer folders, documents and
 System Data. Developer folders include node_modules, DerivedData, Rust target
-folders, simulators and VM disks. You can move items from the list to the Trash
-after a confirmation. Wisp does not delete files itself.
+folders, simulators and VM disks. The page only reads the disk; its Clean Up
+button opens the page below.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/storage-dark.png">
   <img src="docs/images/storage-light.png" alt="The Storage page: 164 GB free of 995 GB, and the Developer list with Colima at 76 GB and Rust target folders in 6 projects at 50 GB.">
 </picture>
+
+## Clean Up
+
+The Clean Up page lists what can go, in tabs:
+
+- Junk: app caches, logs, old macOS installers and .dmg or .pkg files in
+  Downloads, Desktop and Documents.
+- Developer: Xcode device support, simulators, npm, pnpm, Cargo and uv caches,
+  build folders in projects untouched for 30 days, and orphaned git worktrees.
+- Large Files: files over 10 MB by kind, exact duplicates, VM disks and AI
+  models from Ollama, Hugging Face, LM Studio and apps that download their own.
+- Leftovers: files in `~/Library` from apps you deleted.
+- Uninstall: an app with its caches, containers, preferences and launch agents.
+  Apps installed with Homebrew can be removed with `brew uninstall --cask`.
+- History: what each clean removed.
+
+Each item is labelled Safe to clean or Check first. Loose matches, installers
+and large files arrive unticked. Items go to the Trash after a review.
+Simulators, Time Machine local snapshots and Homebrew casks can't go to the
+Trash. `xcrun simctl`, `tmutil` and `brew` delete them permanently, and the
+review lists them apart with a warning. Wisp skips folders a running program is
+working in, git repositories with uncommitted changes and apps that are open. It
+never uses sudo or empties the Trash.
+
+Scans run only while the page is open. A scheduled clean and a watcher for
+deleted apps are in Settings, both off by default.
 
 ## Other pages
 
@@ -135,6 +161,8 @@ wisp apps --sort memory
 wisp app Safari          # one app, its processes and the last hour
 wisp why                 # what is slowing the Mac down right now
 wisp storage             # disk space by kind and what can go
+wisp clean               # what Clean Up would remove; --apply trashes the safe items
+wisp uninstall Slack     # an app and its files in ~/Library; --apply to remove
 wisp ports               # dev servers by project
 wisp agents
 wisp docker
@@ -152,7 +180,8 @@ claude mcp add wisp -- /usr/local/bin/wisp mcp
 ```
 
 It can also ask to quit an app. Wisp shows you the app and the reason, and quits
-it only if you click Quit.
+it only if you click Quit. It can list what Clean Up and an uninstall would
+remove, but it can't remove anything.
 
 ### Plan limits
 

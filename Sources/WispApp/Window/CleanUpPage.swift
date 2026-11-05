@@ -246,6 +246,13 @@ final class CleanUpPage: CardPage {
         if visible { scan(CleanRegistry.safeTabs) }
     }
 
+    func show(_ shown: CleanTab) {
+        tabs.select(CleanTab.allCases.firstIndex(of: shown) ?? 0, animated: false)
+        tab = shown
+        fill()
+        if visible, found[shown]?.complete != true { scan([shown]) }
+    }
+
     /// A deleted app's notification was clicked: Leftovers, only that app's.
     func showLeftovers(of bundleID: String, name: String) {
         leftoversOf = (bundleID, name)

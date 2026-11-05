@@ -20,7 +20,6 @@ final class StoragePage: DiskPage {
     private var onDemand: [String: FolderNode] = [:]
     private var measuring: Set<String> = []
     private var visible = false
-    private var notice: String?
     /// The list under the bar shows this many rows until asked for the rest.
     private static let shortList = 12
     private var expanded = false
@@ -192,7 +191,6 @@ final class StoragePage: DiskPage {
         } else if let date = state.scannedAt {
             text = "Measured " + Self.ago(date)
         }
-        if let notice { text = notice }
         barStatus.text = Theme.caption(text, size: 11)
         rescanButton.isHidden = state.scanning != nil || state.roots.isEmpty
     }
@@ -487,7 +485,7 @@ final class StoragePage: DiskPage {
             button.isHidden = index >= rows.count
             guard index < rows.count else { continue }
             let isTrash = rows[index].id == "trash"
-            button.title = isTrash ? "Open Trash" : "Review…"
+            button.title = isTrash ? "Open Trash" : "Clean Up…"
             button.tag = isTrash ? -1 : index
             button.invalidateIntrinsicContentSize()
         }
@@ -498,47 +496,7 @@ final class StoragePage: DiskPage {
             NSWorkspace.shared.open(URL(fileURLWithPath: home + "/.Trash", isDirectory: true))
             return
         }
-        guard reclaimItems.indices.contains(sender.tag), let window = view.window else { return }
-        let item = reclaimItems[sender.tag]
-        let entries = item.entries.filter { Self.safeToTrash($0.path, home: home) }
-        guard !entries.isEmpty else { return }
-        let total = entries.reduce(UInt64(0)) { $0 + $1.size }
-        let alert = NSAlert()
-        alert.messageText = entries.count == 1 ? "Move \(entries[0].name) to the Trash?" : "Move \(entries.count) folders to the Trash?"
-        alert.informativeText = "\(Format.bytes(total)). \(item.consequence). You can put them back from the Trash until you empty it."
-        let lines = entries.map { "\(Format.bytes($0.size))   \($0.path.replacingOccurrences(of: home, with: "~"))" }
-        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 440, height: 10))
-        text.string = lines.joined(separator: "\n")
-        text.font = Theme.sans(11.5)
-        text.textColor = Theme.inkSecondary
-        text.isEditable = false
-        text.drawsBackground = false
-        text.textContainerInset = NSSize(width: 0, height: 4)
-        let accessory = NSScrollView(frame: NSRect(x: 0, y: 0, width: 440, height: min(220, CGFloat(lines.count) * 17 + 12)))
-        accessory.documentView = text
-        accessory.hasVerticalScroller = lines.count > 12
-        accessory.drawsBackground = false
-        text.frame.size.width = 440
-        text.sizeToFit()
-        alert.accessoryView = accessory
-        alert.addButton(withTitle: "Move to Trash")
-        alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            let urls = entries.map { URL(fileURLWithPath: $0.path) }
-            NSWorkspace.shared.recycle(urls) { trashed, error in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    let moved = entries.filter { entry in trashed.keys.contains { $0.path == entry.path } }.reduce(UInt64(0)) { $0 + $1.size }
-                    self.notice = error == nil ? "Moved \(Format.bytes(moved)) to the Trash" : "Some folders could not be moved"
-                    self.updateStatus()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
-                        self?.notice = nil
-                        self?.updateStatus()
-                    }
-                }
-            }
-        }
+        delegate.openCleanUp { $0.show(.developer) }
     }
 
     static func safeToTrash(_ path: String, home: String) -> Bool { StorageAccess.safeToTrash(path, home: home) }
