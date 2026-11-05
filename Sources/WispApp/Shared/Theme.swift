@@ -68,12 +68,12 @@ enum Theme {
     static let panelRadius: CGFloat = 18
 
     static func sans(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
-        Fonts.inter(size, weight)
+        .systemFont(ofSize: size, weight: weight)
     }
 
     /// Text with tabular digits, so changing figures keep their width.
     static func digits(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
-        Fonts.inter(size, weight, tabular: true)
+        .monospacedDigitSystemFont(ofSize: size, weight: weight)
     }
 
     /// Figures: SF Pro semibold with tabular digits.
