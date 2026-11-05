@@ -31,7 +31,7 @@ public struct AppCacheScanner: CleanScanner {
     /// Containers need Full Disk Access; without it macOS asks the owner about every app.
     public var readsContainers: @Sendable () -> Bool
 
-    public init(minimumBytes: Int64 = 1 << 20, appName: @escaping @Sendable (String) -> String? = AppNames.name(bundleID:),
+    public init(minimumBytes: Int64 = 1 << 20, appName: @escaping @Sendable (String) -> String? = { AppNames.name(bundleID: $0) },
                 readsContainers: @escaping @Sendable () -> Bool = { StorageAccess.hasFullDiskAccess }) {
         self.minimumBytes = minimumBytes
         self.appName = appName

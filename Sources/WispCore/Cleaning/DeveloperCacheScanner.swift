@@ -91,7 +91,7 @@ public struct DeveloperCacheScanner: CleanScanner {
     /// Where Go keeps module sources, which `go env GOMODCACHE` can move.
     public var goModuleCache: @Sendable (String) -> String?
 
-    public init(minimumBytes: Int64 = 1 << 20, goModuleCache: @escaping @Sendable (String) -> String? = DeveloperCacheScanner.goModuleCache(home:)) {
+    public init(minimumBytes: Int64 = 1 << 20, goModuleCache: @escaping @Sendable (String) -> String? = { DeveloperCacheScanner.goModuleCache(home: $0) }) {
         self.minimumBytes = minimumBytes
         self.goModuleCache = goModuleCache
     }

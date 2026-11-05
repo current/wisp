@@ -68,7 +68,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         replan()
         monitor.start()
         IPCServer.shared.assistantsAllowed = settings.allowMCP
-        IPCServer.shared.start(monitor: monitor)
+        // Off-screen test copies would unlink and rebind the socket of the Wisp the owner is running.
+        if !MainWindowController.background { IPCServer.shared.start(monitor: monitor) }
 
         // Finished hours go to disk as they close; this catches the hour in progress
         // every 15 minutes so a crash loses little.

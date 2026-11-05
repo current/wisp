@@ -9,7 +9,7 @@ public struct SimulatorScanner: CleanScanner {
     /// Runs simctl with these arguments and returns what it printed; nil when Xcode is not installed.
     public var simctl: @Sendable ([String]) -> String?
 
-    public init(simctl: @escaping @Sendable ([String]) -> String? = SimulatorScanner.runSimctl) {
+    public init(simctl: @escaping @Sendable ([String]) -> String? = { SimulatorScanner.runSimctl($0) }) {
         self.simctl = simctl
     }
 
