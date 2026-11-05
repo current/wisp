@@ -42,6 +42,10 @@ final class MCPServer {
         Tool(name: "storage_summary",
              description: "Startup disk space by kind (apps, developer, documents, mail, system data, purgeable, free), what System Data holds, developer caches and build folders with sizes, what could go to the Trash, local snapshots and SSD health. Folder sizes come from the last scan the Wisp app saved.",
              properties: [:], required: []) { _ in LocalRequest(command: "storage") },
+        Tool(name: "uninstall_plan",
+             description: "What uninstalling an app would remove, without removing anything: the app bundle and its files in ~/Library (Application Support, Caches, Preferences, Containers, Group Containers, launch agents...) with paths and sizes. Ticked items match the app's bundle id or app groups exactly; unticked ones are looser matches to confirm.",
+             properties: ["name": ["type": "string", "description": "App name or bundle id, e.g. \"Slack\" or \"com.tinyspeck.slackmacgap\""]],
+             required: ["name"]) { LocalRequest(command: "uninstall", argument: $0["name"] as? String) },
         Tool(name: "why_slow",
              description: "Why this Mac is slow right now: Wisp looks hard for about three seconds, then returns findings ranked by how much each one slows the Mac (CPU, memory pressure and swapping, thermal throttling, disk space and activity, Spotlight, Time Machine, Photos analysis, WindowServer, GPU, coding agents and containers). Each finding is one sentence with the number and the app responsible. An empty list means nothing is wrong.",
              properties: [:], required: []) { _ in LocalRequest(command: "why") },
@@ -87,7 +91,8 @@ final class MCPServer {
                 if !Self.allowed {
                     text = "{\"error\": \"Assistant access is turned off in Wisp's settings.\"}"
                 } else {
-                    let data = request.command == "storage" ? Report.json(StorageReport.current()) : Local.ask(request) ?? (request.command == "quit"
+                    let data = request.command == "uninstall" ? UninstallCommand.planJSON(request.argument ?? "")
+                        : request.command == "storage" ? Report.json(StorageReport.current()) : Local.ask(request) ?? (request.command == "quit"
                         ? Report.json(Responder.Failure(error: "Wisp is not running, so it cannot ask the user."))
                         : Local.sampleAndAnswer(request))
                     text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)

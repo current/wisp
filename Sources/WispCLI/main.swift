@@ -16,6 +16,9 @@ usage: wisp <command> [options]
   alerts              recent alerts (needs the app running)
   storage             disk space by kind, what can go, drive health
   why                 why the Mac is slow right now (looks for about 3 seconds)
+  uninstall APP       what uninstalling an app removes: the app and its files in ~/Library
+      --apply                                 move the ticked items to the Trash
+      --list                                  installed apps and what uninstalling each frees
   mcp                 run as a read-only MCP server on stdin/stdout
 
   --json              print JSON instead of a table
@@ -66,6 +69,9 @@ if command == "version" || command == "--version" {
 if command == "storage" {
     StorageCommand.run(json: json)
     exit(0)
+}
+if command == "uninstall" {
+    exit(UninstallCommand.run(Array(args.dropFirst()), json: json))
 }
 
 let known = ["status", "apps", "app", "ports", "servers", "agents", "docker", "alerts", "why"]
