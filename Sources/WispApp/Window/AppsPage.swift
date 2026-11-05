@@ -454,7 +454,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
 /// hand: a table full of constraint-based cells re-solves them all on every reload.
 final class NameCell: NSTableCellView {
     private let icon = NSImageView()
-    private let name = Style.label()
+    private let name = Style.label("", font: Theme.sans(13))
     private let note = Style.label("", font: Style.smallFigure, color: .tertiaryLabelColor)
 
     init(identifier: NSUserInterfaceItemIdentifier) {
@@ -583,8 +583,11 @@ final class AppRowView: NSTableRowView {
     }
 
     private func updateStripeColor() {
-        effectiveAppearance.performAsCurrentDrawingAppearance { stripe.backgroundColor = Theme.stripe.cgColor }
+        effectiveAppearance.performAsCurrentDrawingAppearance { stripe.backgroundColor = Self.stripeColor.cgColor }
     }
+
+    /// The mockup's stripe: a faint wash over the card rather than a grey of its own.
+    private static let stripeColor = A2.dynamic(NSColor(white: 0, alpha: 0.028), NSColor(white: 1, alpha: 0.028))
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -609,15 +612,15 @@ final class AppHeaderView: NSTableHeaderView {
             let rect = headerRect(ofColumn: index).insetBy(dx: 6, dy: 0)
             let active = column.identifier.rawValue == sorted.0
             let title = column.title + (active ? (sorted.1 ? " ↑" : " ↓") : "")
-            let text = NSMutableAttributedString(attributedString: Theme.caption(title, color: active ? Theme.ink : Theme.inkTertiary, size: 9.5))
             let paragraph = NSMutableParagraphStyle()
             paragraph.alignment = index == 0 ? .left : .right
-            text.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: text.length))
+            let text = NSAttributedString(string: title, attributes: [
+                .font: Theme.digits(10.5, active ? .semibold : .regular), .foregroundColor: active ? A2.primary : A2.tertiary,
+                .paragraphStyle: paragraph,
+            ])
             let height = text.size().height
             text.draw(in: NSRect(x: rect.minX, y: (bounds.height - height) / 2, width: rect.width, height: height))
         }
-        Theme.rule.setFill()
-        NSRect(x: 8, y: bounds.height - 1, width: bounds.width - 16, height: 1).fill()
     }
 }
 
@@ -642,7 +645,7 @@ final class GroundView: NSView {
 /// A figure in tabular digits that draws itself. Setting new text only marks the
 /// cell for redraw; a text field would invalidate its size and re-lay out the window.
 final class FigureCell: NSTableCellView {
-    private static let font = Style.figure
+    private static let font = Theme.digits(12.5)
     private var text = ""
     private var faint = false
     var alignment: NSTextAlignment = .right { didSet { needsDisplay = true } }
