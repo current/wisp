@@ -62,18 +62,18 @@
     <div class="tour-pin">
       <div class="stage">
         <div class="win win-base">
-          <img src="assets/overview-1280.webp" srcset="assets/overview-1280.webp 1280w, assets/overview-2400.webp 2400w" sizes="(min-width: 1260px) 1180px, 92vw" width="1280" height="803" fetchpriority="high" alt="Wisp's Overview window: cards for CPU at 48 percent, memory at 31 of 36 GB, GPU, disk, network, power and temperature, a Developer card with coding agents, and a Worth a Look list">
+          <img src="assets/overview-1280.webp" srcset="assets/overview-1280.webp 1280w, assets/overview-2400.webp 2400w" sizes="(min-width: 1260px) 1180px, 92vw" width="1280" height="800" fetchpriority="high" alt="Wisp's Overview window: cards for CPU, memory, GPU, storage, network, power and temperature, a Developer card with coding agents, and a Worth a Look list">
         </div>
         <div class="win win-over win-drawer" aria-hidden="true">
-          <img src="assets/cpu-drawer-1280.webp" srcset="assets/cpu-drawer-1280.webp 1280w, assets/cpu-drawer-2400.webp 2400w" sizes="(min-width: 1260px) 1180px, 92vw" width="1280" height="803" loading="lazy" alt="">
+          <img src="assets/apps-drawer-1280.webp" srcset="assets/apps-drawer-1280.webp 1280w, assets/apps-drawer-2400.webp 2400w" sizes="(min-width: 1260px) 1180px, 92vw" width="1280" height="800" loading="lazy" alt="">
         </div>
         <div class="menubar-layer" aria-hidden="true">
           <div class="menubar">
             <span class="mb-menus"><b>Finder</b><span>File</span><span>Edit</span><span>View</span><span>Go</span><span>Window</span></span>
-            <span class="mb-wisp"><img src="assets/menubar.svg" width="16" height="16" alt=""><span class="num">43%</span></span>
+            <span class="mb-wisp"><img src="assets/menubar.svg" width="16" height="16" alt=""><span class="num">21%</span></span>
             <span class="num">Tue 9:41</span>
           </div>
-          <img class="popover" src="assets/menubar-860.webp" width="430" height="888" loading="lazy" alt="">
+          <img class="popover" src="assets/menubar-860.webp" width="430" height="705" loading="lazy" alt="">
         </div>
       </div>
 
@@ -91,12 +91,12 @@
         <article class="cap" data-step="1">
           <h3>Apps</h3>
           <p>Processes are grouped under the app that owns them. Its drawer shows the browser tabs, GPU process and extensions inside, its GPU time and last hour, and Quit or Force Quit.</p>
-          <img class="cap-media" src="assets/cpu-drawer-1280.webp" srcset="assets/cpu-drawer-1280.webp 1280w, assets/cpu-drawer-2400.webp 2400w" sizes="92vw" width="1280" height="803" loading="lazy" alt="Wisp's CPU page with the drawer for Google Chrome open: 16 GB of memory, 229.6 percent CPU, and a breakdown showing tabs use 91 percent of its memory">
+          <img class="cap-media" src="assets/apps-drawer-1280.webp" srcset="assets/apps-drawer-1280.webp 1280w, assets/apps-drawer-2400.webp 2400w" sizes="92vw" width="1280" height="800" loading="lazy" alt="Wisp's Apps page with the drawer for the Aside browser open: 9.2 GB of memory across 58 processes, with windows using 55 percent of it">
         </article>
         <article class="cap" data-step="2">
           <h3>Menu bar</h3>
           <p>Show CPU, memory, network, disk, GPU, temperature, power or battery as text or a small graph. Click it for a dashboard with every core and the busiest apps.</p>
-          <img class="cap-media pop" src="assets/menubar-860.webp" width="430" height="888" loading="lazy" alt="Wisp's menu bar dashboard: CPU at 43 percent, meters for memory, GPU, power, network, disk and battery, a heat map of 14 cores and the five busiest apps">
+          <img class="cap-media pop" src="assets/menubar-860.webp" width="430" height="705" loading="lazy" alt="Wisp's menu bar dashboard: CPU at 21 percent, meters for memory, GPU, power, network, disk and battery, and the five busiest apps">
         </article>
       </div>
     </div>
@@ -154,6 +154,11 @@
           <li><span>Network</span><span class="v">20 KB/s</span></li>
         </ul>
         <p class="more">Plus Sound, Bluetooth and Sensors.</p>
+      </article>
+      <article class="card feat wide full" style="--c: var(--blue-text); --tint: rgba(0, 136, 255, .08)">
+        <h3 class="card-title t-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l9.5-9.5M14.5 4.5l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1zM19 13l.6 1.4 1.4.6-1.4.6L19 17l-.6-1.4-1.4-.6 1.4-.6z"/></svg>Clean Up</h3>
+        <p>Caches, build folders, simulators, large files and what deleted apps left behind, sent to the Trash after you review them. Uninstall an app with its files in ~/Library.</p>
+        <div class="shot"><img src="assets/cleanup-crop-720.webp" srcset="assets/cleanup-crop-720.webp 720w, assets/cleanup-crop-1440.webp 1440w" sizes="(min-width: 1260px) 1140px, 92vw" width="720" height="277" loading="lazy" alt="Wisp's Clean Up page on the Developer tab: Xcode device support at 7.0 GB and npm, Cargo, pnpm and uv caches below it, each marked Safe to clean"></div>
       </article>
       <article class="card feat" style="--c: var(--orange-text); --tint: rgba(255, 141, 40, .10)">
         <h3 class="card-title t-orange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projects and containers</h3>
