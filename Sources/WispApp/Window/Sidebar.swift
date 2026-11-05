@@ -563,6 +563,8 @@ final class SidebarSurface: NSView {
     init() {
         super.init(frame: .zero)
         wantsLayer = true
+        // The glows are wider than the sidebar; without the clip they spill over the page.
+        layer?.masksToBounds = true
         layer?.addSublayer(base)
         for glow in glows {
             glow.type = .radial

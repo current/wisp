@@ -147,7 +147,8 @@ enum A2 {
     /// Fills `path` with `color` fading from `alpha` at `from` to clear at `to` (y values).
     static func fade(_ path: CGPath, color: NSColor, alpha: CGFloat, from: CGFloat, to: CGFloat, in context: CGContext) {
         let resolved = color.usingColorSpace(.sRGB) ?? color
-        let colors = [resolved.withAlphaComponent(alpha).cgColor, resolved.withAlphaComponent(0).cgColor] as CFArray
+        // Ends at a fifth of the alpha rather than clear, so the floor of the fill stays visible.
+        let colors = [resolved.withAlphaComponent(alpha).cgColor, resolved.withAlphaComponent(alpha * 0.2).cgColor] as CFArray
         guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: [0, 1]) else { return }
         context.saveGState()
         context.addPath(path)
@@ -293,11 +294,13 @@ final class A2Spark: BitmapView {
         for run in runs {
             let area = CGMutablePath()
             area.move(to: CGPoint(x: run[0].x, y: base))
-            area.addLines(between: run)
+            // addLines(between:) would start a new subpath; the fill must run on from the floor.
+            run.forEach { area.addLine(to: $0) }
             area.addLine(to: CGPoint(x: run[run.count - 1].x, y: base))
             area.closeSubpath()
-            let peak = mirrored ? run.map(\.y).max() ?? base : run.map(\.y).min() ?? base
-            A2.fade(area, color: color, alpha: alpha, from: peak, to: base, in: context)
+            // One gradient over the chart's full height, so the fill under a low stretch of the
+            // line is as visible as under a peak, and never changes with the data.
+            A2.fade(area, color: color, alpha: alpha, from: mirrored ? bounds.height : 0, to: base, in: context)
         }
         context.setStrokeColor((color.usingColorSpace(.sRGB) ?? color).cgColor)
         context.setLineWidth(lineWidth)
@@ -346,10 +349,10 @@ final class A2ActivityChart: BitmapView {
             for run in runs {
                 let area = CGMutablePath()
                 area.move(to: CGPoint(x: run[0].x, y: bounds.height))
-                area.addLines(between: run)
+                run.forEach { area.addLine(to: $0) }
                 area.addLine(to: CGPoint(x: run[run.count - 1].x, y: bounds.height))
                 area.closeSubpath()
-                A2.fade(area, color: color, alpha: alpha, from: run.map(\.y).min() ?? low, to: bounds.height, in: context)
+                A2.fade(area, color: color, alpha: alpha, from: high, to: bounds.height, in: context)
             }
             context.setStrokeColor((color.usingColorSpace(.sRGB) ?? color).cgColor)
             context.setLineWidth(1.8)
