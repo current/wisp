@@ -112,7 +112,10 @@ final class SettingsPage: NSViewController, Page {
     }
 
     func update(system: SystemSnapshot) {
-        if section == .menuBar { builder.update(system: system) }
+        if section == .menuBar {
+            builder.update(system: system)
+            menuPreview.needsDisplay = true
+        }
     }
 
     func update(table: ProcessTable) {
@@ -183,22 +186,28 @@ final class SettingsPage: NSViewController, Page {
                 ]),
             ]
         case .menuBar:
-            var rows: [SettingsRow] = s.menuItems.enumerated().map { index, item in
+            var rows: [SettingsRow] = [.custom(menuPreview, MenuBarPreview.height)]
+            for (index, item) in s.menuItems.enumerated() {
                 let style = SettingsControls.popup(MenuStyle.allCases.map(\.title), MenuStyle.allCases.firstIndex(of: item.style) ?? 0) { [unowned self] i in
-                    delegate.change { $0.menuItems[index].style = MenuStyle.allCases[i] }
+                    changeItem(index) { $0.style = MenuStyle.allCases[i] }
                 }
-                let enable = SettingsControls.toggle(item.enabled) { [unowned self] on in delegate.change { $0.menuItems[index].enabled = on } }
-                return .pair(item.metric.title, item.metric.symbol, style, enable)
+                let open = editing == item.metric
+                let edit = SettingsControls.pill(open ? "Done" : "Edit") { [unowned self] in
+                    editing = open ? nil : item.metric
+                    rebuild()
+                }
+                let enable = SettingsControls.toggle(item.enabled) { [unowned self] on in changeItem(index) { $0.enabled = on } }
+                rows.append(.pair(item.metric.title, item.metric.symbol, SettingsControls.row([style, edit]), enable))
+                if open { rows += itemEditor(index, item) }
             }
-            rows.append(.control("Show icons next to numbers", "A reading turns red when the Mac is under strain.",
-                                 SettingsControls.toggle(s.showIcons) { [unowned self] on in delegate.change { $0.showIcons = on } }))
             builder.needsLayout = true
             return [
                 SettingsGroup("Dashboard", [
                     .custom(builder, builder.preferredHeight),
                     .control("Reset the dashboard", "Back to the CPU, meters, cores and apps.", SettingsControls.pill("Reset to Default") { [unowned self] in builder.reset() }),
                 ], footer: "The dashboard opens from the menu bar. It reads only what its blocks show, and nothing while it is closed."),
-                SettingsGroup("Shown in the menu bar", rows),
+                SettingsGroup("Shown in the menu bar", rows,
+                              footer: "Edit gives an item its own label, size, weight and colour. A reading turns red when the Mac is under strain, unless its colour is Menu bar only."),
             ]
         case .display:
             let looks = Look.allCases
@@ -302,6 +311,59 @@ final class SettingsPage: NSViewController, Page {
     }
 
 
+    // MARK: Menu bar items
+
+    private lazy var menuPreview = MenuBarPreview(delegate: delegate)
+    /// The menu bar item whose look is open for editing.
+    // WISP_MENU_EDIT=<metric> opens that item's look, for screenshots.
+    private var editing = ProcessInfo.processInfo.environment["WISP_MENU_EDIT"].flatMap(MenuMetric.init(rawValue:))
+
+    private func changeItem(_ index: Int, rebuilds: Bool = false, _ body: @escaping (inout MenuItemSetting) -> Void) {
+        delegate.change { body(&$0.menuItems[index]) }
+        menuPreview.needsDisplay = true
+        if rebuilds { rebuild() }
+    }
+
+    private func itemEditor(_ index: Int, _ item: MenuItemSetting) -> [SettingsRow] {
+        func popup<T: CaseIterable & Equatable>(_ current: T, _ title: @escaping (T) -> String, rebuilds: Bool = false,
+                                                _ apply: @escaping (inout MenuItemSetting, T) -> Void) -> NSView {
+            let all = Array(T.allCases)
+            return SettingsControls.popup(all.map(title), all.firstIndex(of: current) ?? 0) { [unowned self] i in
+                changeItem(index, rebuilds: rebuilds) { apply(&$0, all[i]) }
+            }
+        }
+        var rows: [SettingsRow] = [
+            .nested("Label", nil, popup(item.label, \.title, rebuilds: true) { $0.label = $1 }),
+        ]
+        if item.label == .above || item.label == .before {
+            let field = SettingsControls.field(item.caption, placeholder: item.metric.caption, limit: 6) { [unowned self] text in
+                changeItem(index) { $0.caption = text }
+            }
+            rows.append(.nested("Label text", "Up to six characters. Empty shows \(item.metric.caption).", field))
+        }
+        rows += [
+            .nested("Text size", nil, popup(item.size, \.title) { $0.size = $1 }),
+            .nested("Weight", nil, popup(item.weight, \.title) { $0.weight = $1 }),
+            .nested("Colour", nil, popup(item.color, \.title, rebuilds: true) { $0.color = $1 }),
+        ]
+        if item.color.isFixed {
+            rows.append(.nested("Colour applies to", nil, popup(item.colorPart, \.title) { $0.colorPart = $1 }))
+        }
+        rows += [
+            .nested("Keep a steady width", "Leaves room for the widest reading, so the items to its left stay put.",
+                    SettingsControls.toggle(item.steady) { [unowned self] on in changeItem(index) { $0.steady = on } }),
+            .nested("Use this look for every item", "Label style, size, weight, colour and width. Label text stays per item.",
+                    SettingsControls.pill("Apply to All") { [unowned self] in
+                        delegate.change { settings in
+                            let look = settings.menuItems[index]
+                            for other in settings.menuItems.indices { settings.menuItems[other].adoptLook(of: look) }
+                        }
+                        menuPreview.needsDisplay = true
+                    }),
+        ]
+        return rows
+    }
+
     private func addLimit() {
         guard let window = view.window else { return }
         let apps = delegate.table.apps.sorted { $0.memory > $1.memory }.prefix(40)
@@ -350,6 +412,8 @@ enum SettingsRow {
     case pair(String, String, NSView, NSView)
     /// Any view, at a fixed height.
     case custom(NSView, CGFloat)
+    /// A `.control` row that belongs to the row above it, its title in line with that row's.
+    case nested(String, String?, NSView?)
 }
 
 struct SettingsGroup {
@@ -451,29 +515,9 @@ final class RowView: NSView {
         let inset = Self.inset
         switch row {
         case .control(let title, let detail, let control):
-            var controlWidth: CGFloat = 0
-            if let control {
-                let size = control.frame.size.width > 0 ? control.frame.size : control.fittingSize
-                controlWidth = size.width
-                addSubview(control)
-                control.frame.size = size
-            }
-            let textWidth = width - inset * 2 - (controlWidth > 0 ? controlWidth + Self.gap : 0)
-            var fields: [NSTextField] = []
-            if !title.isEmpty { fields.append(Self.label(title, font: Self.titleFont, color: A2.primary, width: textWidth)) }
-            if let detail, !detail.isEmpty { fields.append(Self.label(detail, font: Self.detailFont, color: A2.secondary, width: textWidth)) }
-            let textHeight = fields.map(\.frame.height).reduce(0, +) + (fields.count > 1 ? 3 : 0)
-            let height = max(Self.minHeight, textHeight + 22)
-            frame.size.height = height
-            var y = ((height - textHeight) / 2).rounded()
-            for field in fields {
-                field.frame.origin = NSPoint(x: inset, y: y)
-                addSubview(field)
-                y += field.frame.height + 3
-            }
-            if let control {
-                control.frame.origin = NSPoint(x: width - inset - control.frame.width, y: ((height - control.frame.height) / 2).rounded())
-            }
+            layoutControl(title, detail, control, width: width, textInset: inset)
+        case .nested(let title, let detail, let control):
+            layoutControl(title, detail, control, width: width, textInset: inset + 24 + 12)
         case .pair(let title, let symbol, let first, let second):
             let height = Self.minHeight
             let icon = SymbolTile(symbol)
@@ -495,6 +539,33 @@ final class RowView: NSView {
             frame.size.height = height
             view.frame = NSRect(x: 0, y: 0, width: width, height: height)
             addSubview(view)
+        }
+    }
+
+    private func layoutControl(_ title: String, _ detail: String?, _ control: NSView?, width: CGFloat, textInset: CGFloat) {
+        let inset = Self.inset
+        var controlWidth: CGFloat = 0
+        if let control {
+            let size = control.frame.size.width > 0 ? control.frame.size : control.fittingSize
+            controlWidth = size.width
+            addSubview(control)
+            control.frame.size = size
+        }
+        let textWidth = width - textInset - inset - (controlWidth > 0 ? controlWidth + Self.gap : 0)
+        var fields: [NSTextField] = []
+        if !title.isEmpty { fields.append(Self.label(title, font: Self.titleFont, color: A2.primary, width: textWidth)) }
+        if let detail, !detail.isEmpty { fields.append(Self.label(detail, font: Self.detailFont, color: A2.secondary, width: textWidth)) }
+        let textHeight = fields.map(\.frame.height).reduce(0, +) + (fields.count > 1 ? 3 : 0)
+        let height = max(Self.minHeight, textHeight + 22)
+        frame.size.height = height
+        var y = ((height - textHeight) / 2).rounded()
+        for field in fields {
+            field.frame.origin = NSPoint(x: textInset, y: y)
+            addSubview(field)
+            y += field.frame.height + 3
+        }
+        if let control {
+            control.frame.origin = NSPoint(x: width - inset - control.frame.width, y: ((height - control.frame.height) / 2).rounded())
         }
     }
 

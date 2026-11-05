@@ -18,6 +18,29 @@ enum SettingsControls {
         return button
     }
 
+    /// Controls side by side, 8 pt apart, centred on one line.
+    static func row(_ views: [NSView]) -> NSView {
+        let container = NSView()
+        let height = views.map(\.frame.height).max() ?? 0
+        var x: CGFloat = 0
+        for view in views {
+            view.frame.origin = NSPoint(x: x, y: ((height - view.frame.height) / 2).rounded())
+            container.addSubview(view)
+            x += view.frame.width + 8
+        }
+        container.frame.size = NSSize(width: max(0, x - 8), height: height)
+        return container
+    }
+
+    /// A short text field that reports every edit, cut to `limit` characters.
+    static func field(_ text: String, placeholder: String, limit: Int, _ body: @escaping (String) -> Void) -> NSView {
+        let field = SettingsField(limit: limit, body)
+        field.stringValue = text
+        field.placeholderString = placeholder
+        field.frame.size = NSSize(width: 96, height: 24)
+        return field
+    }
+
     static func pill(_ title: String, _ body: @escaping () -> Void) -> NSView {
         let pill = A2PillButton()
         pill.title = title
@@ -223,4 +246,27 @@ final class SettingsSwitch: NSView {
     override func accessibilityRoleDescription() -> String? { "switch" }
     override func accessibilityValue() -> Any? { NSNumber(value: isOn) }
     override func accessibilityPerformPress() -> Bool { flip(); return true }
+}
+
+final class SettingsField: NSTextField, NSTextFieldDelegate {
+    private let limit: Int
+    private let body: (String) -> Void
+
+    init(limit: Int, _ body: @escaping (String) -> Void) {
+        self.limit = limit
+        self.body = body
+        super.init(frame: .zero)
+        font = Theme.sans(12.5, .medium)
+        bezelStyle = .roundedBezel
+        isBezeled = true
+        alignment = .center
+        delegate = self
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func controlTextDidChange(_ notification: Notification) {
+        if stringValue.count > limit { stringValue = String(stringValue.prefix(limit)) }
+        body(stringValue.trimmingCharacters(in: .whitespaces))
+    }
 }

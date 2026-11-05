@@ -176,7 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var copy = settings
         body(&copy)
         guard copy != settings else { return }
-        let menuChanged = copy.menuItems != settings.menuItems || copy.showIcons != settings.showIcons
+        let menuChanged = copy.menuItems != settings.menuItems
         let layoutChanged = copy.dashboard != settings.dashboard
         settings = copy
         settings.save()

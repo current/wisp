@@ -17,6 +17,20 @@ enum MenuMetric: String, Codable, CaseIterable {
         }
     }
 
+    /// The default caption when an item is labelled with text.
+    var caption: String {
+        switch self {
+        case .cpu: return "CPU"
+        case .memory: return "MEM"
+        case .network: return "NET"
+        case .gpu: return "GPU"
+        case .temperature: return "TEMP"
+        case .battery: return "BAT"
+        case .disk: return "DISK"
+        case .power: return "PWR"
+        }
+    }
+
     var symbol: String {
         switch self {
         case .cpu: return "cpu"
@@ -56,10 +70,107 @@ enum MenuStyle: String, Codable, CaseIterable {
     }
 }
 
+/// What sits in front of a reading: its symbol, a short caption over or before the
+/// figure (the caption over it is the compact two-line look), or nothing.
+enum MenuLabel: String, Codable, CaseIterable {
+    case icon, above, before, none
+
+    var title: String {
+        switch self {
+        case .icon: return "Icon"
+        case .above: return "Text above"
+        case .before: return "Text before"
+        case .none: return "None"
+        }
+    }
+}
+
+enum MenuTextSize: String, Codable, CaseIterable {
+    case small, regular, large
+
+    var title: String { rawValue.capitalized }
+}
+
+enum MenuWeight: String, Codable, CaseIterable {
+    case regular, medium, semibold, bold
+
+    var title: String { rawValue.capitalized }
+}
+
+/// The two plain choices follow the menu bar's own colour; the rest are fixed hues.
+/// Every choice but `.plain` turns red while the Mac is under strain.
+enum MenuColor: String, Codable, CaseIterable {
+    case standard, plain, blue, teal, green, yellow, orange, pink, purple
+
+    var title: String {
+        switch self {
+        case .standard: return "Menu bar, red under strain"
+        case .plain: return "Menu bar only"
+        default: return rawValue.capitalized
+        }
+    }
+
+    var isFixed: Bool { self != .standard && self != .plain }
+}
+
+/// Which part of an item a fixed colour paints.
+enum MenuColorPart: String, Codable, CaseIterable {
+    case all, label, value
+
+    var title: String {
+        switch self {
+        case .all: return "Everything"
+        case .label: return "Icon or text label"
+        case .value: return "Reading"
+        }
+    }
+}
+
 struct MenuItemSetting: Codable, Equatable {
     var metric: MenuMetric
     var enabled: Bool
     var style: MenuStyle
+    var label: MenuLabel = .icon
+    /// Shown when `label` is text; empty means the metric's short name.
+    var caption = ""
+    var size: MenuTextSize = .regular
+    var weight: MenuWeight = .regular
+    var color: MenuColor = .standard
+    var colorPart: MenuColorPart = .all
+    /// Reserve room for the widest reading, so the items to the left do not shift.
+    var steady = false
+
+    init(metric: MenuMetric, enabled: Bool, style: MenuStyle) {
+        self.metric = metric
+        self.enabled = enabled
+        self.style = style
+    }
+
+    var shownCaption: String { caption.isEmpty ? metric.caption : caption }
+
+    /// Copies everything about how an item looks, not what it shows.
+    mutating func adoptLook(of other: MenuItemSetting) {
+        label = other.label
+        size = other.size
+        weight = other.weight
+        color = other.color
+        colorPart = other.colorPart
+        steady = other.steady
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        metric = try c.decode(MenuMetric.self, forKey: .metric)
+        enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? false
+        style = (try? c.decode(MenuStyle.self, forKey: .style)) ?? .number
+        label = (try? c.decode(MenuLabel.self, forKey: .label)) ?? .icon
+        caption = (try? c.decode(String.self, forKey: .caption)) ?? ""
+        size = (try? c.decode(MenuTextSize.self, forKey: .size)) ?? .regular
+        weight = (try? c.decode(MenuWeight.self, forKey: .weight)) ?? .regular
+        color = (try? c.decode(MenuColor.self, forKey: .color)) ?? .standard
+        colorPart = (try? c.decode(MenuColorPart.self, forKey: .colorPart)) ?? .all
+        steady = (try? c.decode(Bool.self, forKey: .steady)) ?? false
+    }
 }
 
 enum Look: String, Codable, CaseIterable {
@@ -77,7 +188,6 @@ struct AppSettings: Codable, Equatable {
         MenuItemSetting(metric: .disk, enabled: false, style: .number),
         MenuItemSetting(metric: .power, enabled: false, style: .number),
     ]
-    var showIcons = true
     /// Seconds between readings while something is on screen.
     var interval: Double = 2
     /// Seconds between menu bar updates while no window or popover is open. Each
@@ -106,6 +216,9 @@ struct AppSettings: Codable, Equatable {
 
     static let key = "settings"
 
+    private enum LegacyKeys: String, CodingKey { case showIcons }
+    private struct LegacyLabel: Decodable { var label: MenuLabel? }
+
     init() {}
 
     init(from decoder: Decoder) throws {
@@ -113,7 +226,14 @@ struct AppSettings: Codable, Equatable {
         let fallback = AppSettings()
         let c = try decoder.container(keyedBy: CodingKeys.self)
         menuItems = (try? c.decode([MenuItemSetting].self, forKey: .menuItems)) ?? fallback.menuItems
-        showIcons = (try? c.decode(Bool.self, forKey: .showIcons)) ?? fallback.showIcons
+        // Before each item had its own label, one switch turned every icon off.
+        if let legacy = try? decoder.container(keyedBy: LegacyKeys.self),
+           (try? legacy.decode(Bool.self, forKey: .showIcons)) == false,
+           let labels = try? c.decode([LegacyLabel].self, forKey: .menuItems) {
+            for (index, item) in labels.enumerated() where item.label == nil && menuItems.indices.contains(index) {
+                menuItems[index].label = .none
+            }
+        }
         interval = (try? c.decode(Double.self, forKey: .interval)) ?? fallback.interval
         backgroundInterval = (try? c.decode(Double.self, forKey: .backgroundInterval)) ?? fallback.backgroundInterval
         menuInterval = (try? c.decode(Double.self, forKey: .menuInterval)) ?? fallback.menuInterval
@@ -134,11 +254,35 @@ struct AppSettings: Codable, Equatable {
     }
 
     static func load() -> AppSettings {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              var settings = try? JSONDecoder().decode(AppSettings.self, from: data) else { return AppSettings() }
+        var settings = UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(AppSettings.self, from: $0) } ?? AppSettings()
         // Metrics added in later versions show up disabled at the end.
         for metric in MenuMetric.allCases where !settings.menuItems.contains(where: { $0.metric == metric }) {
             settings.menuItems.append(MenuItemSetting(metric: metric, enabled: false, style: .number))
+        }
+        // WISP_MENU=cpu.above.large,memory.icon.blue,... shows given menu bar items, for screenshots.
+        if let list = ProcessInfo.processInfo.environment["WISP_MENU"] {
+            let wanted = list.split(separator: ",").map { $0.split(separator: ".").map(String.init) }
+            settings.menuItems = settings.menuItems.map { item in
+                var item = item
+                item.enabled = false
+                return item
+            }
+            for words in wanted.reversed() {
+                guard let metric = words.first.flatMap(MenuMetric.init(rawValue:)),
+                      let index = settings.menuItems.firstIndex(where: { $0.metric == metric }) else { continue }
+                var item = MenuItemSetting(metric: metric, enabled: true, style: .number)
+                for word in words.dropFirst() {
+                    if let style = MenuStyle(rawValue: word) { item.style = style }
+                    if let label = MenuLabel(rawValue: word) { item.label = label }
+                    if let size = MenuTextSize(rawValue: word) { item.size = size }
+                    if let weight = MenuWeight(rawValue: word) { item.weight = weight }
+                    if let color = MenuColor(rawValue: word) { item.color = color }
+                    if let part = MenuColorPart(rawValue: word) { item.colorPart = part }
+                    if word == "steady" { item.steady = true }
+                }
+                settings.menuItems.remove(at: index)
+                settings.menuItems.insert(item, at: 0)
+            }
         }
         // WISP_DASHBOARD=cpu,gpu,... shows a given layout, for screenshots.
         if let names = ProcessInfo.processInfo.environment["WISP_DASHBOARD"] {
