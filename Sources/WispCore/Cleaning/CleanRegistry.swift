@@ -4,7 +4,16 @@ import Foundation
 public enum CleanRegistry {
     public static var scanners: [any CleanScanner] {
         [
-            // One line per scanner, e.g. `JunkScanner(),`.
+            AppCacheScanner(),
+            SystemJunkScanner(),
+            InstallerScanner(),
+            LocalSnapshotScanner(),
+            DeveloperCacheScanner(),
+            SimulatorScanner(),
+            ProjectArtifactScanner(staleAfter: TimeInterval(CleanSettings.load().staleProjectDays) * 86_400),
+            WorktreeScanner(),
+            LeftoversScanner(),
+            LargeFilesScanner(),
         ]
     }
 
@@ -13,6 +22,7 @@ public enum CleanRegistry {
     /// `LargeFileIndex.shared.keepsACopy,` so a clean never removes every copy of a file.
     public static var selectionChecks: [(Set<String>) -> Bool] {
         [
+            LargeFileIndex.shared.keepsACopy,
         ]
     }
 

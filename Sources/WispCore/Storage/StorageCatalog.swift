@@ -110,6 +110,9 @@ enum StorageCatalog {
         /// A file next to (parent) or inside (self) the folder that shows it is what it looks like.
         let markers: [String]
         let markerInside: Bool
+        /// How Clean Up labels it. Environments and general build folders can hold
+        /// more than the next build makes again, so they are check first.
+        var cleanSafety: CleanSafety = .safe
     }
 
     static let artifacts: [Artifact] = [
@@ -118,16 +121,28 @@ enum StorageCatalog {
         .init(name: "target", row: "target", title: "Rust target folders", detail: "Build output. cargo build makes it again",
               markers: ["Cargo.toml"], markerInside: false),
         .init(name: ".venv", row: "venv", title: "Python environments", detail: "Packages for one project. uv sync or pip install rebuilds it",
-              markers: ["pyvenv.cfg"], markerInside: true),
+              markers: ["pyvenv.cfg"], markerInside: true, cleanSafety: .checkFirst),
         .init(name: "venv", row: "venv", title: "Python environments", detail: "Packages for one project. uv sync or pip install rebuilds it",
-              markers: ["pyvenv.cfg"], markerInside: true),
+              markers: ["pyvenv.cfg"], markerInside: true, cleanSafety: .checkFirst),
         .init(name: "build", row: "build", title: "Build folders", detail: "Build output. The next build makes it again",
-              markers: ["build.gradle", "build.gradle.kts", "CMakeLists.txt", "package.json", "setup.py", "pyproject.toml", "meson.build", "Makefile"],
-              markerInside: false),
+              markers: ["build.gradle", "build.gradle.kts", "CMakeLists.txt", "package.json", "setup.py", "pyproject.toml", "meson.build", "Makefile",
+                        "pubspec.yaml"],
+              markerInside: false, cleanSafety: .checkFirst),
         .init(name: ".build", row: "build", title: "Build folders", detail: "Build output. The next build makes it again",
               markers: ["Package.swift"], markerInside: false),
-        .init(name: "Pods", row: "build", title: "Build folders", detail: "Build output. The next build makes it again",
-              markers: ["Podfile"], markerInside: false),
+        .init(name: "Pods", row: "build", title: "Build folders", detail: "Pods CocoaPods installed. pod install brings them back",
+              markers: ["Podfile"], markerInside: false, cleanSafety: .checkFirst),
+        .init(name: ".next", row: "build", title: "Build folders", detail: "Next.js build output. The next build makes it again",
+              markers: ["package.json"], markerInside: false),
+        .init(name: ".turbo", row: "build", title: "Build folders", detail: "Turborepo's cache. The next build makes it again",
+              markers: ["package.json", "turbo.json"], markerInside: false),
+        .init(name: ".parcel-cache", row: "build", title: "Build folders", detail: "Parcel's cache. The next build makes it again",
+              markers: ["package.json"], markerInside: false),
+        .init(name: ".gradle", row: "build", title: "Build folders", detail: "Gradle's cache for one project. The next build makes it again",
+              markers: ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew"], markerInside: false),
+        // A "*" marker matches by extension; Storage only checks exact names, so it counts these as code.
+        .init(name: "DerivedData", row: "build", title: "Build folders", detail: "Xcode build products and indexes. Xcode makes them again",
+              markers: ["*.xcodeproj", "*.xcworkspace", "Package.swift"], markerInside: false),
     ]
 
     static let artifactNames = Set(artifacts.map(\.name))
