@@ -30,30 +30,6 @@ final class BarHistory: BitmapView {
     }
 }
 
-/// A caption over a figure.
-final class Stat: DrawnView {
-    private var caption = ""
-    private var value = ""
-
-    func set(_ pair: (String, String)) {
-        guard pair != (caption, value) else { return }
-        (caption, value) = pair
-        needsDisplay = true
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        Theme.caption(caption, size: 9.5).draw(at: .zero)
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingTail
-        (value as NSString).draw(with: NSRect(x: 0, y: 15, width: bounds.width, height: 18), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                 attributes: [.font: Theme.figure(13, .medium), .foregroundColor: Theme.ink, .paragraphStyle: paragraph])
-    }
-
-    override func isAccessibilityElement() -> Bool { true }
-    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
-    override func accessibilityValue() -> Any? { caption + " " + value }
-}
-
 /// Small labelled figures in a row: a caption over a semibold value, an optional dot.
 final class Facts: DrawnView, SelfAuditing {
     struct Item: Equatable {
@@ -158,89 +134,7 @@ final class SplitBar: DrawnView {
     }
 }
 
-/// One part of the machine on the overview, in the Tahoe card style: a coloured
-/// symbol and name, a chevron, the figure, a line of context, facts and a chart.
-final class SummaryCard: CardView {
-    enum Kind { case cpu, memory, gpu, small, disk }
-    let kind: Kind
-    let caption = TextLine()
-    let note = TextLine()
-    let state = Pill()
-    let figure = BigNumber()
-    let context = TextLine()
-    let facts = Facts()
-    let chart = TimeChart()
-    let legend = LegendRows()
-    let bar = SplitBar()
-    private let chevron = NSImageView()
-
-    init(_ name: String, color: NSColor, kind: Kind = .small) {
-        self.kind = kind
-        super.init()
-        caption.text = Theme.header(name, symbol: Theme.symbol(for: name), tint: color)
-        figure.font = Theme.figure(30)
-        figure.unitFont = Theme.sans(15, .medium)
-        chart.primaryColor = color
-        chart.showsTimeAxis = false
-        chart.axisWidth = 34
-        state.isHidden = true
-        chevron.image = IconTile.glyph("chevron.right", tint: Theme.inkTertiary, size: 12, appearance: NSApp.effectiveAppearance)
-        for view in [caption, note, state, figure, context, facts, chart, chevron] as [NSView] { addSubview(view) }
-        if kind == .memory { addSubview(legend); addSubview(bar) }
-        if kind == .disk { addSubview(bar) }
-        setAccessibilityElement(true)
-        setAccessibilityRole(.button)
-        setAccessibilityLabel(name)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func layout() {
-        super.layout()
-        let width = bounds.width - 32
-        let height = bounds.height
-        caption.frame = NSRect(x: 16, y: 13, width: caption.naturalWidth + 4, height: 20)
-        chevron.frame = NSRect(x: bounds.width - 28, y: 17, width: 12, height: 12)
-        let noteWidth = note.naturalWidth
-        note.frame = NSRect(x: chevron.frame.minX - 6 - noteWidth, y: 15, width: noteWidth, height: 16)
-        let figureWidth = min(width, figure.naturalWidth)
-        // The frame stays wide: sized to one reading, the next wider reading would not fit.
-        figure.frame = NSRect(x: 16, y: 36, width: max(60, width * (kind == .cpu ? 0.45 : 1)), height: 38)
-        let afterFigure = 16 + figureWidth + 10
-        switch kind {
-        case .cpu:
-            context.frame = NSRect(x: 16, y: 76, width: width, height: 14)
-            let factsWidth = facts.naturalWidth
-            facts.frame = NSRect(x: bounds.width - 16 - factsWidth, y: 44, width: factsWidth, height: 32)
-            chart.frame = NSRect(x: 16, y: 100, width: width, height: height - 112)
-        case .memory:
-            state.frame = NSRect(x: 16, y: 78, width: state.naturalWidth, height: 20)
-            bar.frame = NSRect(x: 16, y: 108, width: width, height: 10)
-            legend.frame = NSRect(x: 16, y: 128, width: width, height: 60)
-            chart.frame = NSRect(x: 16, y: 194, width: width, height: height - 204)
-        case .gpu:
-            context.frame = NSRect(x: 16, y: 76, width: width, height: 14)
-            facts.frame = NSRect(x: 16, y: 98, width: width, height: 32)
-            chart.frame = NSRect(x: 16, y: 140, width: width, height: height - 150)
-        case .small, .disk:
-            state.frame = NSRect(x: afterFigure, y: 46, width: state.naturalWidth, height: 20)
-            if kind == .disk {
-                bar.frame = NSRect(x: 16, y: 80, width: width, height: 8)
-                context.frame = NSRect(x: 16, y: 94, width: width, height: 14)
-            } else {
-                context.frame = NSRect(x: 16, y: 76, width: width, height: 14)
-            }
-            let chartTop: CGFloat = kind == .disk ? 114 : 98
-            facts.frame = NSRect(x: 16, y: height - 46, width: width, height: 32)
-            chart.frame = NSRect(x: 16, y: chartTop, width: width, height: max(20, facts.frame.minY - 8 - chartTop))
-        }
-    }
-
-    override func accessibilityPerformPress() -> Bool { onClick?(); return true }
-}
-
-
-/// A row in "Worth a Look": a solid icon tile, a bold line, a quieter line and a button.
+/// A finding in the diagnosis card: a solid icon tile, a bold line, a quieter line and a button.
 final class NoticeRow: NSView {
     private let tile = NSImageView()
     private let title = TextLine()
@@ -315,45 +209,6 @@ final class CapsuleButton: DrawnView {
     override func accessibilityPerformPress() -> Bool { onPress?(); return true }
 }
 
-/// Four figures side by side on a soft grey strip, with hairlines between them.
-final class StatStrip: DrawnView, SelfAuditing {
-    var items: [(String, String, String)] = [] { didSet { needsDisplay = true } }
-    private static let labelFont = Theme.sans(11)
-
-    /// The caption under a value: the label, and the extra only when there is room for it.
-    private func caption(_ label: String, _ extra: String, width: CGFloat) -> String {
-        let full = extra.isEmpty ? label : label + " · " + extra
-        return (full as NSString).size(withAttributes: [.font: Self.labelFont]).width <= width ? full : label
-    }
-
-    var auditFaults: [String] {
-        guard !items.isEmpty else { return [] }
-        let room = bounds.width / CGFloat(items.count) - 20
-        return items.compactMap { item in
-            let width = ceil((caption(item.1, item.2, width: room) as NSString).size(withAttributes: [.font: Self.labelFont]).width)
-            return width > room + 1 ? "\(item.1) needs \(Int(width)) pt, has \(Int(room))" : nil
-        }
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        Theme.fill.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12).fill()
-        guard !items.isEmpty else { return }
-        let column = bounds.width / CGFloat(items.count)
-        for (index, (value, label, extra)) in items.enumerated() {
-            let x = CGFloat(index) * column
-            if index > 0 {
-                Theme.rule.setFill()
-                NSRect(x: x, y: 10, width: 0.5, height: bounds.height - 20).fill()
-            }
-            (value as NSString).draw(at: NSPoint(x: x + 14, y: 10), withAttributes: [.font: Theme.figure(24), .foregroundColor: Theme.ink])
-            let text = NSAttributedString(string: caption(label, extra, width: column - 20),
-                                          attributes: [.font: Self.labelFont, .foregroundColor: Theme.inkSecondary])
-            text.draw(with: NSRect(x: x + 14, y: 42, width: column - 20, height: 14), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-        }
-    }
-}
-
 /// A coding agent: its mark, its name and how many are running.
 final class AgentLine: DrawnView {
     var name = "" { didSet { needsDisplay = true } }
@@ -379,37 +234,41 @@ final class AgentLine: DrawnView {
     }
 }
 
-/// The landing page in the Tahoe layout: CPU, Memory and GPU across the top, the
-/// four smaller parts under them, then the developer summary and what is worth a look.
+
+/// The landing page in the A2 layout: CPU, Memory, GPU and Power across the top;
+/// Activity, Storage and Network under them; then the busiest apps and what is worth
+/// a look. At 1240 by 780 the three rows fill the window; narrower windows get two
+/// columns and scroll.
 @MainActor
 final class OverviewPage: CardPage {
     override var pageTint: NSColor { PageID.overview.tint }
-    private let cpu = SummaryCard("CPU", color: PageID.cpu.tint, kind: .cpu)
-    private let memory = SummaryCard("Memory", color: PageID.memory.tint, kind: .memory)
-    private let gpu = SummaryCard("GPU", color: PageID.gpu.tint, kind: .gpu)
-    private let disk = SummaryCard("Storage", color: PageID.disk.tint, kind: .disk)
-    private let network = SummaryCard("Network", color: PageID.network.tint)
-    private let power = SummaryCard("Power", color: PageID.energy.tint)
-    private let thermal = SummaryCard("Temperature", color: PageID.sensors.tint)
-    private let developer = CardView()
-    private let developerTitle = TextLine()
-    private let strip = StatStrip()
-    private let agentsTitle = TextLine()
-    private let agentsCount = TextLine()
-    private var agentLines: [AgentLine] = []
-    private let notices = CardView()
-    private let noticesTitle = TextLine()
-    private let noticesEmpty = TextLine(Theme.caption("Nothing worth a look right now"))
-    private var noticeRows: [NoticeRow] = []
-    private let range = Segmented(["5 Minutes", "Hour", "Day"])
+    private let cpu = A2StatCard("CPU", page: .cpu, body: .spark)
+    private let memory = A2StatCard("Memory", page: .memory, body: .capacity)
+    private let gpu = A2StatCard("GPU", page: .gpu, body: .spark)
+    private let power = A2StatCard("Power", page: .energy, symbol: "bolt", body: .spark)
+    private let storage = A2StatCard("Storage", page: .disk, body: .capacity)
+    private let network = A2StatCard("Network", page: .network, body: .pair)
+    private let activity = CardView()
+    private let activityTitle = A2TitleRow()
+    private let activityChart = A2ActivityChart()
+    private let apps = CardView()
+    private let appList = A2AppList()
+    private let tips = CardView()
+    private let tipsTitle = A2TitleRow()
+    private let tipsEmpty = TextLine()
+    private var tipRows: [A2TipRow] = []
+    private let range = Segmented(["5 Min", "Hour", "Day"])
     private let open: (PageID) -> Void
     private let select: (Selection?) -> Void
     private let devServers = DevServerScanner()
-    private let agents = AgentFinder()
     private var slowAt = Date.distantPast
     private var lastMinute = 0
-    private var agentKinds: [(String, Int)] = []
+    private var networkToday = "–"
     private lazy var diagnosis = DiagnosisCard(delegate: delegate, open: open, select: select)
+
+    /// The mockup's row heights at 1240 by 780.
+    private static let rowHeights: [CGFloat] = [172, 236, 264]
+    private static let maxTips = 4
 
     init(delegate: AppDelegate, open: @escaping (PageID) -> Void, select: @escaping (Selection?) -> Void) {
         self.open = open
@@ -423,8 +282,9 @@ final class OverviewPage: CardPage {
 
     override func loadView() {
         super.loadView()
-        let cards: [(SummaryCard, PageID)] = [(cpu, .cpu), (memory, .memory), (gpu, .gpu), (disk, .disk), (network, .network),
-                                              (power, .energy), (thermal, .sensors)]
+        _ = heading(PageID.overview.title)
+        showUptime()
+        let cards: [(A2StatCard, PageID)] = [(cpu, .cpu), (memory, .memory), (gpu, .gpu), (power, .energy), (storage, .disk), (network, .network)]
         for (card, page) in cards {
             canvas.addSubview(card)
             card.onClick = { [weak self] in self?.open(page) }
@@ -432,109 +292,121 @@ final class OverviewPage: CardPage {
         range.onChange = { [weak self] _ in self?.refreshCharts(force: true) }
 
         cpu.figure.format = { (String(format: "%.0f", $0 * 100), "%") }
-        cpu.chart.style = .bars
-        cpu.chart.ceiling = 1
-        cpu.chart.secondaryColor = Theme.cyan
-        cpu.chart.format = { String(format: "%.0f%%", $0 * 100) }
-        memory.chart.format = { String(format: "%.0f", Double($0) / 1_073_741_824) }
+        cpu.spark.color = A2.cpu
         gpu.figure.format = { (String(format: "%.0f", $0 * 100), "%") }
-        gpu.chart.format = { String(format: "%.0f%%", $0 * 100) }
-        disk.figure.format = { value in
+        gpu.spark.color = A2.gpu
+        power.figure.format = { (String(format: $0 >= 10 ? "%.0f" : "%.1f", $0), "W") }
+        power.spark.color = A2.power
+        memory.keys.arrangement = .spread
+        storage.keys.arrangement = .columns(2)
+        storage.keys.rowGap = 12
+        storage.figure.format = { value in
             let (number, unit) = DashboardView.split(Format.bytes(UInt64(max(0, value))))
             return (number, unit + " free")
         }
-        disk.chart.format = { Format.rate(Double($0)).replacingOccurrences(of: "/s", with: "") }
-        disk.bar.parts = []
-        network.figure.format = { DashboardView.split(Format.rate($0)) }
-        network.chart.format = { Format.rate(Double($0)).replacingOccurrences(of: "/s", with: "") }
-        for card in [disk, network] { card.chart.axisWidth = 44 }
-        power.figure.format = { (String(format: $0 >= 10 ? "%.0f" : "%.1f", $0), "W") }
-        power.chart.format = { String(format: "%.0f W", $0) }
-        thermal.figure.format = { Format.temperature($0) }
-        thermal.chart.format = { String(format: "%.0f°", $0) }
+        network.figure.format = { value in
+            let (number, unit) = DashboardView.split(Format.rate(value))
+            return (number, unit + " down")
+        }
+        network.spark.color = A2.down
+        network.lowerSpark.color = A2.up
 
-        canvas.addSubview(developer)
-        developer.onClick = { [weak self] in self?.open(.ports) }
-        developerTitle.text = Theme.header("Developer", symbol: "chevron.left.forwardslash.chevron.right", tint: Theme.inkSecondary)
-        agentsTitle.text = NSAttributedString(string: "Coding Agents", attributes: [.font: Theme.sans(13, .semibold), .foregroundColor: Theme.ink])
-        for view in [developerTitle, strip, agentsTitle, agentsCount] as [NSView] { developer.addSubview(view) }
+        canvas.addSubview(activity)
+        activity.addSubview(activityTitle)
+        activity.addSubview(activityChart)
+        activityTitle.title = "Activity"
 
-        canvas.addSubview(notices)
-        noticesTitle.text = NSAttributedString(string: "Worth a Look", attributes: [.font: Theme.sans(15, .bold), .foregroundColor: Theme.ink])
-        notices.addSubview(noticesTitle)
-        notices.addSubview(noticesEmpty)
+        canvas.addSubview(apps)
+        apps.addSubview(appList)
+        appList.onSelect = { [weak self] id in self?.select(.app(id)) }
+
+        canvas.addSubview(tips)
+        tips.addSubview(tipsTitle)
+        tips.addSubview(tipsEmpty)
+        tipsTitle.title = "Worth a Look"
+        tipsEmpty.text = NSAttributedString(string: "Nothing worth a look right now", attributes: [.font: A2.subFont, .foregroundColor: A2.secondary])
+        tipsEmpty.alignment = .center
         diagnosis.install(in: canvas) { [weak self] in self?.relayout() }
     }
 
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        showUptime()
+    }
+
+    /// "MacBook Pro · M3 Max · 36 GB · up 4 days"; narrow toolbars drop the model, then the line.
+    private func showUptime() {
+        guard let (_, subtitle) = headingLines else { return }
+        var parts = MainWindowController.machineSubtitle.components(separatedBy: " · ")
+        if let boot = Uptime.bootDate() { parts.append(Uptime.label(Date().timeIntervalSince(boot))) }
+        subtitle.variants = [parts, Array(parts.dropFirst()), []].map { Toolbar.subtitle($0.joined(separator: " · ")) }
+    }
+
+    // MARK: Layout
+
     override func arrange(width: CGFloat) -> CGFloat {
         let inner = width - margin * 2
-        let wide = width >= 900
-        let columns: CGFloat = wide ? 4 : 2
-        let column = (inner - gap * (columns - 1)) / columns
-        func x(_ index: CGFloat) -> CGFloat { margin + index * (column + gap) }
         var y = diagnosis.place(x: margin, y: margin, width: inner, gap: gap)
-        if wide {
-            cpu.frame = NSRect(x: x(0), y: y, width: column * 2 + gap, height: 274)
-            memory.frame = NSRect(x: x(2), y: y, width: column, height: 274)
-            gpu.frame = NSRect(x: x(3), y: y, width: column, height: 274)
-            y += 274 + gap
-            for (index, card) in [disk, network, power, thermal].enumerated() {
-                card.frame = NSRect(x: x(CGFloat(index)), y: y, width: column, height: 214)
-            }
-            y += 214 + gap
+        /// Card edges on whole points, so every gap is 12 pt or within a point of it.
+        func span(_ first: Int, _ count: Int, of columns: Int) -> (x: CGFloat, width: CGFloat) {
+            let column = (inner - gap * CGFloat(columns - 1)) / CGFloat(columns)
+            let left = (margin + CGFloat(first) * (column + gap)).rounded()
+            let right = (margin + CGFloat(first + count) * (column + gap) - gap).rounded()
+            return (left, right - left)
+        }
+        func place(_ view: NSView, _ first: Int, _ count: Int, of columns: Int, height: CGFloat) {
+            let (x, w) = span(first, count, of: columns)
+            view.frame = NSRect(x: x, y: y, width: w, height: height)
+        }
+        let four = (inner - gap * 3) / 4 >= 180
+        if four {
+            // Taller windows grow the rows a little; past that the page ends early.
+            let room = scroll.contentSize.height - Self.topInset - margin * 2 - gap * 2
+            let scale = min(1.3, max(1, room / Self.rowHeights.reduce(0, +)))
+            let heights = Self.rowHeights.map { ($0 * scale).rounded() }
+            for (index, card) in [cpu, memory, gpu, power].enumerated() { place(card, index, 1, of: 4, height: heights[0]) }
+            y += heights[0] + gap
+            place(activity, 0, 2, of: 4, height: heights[1])
+            place(storage, 2, 1, of: 4, height: heights[1])
+            place(network, 3, 1, of: 4, height: heights[1])
+            y += heights[1] + gap
+            place(apps, 0, 2, of: 4, height: heights[2])
+            place(tips, 2, 2, of: 4, height: heights[2])
+            y += heights[2]
         } else {
-            cpu.frame = NSRect(x: margin, y: y, width: inner, height: 250)
-            y += 250 + gap
-            for (index, card) in [memory, gpu, disk, network, power, thermal].enumerated() {
-                let tall = index < 2
-                card.frame = NSRect(x: x(CGFloat(index % 2)), y: y, width: column, height: tall ? 274 : 214)
-                if index % 2 == 1 { y += (tall ? 274 : 214) + gap }
+            let rows: [([NSView], CGFloat)] = [([cpu, memory], 172), ([gpu, power], 172), ([activity], 236), ([storage, network], 236),
+                                               ([apps], 264), ([tips], 264)]
+            for (index, (views, height)) in rows.enumerated() {
+                for (column, view) in views.enumerated() { place(view, column, 1, of: views.count, height: height) }
+                y += height + (index < rows.count - 1 ? gap : 0)
             }
         }
-        for card in [cpu, memory, gpu, disk, network, power, thermal] { card.frame = card.frame.integral }
-
-        let agentRows = CGFloat(max(1, agentLines.filter { !$0.isHidden }.count))
-        let developerHeight = 16 + 22 + 12 + 64 + 22 + 22 + agentRows * 40 + 14
-        let noticeCount = CGFloat(max(1, noticeRows.filter { !$0.isHidden }.count))
-        let noticesHeight = 16 + 22 + 8 + noticeCount * 54 + 12
-        let bottomHeight = max(developerHeight, noticesHeight, 220)
-        if wide {
-            developer.frame = NSRect(x: x(0), y: y, width: column * 2 + gap, height: bottomHeight).integral
-            notices.frame = NSRect(x: x(2), y: y, width: column * 2 + gap, height: bottomHeight).integral
-            y += bottomHeight
-        } else {
-            developer.frame = NSRect(x: margin, y: y, width: inner, height: developerHeight).integral
-            y += developerHeight + gap
-            notices.frame = NSRect(x: margin, y: y, width: inner, height: noticesHeight).integral
-            y += noticesHeight
-        }
-        layoutDeveloper()
-        layoutNotices()
+        layoutActivity()
+        layoutLists()
         return y + margin
     }
 
-    private func layoutDeveloper() {
-        let width = developer.bounds.width - 32
-        developerTitle.frame = NSRect(x: 16, y: 13, width: 200, height: 20)
-        strip.frame = NSRect(x: 16, y: 44, width: width, height: 66)
-        agentsTitle.frame = NSRect(x: 16, y: 128, width: 200, height: 18)
-        let countWidth = agentsCount.naturalWidth
-        agentsCount.frame = NSRect(x: 16 + width - countWidth, y: 129, width: countWidth, height: 16)
-        var y: CGFloat = 150
-        for line in agentLines where !line.isHidden {
-            line.frame = NSRect(x: 16, y: y, width: width, height: 40)
-            y += 40
-        }
+    private func layoutActivity() {
+        let width = activity.bounds.width
+        activityTitle.frame = NSRect(x: A2.padSide, y: A2.padTop, width: width - A2.padSide * 2, height: 16)
+        // The mockup's chart is 176 pt of a 236 pt card, flush with the bottom.
+        let top: CGFloat = 60
+        activityChart.frame = NSRect(x: 0, y: top, width: width, height: activity.bounds.height - top)
     }
 
-    private func layoutNotices() {
-        let width = notices.bounds.width - 32
-        noticesTitle.frame = NSRect(x: 16, y: 14, width: width, height: 22)
-        noticesEmpty.frame = NSRect(x: 16, y: 50, width: width, height: 16)
-        var y: CGFloat = 46
-        for row in noticeRows where !row.isHidden {
-            row.frame = NSRect(x: 16, y: y, width: width, height: 54)
-            y += 54
+    private func layoutLists() {
+        let inner = NSRect(x: A2.padSide, y: A2.padTop, width: apps.bounds.width - A2.padSide * 2, height: apps.bounds.height - A2.padTop * 2)
+        appList.frame = inner
+        let tipsInner = tips.bounds.width - A2.padSide * 2
+        tipsTitle.frame = NSRect(x: A2.padSide, y: A2.padTop, width: tipsInner, height: 16)
+        let listTop = A2.padTop + 16 + 8
+        let listHeight = tips.bounds.height - listTop - A2.padTop
+        tipsEmpty.frame = NSRect(x: A2.padSide, y: listTop + listHeight / 2 - 8, width: tipsInner, height: 16)
+        let shown = tipRows.filter { !$0.isHidden }
+        // Rows share the list's height, as in the mockup.
+        let rowHeight = listHeight / CGFloat(max(1, shown.count))
+        for (index, row) in shown.enumerated() {
+            row.frame = NSRect(x: A2.padSide, y: (listTop + CGFloat(index) * rowHeight).rounded(), width: tipsInner, height: rowHeight.rounded())
         }
     }
 
@@ -550,203 +422,212 @@ final class OverviewPage: CardPage {
         }
     }
 
+    private static func peak(_ values: [Float]) -> Double { Double(values.lazy.filter { !$0.isNaN }.max() ?? 0) }
+
     private func refreshCharts(force: Bool) {
         if range.selected != 0 {
             let minute = Int(Date().timeIntervalSince1970 / 60)
             guard force || minute != lastMinute else { return }
             lastMinute = minute
         }
-        let step = range.selected == 0 ? delegate.settings.interval : 60
-        for card in [cpu, memory, gpu, disk, network, power, thermal] { card.chart.step = step }
-        cpu.chart.primary = series(.cpu)
-        cpu.chart.secondary = series(.cpuSystem)
-        memory.chart.primary = series(.memory)
-        gpu.chart.primary = series(.gpu)
-        disk.chart.primary = zip(series(.diskRead), series(.diskWrite)).map { $0 + $1 }
-        network.chart.primary = zip(series(.networkIn), series(.networkOut)).map { $0 + $1 }
-        power.chart.primary = series(.power)
-        thermal.chart.primary = series(.cpuTemperature)
-        let temps = thermal.chart.primary.filter { !$0.isNaN }
-        thermal.chart.bottom = max(0, ((temps.min() ?? 40) - 10) / 10 * 10).rounded(.down)
-        thermal.chart.ceiling = max(100, ((temps.max() ?? 90) / 10).rounded(.up) * 10)
-        let used = memory.chart.primary.filter { !$0.isNaN }
-        if let low = used.min(), let total = delegate.system.memory?.total {
-            let gb: Float = 1_073_741_824
-            memory.chart.bottom = max(0, (low / gb - 5).rounded(.down)) * gb
-            memory.chart.ceiling = Float(total)
+        let cpuSeries = series(.cpu), gpuSeries = series(.gpu)
+        cpu.spark.values = cpuSeries
+        cpu.spark.ceiling = Float(min(1, ChartScale.ceiling(peak: Self.peak(cpuSeries), minimum: 0.1)))
+        gpu.spark.values = gpuSeries
+        gpu.spark.ceiling = Float(min(1, ChartScale.ceiling(peak: Self.peak(gpuSeries), minimum: 0.1)))
+        let powerSeries = series(.power)
+        power.spark.values = powerSeries
+        power.spark.ceiling = Float(ChartScale.ceiling(peak: Self.peak(powerSeries), minimum: 1))
+        let down = series(.networkIn), up = series(.networkOut)
+        let networkTop = Float(ChartScale.ceiling(peak: max(Self.peak(down), Self.peak(up)), minimum: 10_000))
+        network.spark.values = down
+        network.lowerSpark.values = up
+        network.spark.ceiling = networkTop
+        network.lowerSpark.ceiling = networkTop
+        activityChart.first = cpuSeries
+        activityChart.second = gpuSeries
+        activityChart.ceiling = Float(min(1, ChartScale.ceiling(peak: max(Self.peak(cpuSeries), Self.peak(gpuSeries)), minimum: 0.1)))
+        gpuPeak = Self.peak(gpuSeries)
+    }
+
+    private var gpuPeak = 0.0
+
+    private var rangeName: String {
+        switch range.selected {
+        case 1: return "Last hour"
+        case 2: return "Last 24 hours"
+        default: return "Last 5 minutes"
         }
+    }
+
+    /// Gigabytes as the mockup writes them: "27", or "4.2" under ten.
+    private static func gigabytes(_ bytes: Double) -> String {
+        let value = bytes / 1_073_741_824
+        return String(format: value >= 9.95 ? "%.0f" : "%.1f", value)
     }
 
     override func update(system s: SystemSnapshot) {
         refreshCharts(force: false)
         if let c = s.cpu {
             cpu.figure.set(c.total)
-            cpu.note.text = NSAttributedString(string: c.total >= 0.85 ? "Strained" : c.total >= 0.6 ? "Busy" : "",
-                                               attributes: [.font: Theme.sans(13, .medium), .foregroundColor: Theme.inkTertiary])
-            let performance = c.performanceCores, efficiency = c.efficiencyCores
-            cpu.context.variants = (performance > 0
-                ? ["\(c.cores.count) cores · \(performance) performance, \(efficiency) efficiency", "\(c.cores.count) cores (\(performance)P + \(efficiency)E)"]
-                : ["\(c.cores.count) cores"]).map { Theme.caption($0) }
-            cpu.facts.items = [.init(label: "User", value: Format.percent(c.user), dot: Theme.blue),
-                               .init(label: "System", value: Format.percent(c.system), dot: Theme.cyan),
-                               .init(label: "Load average", value: String(format: "%.1f", c.loadAverage.first ?? 0), dot: nil)]
-            cpu.needsLayout = true
+            cpu.sub.text = A2.facts([.init(label: "User", value: Format.percent(c.user)), .init(label: "System", value: Format.percent(c.system)),
+                                     .init(label: "Load", value: String(format: "%.1f", c.loadAverage.first ?? 0))])
         }
         if let m = s.memory {
+            let total = "of \(Int((Double(m.total) / 1_073_741_824).rounded())) GB"
+            memory.figure.format = { (Self.gigabytes($0), total) }
             memory.figure.set(Double(m.used))
-            memory.figure.format = { value in
-                let (number, unit) = DashboardView.split(Format.memory(value))
-                return (number, unit + " of " + Format.memory(m.total).replacingOccurrences(of: " GB", with: ""))
+            let pressure: (String, NSColor) = switch m.pressure {
+            case .normal: ("Normal", A2.good)
+            case .warning: ("Warning", A2.warn)
+            default: ("Critical", A2.bad)
             }
-            memory.state.isHidden = m.pressure == .normal
-            memory.state.text = m.pressure == .warning ? "Pressure: Warning" : "Pressure: Critical"
-            memory.state.tone = m.pressure == .warning ? .warn : .bad
-            memory.state.symbol = "exclamationmark.triangle.fill"
-            let total = Double(max(m.total, 1))
-            memory.bar.parts = [(Double(m.app) / total, Theme.indigo), (Double(m.wired) / total, Theme.orange),
-                                (Double(m.compressed) / total, Theme.indigo.withAlphaComponent(0.45))]
-            memory.legend.rows = [(Theme.indigo, "App", Format.memory(m.app)), (Theme.orange, "Wired", Format.memory(m.wired)),
-                                  (Theme.indigo.withAlphaComponent(0.45), "Compressed", Format.memory(m.compressed))]
-            memory.needsLayout = true
+            memory.sub.text = A2.facts([.init(label: "Pressure", value: pressure.0, color: pressure.1),
+                                        .init(label: "Swap", value: Format.memory(m.swapUsed))])
+            let free = Double(m.total) - Double(m.used)
+            memory.bar.parts = [.init(amount: Double(m.app), color: A2.memoryApp), .init(amount: Double(m.wired), color: A2.memoryWired),
+                                .init(amount: Double(m.compressed), color: A2.memoryCompressed), .init(amount: max(0, free), color: A2.track)]
+            memory.keys.keys = [.init(label: "App", value: Format.memory(m.app), color: A2.memoryApp),
+                                .init(label: "Wired", value: Format.memory(m.wired), color: A2.memoryWired),
+                                .init(label: "Compressed", value: Format.memory(m.compressed), color: A2.memoryCompressed)]
         }
         if let g = s.gpu {
             gpu.figure.set(g.utilization)
-            gpu.context.text = Theme.caption([g.coreCount.map { "\($0)-core GPU" }, g.memoryUsed.map { Format.memory($0) + " memory" }]
-                .compactMap { $0 }.joined(separator: " · "))
-            let recent = gpu.chart.primary.filter { !$0.isNaN }
-            let mean = recent.isEmpty ? 0 : Double(recent.reduce(0, +)) / Double(recent.count)
-            gpu.facts.items = [.init(label: "Average", value: Format.percent(mean), dot: nil),
-                               .init(label: "Peak", value: Format.percent(Double(recent.max() ?? 0)), dot: nil)]
-        }
-        if let d = s.disk {
-            disk.figure.set(Double(d.volumeFree))
-            disk.state.isHidden = !Strain.disk(d)
-            disk.state.text = "Low Space"
-            disk.state.tone = .bad
-            let usedFraction = 1 - Double(d.volumeFree) / Double(max(d.volumeTotal, 1))
-            disk.bar.parts = [(usedFraction, Strain.disk(d) ? Theme.red : Theme.cyan)]
-            disk.context.text = Theme.caption("\(Format.bytes(d.volumeTotal - d.volumeFree)) of \(Format.bytes(d.volumeTotal)) used")
-            disk.facts.items = [.init(label: "Reading", value: Format.rate(d.readBytesPerSecond), dot: nil),
-                                .init(label: "Writing", value: Format.rate(d.writeBytesPerSecond), dot: nil)]
-            disk.needsLayout = true
-        }
-        if let n = s.network {
-            network.figure.set(n.receivedBytesPerSecond)
-            network.context.text = Theme.caption("Down · \(Format.rate(n.sentBytesPerSecond)) up")
-            network.facts.items = [.init(label: "Today", value: networkToday, dot: nil), .init(label: "Last 7 days", value: networkWeek, dot: nil)]
+            var facts: [A2.Fact] = [.init(label: "Peak", value: Format.percent(gpuPeak))]
+            if let used = g.memoryUsed { facts.append(.init(label: "Memory", value: Format.memory(used))) }
+            gpu.sub.text = A2.facts(facts)
         }
         if let p = s.power, let cpuWatts = p.cpu {
             power.figure.set(cpuWatts + (p.gpu ?? 0) + (p.ane ?? 0))
-            var items: [Facts.Item] = [.init(label: "CPU", value: Format.watts(cpuWatts), dot: nil),
-                                       .init(label: "GPU", value: Format.watts(p.gpu ?? 0), dot: nil)]
-            if let b = s.battery {
-                power.context.text = Theme.caption("Battery \(String(format: "%.0f%%", b.percent))" + (b.isCharging ? " · Charging" : b.isPluggedIn ? " · Plugged in" : ""))
-                if let health = b.health { items.append(.init(label: "Health", value: String(format: "%.0f%%", health * 100), dot: nil)) }
-                if let cycles = b.cycleCount { items.append(.init(label: "Cycles", value: "\(cycles)", dot: nil)) }
-            } else {
-                power.context.text = Theme.caption("CPU, GPU and Neural Engine")
-            }
-            power.facts.items = items
+            power.sub.text = A2.facts([.init(label: "CPU", value: Format.watts(cpuWatts)), .init(label: "GPU", value: Format.watts(p.gpu ?? 0))])
         }
-        if let t = s.thermal {
-            thermal.figure.set(t.cpuCelsius)
-            thermal.state.isHidden = t.pressure == .nominal
-            thermal.state.text = t.pressure.rawValue.prefix(1).uppercased() + t.pressure.rawValue.dropFirst()
-            thermal.state.tone = t.pressure == .fair ? .warn : .bad
-            thermal.context.variants = ["Hottest sensor · thermal pressure \(t.pressure.rawValue)", "Hottest sensor"].map { Theme.caption($0) }
-            thermal.facts.items = t.fans.enumerated().prefix(2).map { .init(label: "Fan \($0.offset + 1)", value: "\(Int($0.element.rpm)) rpm", dot: nil) }
-            thermal.needsLayout = true
+        if let d = s.disk { showStorage(d) }
+        if let n = s.network {
+            network.figure.set(n.receivedBytesPerSecond)
+            network.sub.text = A2.facts([.init(label: "Up", value: Format.rate(n.sentBytesPerSecond)), .init(label: "Today", value: networkToday)])
         }
+        let cpuNow = s.cpu.map { Format.percent($0.total) } ?? "–"
+        let gpuNow = s.gpu?.utilization.map { Format.percent($0) } ?? "–"
+        activityTitle.items = [.init(text: "CPU " + cpuNow, dot: A2.cpu), .init(text: "GPU " + gpuNow, dot: A2.gpu), .init(text: rangeName, faint: true)]
         if Date().timeIntervalSince(slowAt) > 10 { refreshSlow() }
     }
 
-    private var networkToday = "–"
-    private var networkWeek = "–"
+    /// Used and free from the live reading; the breakdown only when the Storage page
+    /// has already measured it this session. The Overview never starts that scan.
+    private func showStorage(_ d: DiskReading) {
+        storage.figure.set(Double(d.volumeFree))
+        let used = d.volumeTotal - min(d.volumeFree, d.volumeTotal)
+        storage.sub.text = A2.plain("\(Format.bytes(used)) of \(Format.bytes(d.volumeTotal)) used")
+        let freePart = A2CapacityBar.Part(amount: Double(d.volumeFree), color: A2.track)
+        let before = storage.keys.keys.count
+        if let summary = StoragePage.latestSummary {
+            let shown: [(StorageCategory, String, NSColor)] = [(.apps, "Apps", A2.diskApps), (.developer, "Developer", A2.diskDeveloper),
+                                                               (.documents, "Documents", A2.diskDocuments), (.system, "System", A2.diskSystem)]
+            let others = summary.segments.filter { segment in segment.category != .free && !shown.contains { $0.0 == segment.category } }
+            storage.bar.parts = shown.map { .init(amount: Double(summary.segment($0.0)?.size ?? 0), color: $0.2) }
+                + others.map { .init(amount: Double($0.size), color: $0.category.color) } + [freePart]
+            storage.keys.keys = shown.map { .init(label: $0.1, value: Format.bytes(summary.segment($0.0)?.size ?? 0), color: $0.2) }
+        } else {
+            storage.bar.parts = [.init(amount: Double(used), color: A2.diskSystem), freePart]
+            storage.keys.keys = [.init(label: "Used", value: Format.bytes(used), color: A2.diskSystem),
+                                 .init(label: "Free", value: Format.bytes(d.volumeFree), color: A2.track),
+                                 .init(label: "Reading", value: Format.rate(d.readBytesPerSecond), color: nil),
+                                 .init(label: "Writing", value: Format.rate(d.writeBytesPerSecond), color: nil)]
+        }
+        if storage.keys.keys.count != before { storage.needsLayout = true }
+    }
 
-    /// Readings that change slowly or cost more: totals, projects, containers, agents, notices.
+    override func update(table: ProcessTable) {
+        let busiest = table.apps.sorted { $0.cpu > $1.cpu }.prefix(5)
+        let top = max(busiest.first?.cpu ?? 0, 0.000_001)
+        let machine = delegate.settings.cpuOfMachine
+        appList.rows = busiest.map { app in
+            A2AppList.Row(id: app.id, icon: Icons.icon(for: app), name: app.name,
+                          detail: app.processCount == 1 ? "1 process" : "\(app.processCount) processes",
+                          fraction: app.cpu / top, cpu: Self.cpuText(app.cpu, machine: machine, cores: table.coreCount),
+                          memory: Format.memory(app.memory))
+        }
+    }
+
+    /// "182%", "23%", "6.1%": share of one core, a decimal only under 10%.
+    private static func cpuText(_ cores: Double, machine: Bool, cores count: Int) -> String {
+        if machine { return Style.appCPU(cores, machine: true, coreCount: count) }
+        return Format.percent(cores, digits: cores >= 0.0995 ? 0 : 1)
+    }
+
+    /// Readings that change slowly or cost more: today's network total and the suggestions.
     private func refreshSlow() {
         slowAt = Date()
-        let history = delegate.monitor.history
         let midnight = Calendar.current.startOfDay(for: Date())
-        networkToday = Format.bytes(UInt64(history.total(.networkIn, since: midnight) + history.total(.networkOut, since: midnight)))
-        let week = Date().addingTimeInterval(-7 * 86_400)
-        networkWeek = Format.bytes(UInt64(history.total(.networkIn, since: week) + history.total(.networkOut, since: week)))
-
+        let history = delegate.monitor.history
+        networkToday = Format.bytes(UInt64(max(0, history.total(.networkIn, since: midnight) + history.total(.networkOut, since: midnight))))
         let table = delegate.table
         let projects = devServers.scan(table).filter { !$0.path.isEmpty }
-        let processes = projects.reduce(0) { $0 + $1.processes.count }
-        let ports = Set(projects.flatMap { $0.servers.flatMap { $0.ports.map(\.port) } }).count
-        let docker = Docker.status(stats: false)
-        let running = docker.containers.filter { $0.state == "running" }.count
-        strip.items = [("\(projects.count)", "Projects", ""), ("\(processes)", "Processes", ""), ("\(ports)", "Open ports", ""),
-                       ("\(running)", "Containers", docker.socket.map { Docker.engineName($0) } ?? "")]
-
-        let found = agents.find(table)
-        let grouped = Dictionary(grouping: found, by: \.kind).map { ($0.key, $0.value.count) }.sorted { $0.1 > $1.1 }
-        agentKinds = grouped
-        while agentLines.count < grouped.count {
-            let line = AgentLine()
-            developer.addSubview(line)
-            agentLines.append(line)
-        }
-        for (index, line) in agentLines.enumerated() {
-            line.isHidden = index >= grouped.count || index >= 4
-            guard !line.isHidden else { continue }
-            line.name = grouped[index].0
-            line.count = grouped[index].1
-            line.showsRule = index < min(grouped.count, 4) - 1
-        }
-        agentsCount.text = Theme.caption(found.isEmpty ? "None running" : "\(found.count) running")
-        refreshNotices(projects: projects, table: table)
+        refreshTips(projects: projects, table: table)
         relayout()
     }
 
     /// What is worth a look right now, worked out from live readings, then recent alerts.
-    private func refreshNotices(projects: [DevProject], table: ProcessTable) {
-        struct Notice { var symbol: String; var tint: NSColor; var image: NSImage?; var title: String; var detail: String; var button: String?; var action: (() -> Void)? }
-        var list: [Notice] = []
+    private func refreshTips(projects: [DevProject], table: ProcessTable) {
+        struct Tip { var symbol: String; var tint: NSColor; var image: NSImage?; var title: String; var detail: String; var button: String?; var action: (() -> Void)? }
+        var list: [Tip] = []
         let s = delegate.system
         if let d = s.disk, Strain.disk(d) {
-            list.append(Notice(symbol: "internaldrive.fill", tint: Theme.red, image: nil, title: "Disk almost full",
-                               detail: "Only \(Format.bytes(d.volumeFree)) left on the startup disk", button: "Show", action: { [weak self] in self?.open(.disk) }))
+            list.append(Tip(symbol: "internaldrive", tint: Theme.red, image: nil, title: "Disk almost full",
+                            detail: "Only \(Format.bytes(d.volumeFree)) left on the startup disk", button: "Show", action: { [weak self] in self?.open(.disk) }))
         }
         if let m = s.memory, m.pressure != .normal, let top = table.apps.max(by: { $0.memory < $1.memory }) {
-            list.append(Notice(symbol: "memorychip.fill", tint: Theme.indigo, image: nil, title: "\(top.name) holds \(Format.memory(top.memory)) of memory",
-                               detail: "Memory is under pressure; it is the largest app", button: "Show",
-                               action: { [weak self] in self?.select(.app(top.id)) }))
+            list.append(Tip(symbol: "memorychip", tint: A2.memoryApp, image: nil, title: "\(top.name) holds \(Format.memory(top.memory)) of memory",
+                            detail: "Memory is under pressure; it is the largest app", button: "Show",
+                            action: { [weak self] in self?.select(.app(top.id)) }))
         }
         let idle = projects.flatMap(\.idleServers)
         if !idle.isEmpty {
-            list.append(Notice(symbol: "folder.fill", tint: Theme.gray, image: nil,
-                               title: "\(idle.count) dev server\(idle.count == 1 ? " is" : "s are") idle",
-                               detail: "Still holding ports and memory", button: "Review", action: { [weak self] in self?.open(.ports) }))
+            list.append(Tip(symbol: "server.rack", tint: A2.cpu, image: nil,
+                            title: "\(idle.count) dev server\(idle.count == 1 ? " is" : "s are") idle",
+                            detail: "Still holding ports and memory", button: "Review", action: { [weak self] in self?.open(.ports) }))
         }
         if let busiest = table.apps.filter({ $0.processCount >= 8 }).max(by: { $0.memory < $1.memory }),
-           busiest.memory > 4 << 30, list.count < 4 {
-            list.append(Notice(symbol: "app.fill", tint: Theme.blue, image: Icons.icon(for: busiest),
-                               title: "\(busiest.name) is using \(Format.memory(busiest.memory))",
-                               detail: "\(busiest.processCount) processes", button: "Show", action: { [weak self] in self?.select(.app(busiest.id)) }))
+           busiest.memory > 4 << 30, list.count < Self.maxTips {
+            list.append(Tip(symbol: "app", tint: A2.cpu, image: Icons.icon(for: busiest),
+                            title: "\(busiest.name) is using \(Format.memory(busiest.memory))",
+                            detail: "\(busiest.processCount) processes", button: "Show", action: { [weak self] in self?.select(.app(busiest.id)) }))
         }
-        if let t = s.thermal, t.pressure != .nominal, list.count < 5 {
-            list.append(Notice(symbol: "thermometer.high", tint: Theme.orange, image: nil, title: "Running warm",
-                               detail: "Thermal pressure is \(t.pressure.rawValue)", button: "Show", action: { [weak self] in self?.open(.sensors) }))
+        if let t = s.thermal, t.pressure != .nominal, list.count < Self.maxTips {
+            list.append(Tip(symbol: "thermometer.medium", tint: A2.power, image: nil, title: "Running warm",
+                            detail: "Thermal pressure is \(t.pressure.rawValue)", button: "Show", action: { [weak self] in self?.open(.sensors) }))
         }
-        for alert in delegate.monitor.perform({ $0.alerts.recent }).suffix(3).reversed() where list.count < 5 {
-            list.append(Notice(symbol: "bell.fill", tint: Theme.orange, image: nil, title: alert.title, detail: alert.body, button: nil, action: nil))
+        for alert in delegate.monitor.perform({ $0.alerts.recent }).suffix(3).reversed() where list.count < Self.maxTips {
+            let (symbol, tint) = Self.look(alert.kind)
+            let present = table.app(alert.appID) != nil
+            list.append(Tip(symbol: symbol, tint: tint, image: nil, title: alert.title, detail: alert.body, button: present ? "Show" : nil,
+                            action: present ? { [weak self] in self?.select(.app(alert.appID)) } : nil))
         }
-        while noticeRows.count < list.count {
-            let row = NoticeRow()
-            notices.addSubview(row)
-            noticeRows.append(row)
+        list = Array(list.prefix(Self.maxTips))
+        while tipRows.count < list.count {
+            let row = A2TipRow()
+            tips.addSubview(row)
+            tipRows.append(row)
         }
-        noticesEmpty.isHidden = !list.isEmpty
-        for (index, row) in noticeRows.enumerated() {
+        tipsEmpty.isHidden = !list.isEmpty
+        tipsTitle.items = list.isEmpty ? [] : [.init(text: list.count == 1 ? "1 suggestion" : "\(list.count) suggestions")]
+        for (index, row) in tipRows.enumerated() {
             row.isHidden = index >= list.count
             guard index < list.count else { continue }
-            let notice = list[index]
-            row.set(symbol: notice.symbol, tint: notice.tint, image: notice.image, title: notice.title, detail: notice.detail,
-                    button: notice.button, action: notice.action)
-            row.showsRule = index < list.count - 1
+            let tip = list[index]
+            row.set(symbol: tip.symbol, tint: tip.tint, image: tip.image, title: tip.title, detail: tip.detail, button: tip.button, action: tip.action)
+            row.showsRule = index > 0
+        }
+    }
+
+    private static func look(_ kind: AlertKind) -> (String, NSColor) {
+        switch kind {
+        case .cpu: return ("flame", A2.power)
+        case .memoryGrowth: return ("arrow.up", Theme.dynamic(0xE6A700, 0xFFD60A))
+        case .diskWrites: return ("internaldrive", A2.up)
+        case .network: return ("network", A2.down)
+        case .temperature: return ("thermometer.medium", A2.power)
+        case .appLimit: return ("gauge.with.needle", A2.power)
         }
     }
 }

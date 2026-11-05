@@ -70,7 +70,8 @@ final class DiagnoseButton: DrawnView {
     var busy = false { didSet { if busy != oldValue { needsDisplay = true } } }
     private var pressed = false { didSet { needsDisplay = true } }
     static let label = "Why Is It Slow?"
-    private static let font = Theme.sans(13, .medium)
+    private static let font = Theme.sans(12, .semibold)
+    private static let iconTint = Theme.dynamic(0xF29A00, 0xFFD60A)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -83,19 +84,17 @@ final class DiagnoseButton: DrawnView {
     required init?(coder: NSCoder) { fatalError() }
 
     private var textWidth: CGFloat { ceil((Self.label as NSString).size(withAttributes: [.font: Self.font]).width) }
-    /// The capsule sizes itself from this.
-    override var fittingSize: NSSize { NSSize(width: textWidth + 18 + 18, height: 28) }
+    /// The capsule adds 6 pt each side: 12 pt before the icon and 14 after the text.
+    override var fittingSize: NSSize { NSSize(width: 6 + 14 + 7 + textWidth + 8, height: 28) }
 
     override func draw(_ dirtyRect: NSRect) {
-        let color = Theme.ink.withAlphaComponent(busy ? 0.4 : (pressed ? 0.6 : 1))
-        let glyph = IconTile.glyph("stethoscope", tint: color, size: 13, appearance: effectiveAppearance)
-        let total = 18 + textWidth
-        var x = (bounds.width - total) / 2
-        glyph.draw(in: NSRect(x: x, y: (bounds.height - 13) / 2, width: 13, height: 13))
-        x += 18
+        let fade: CGFloat = busy ? 0.4 : (pressed ? 0.6 : 1)
+        let glyph = IconTile.glyph("wand.and.stars", tint: Self.iconTint.withAlphaComponent(fade), size: 14, appearance: effectiveAppearance)
+        glyph.draw(in: NSRect(x: 6, y: (bounds.height - 14) / 2, width: 14, height: 14), from: .zero, operation: .sourceOver, fraction: 1,
+                   respectFlipped: true, hints: nil)
         let size = (Self.label as NSString).size(withAttributes: [.font: Self.font])
-        (Self.label as NSString).draw(at: NSPoint(x: x, y: (bounds.height - size.height) / 2),
-                                      withAttributes: [.font: Self.font, .foregroundColor: color])
+        (Self.label as NSString).draw(at: NSPoint(x: 27, y: (bounds.height - size.height) / 2),
+                                      withAttributes: [.font: Self.font, .foregroundColor: A2.primary.withAlphaComponent(fade)])
     }
 
     override func mouseDown(with event: NSEvent) { if !busy { pressed = true } }

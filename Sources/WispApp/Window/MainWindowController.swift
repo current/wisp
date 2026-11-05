@@ -358,7 +358,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         placeWindowButtons()
     }
 
-    /// "MacBook Pro · Apple M3 Max · 36 GB", under each page's title.
+    /// "MacBook Pro · M3 Max · 36 GB", under each page's title.
     static let machineSubtitle: String = {
         // "MacBook Pro (14-inch, Nov 2023)" from the device tree, without the brackets.
         var family = "Mac"
@@ -371,7 +371,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             }
             IOObjectRelease(expert)
         }
-        return family + " · Apple " + Sidebar.machineName()
+        return family + " · " + Sidebar.machineName()
     }()
 
     /// The window buttons sit on the sidebar's padding, a little lower and further in

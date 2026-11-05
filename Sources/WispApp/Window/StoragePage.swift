@@ -14,6 +14,8 @@ final class StoragePage: DiskPage {
     }
 
     private let index = StorageIndex()
+    /// The last breakdown this page received, for the Overview, which never scans.
+    private(set) static var latestSummary: StorageSummary?
     private var state = StorageState()
     private let home = NSHomeDirectory()
     private lazy var stack: [Level] = [.mac, .folder(home)]
@@ -128,6 +130,7 @@ final class StoragePage: DiskPage {
         let hadSummary = state.summary != nil
         let finished = state.scanning != nil && new.scanning == nil
         state = new
+        if let summary = new.summary { Self.latestSummary = summary }
         // WISP_STORAGE_PICK=developer opens one slice, for screenshots.
         if !hadSummary, let pick = ProcessInfo.processInfo.environment["WISP_STORAGE_PICK"], let category = StorageCategory(rawValue: pick) {
             self.pick(category)

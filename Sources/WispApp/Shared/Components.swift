@@ -272,6 +272,10 @@ final class BigNumber: DrawnView {
     var font = Theme.figure(32, .regular) { didSet { if font != oldValue { render() } } }
     var unitFont = Theme.sans(15) { didSet { if unitFont != oldValue { render() } } }
     var color: NSColor = Theme.ink { didSet { if color != oldValue { render() } } }
+    var unitColor: NSColor = Theme.inkTertiary { didSet { if unitColor != oldValue { render() } } }
+    /// Tracking for the digits, in points.
+    var kern: CGFloat = -0.6 { didSet { if kern != oldValue { render() } } }
+    var unitGap: CGFloat = 4 { didSet { if unitGap != oldValue { render() } } }
     /// Turns a value into the figure and its unit.
     var format: (Double) -> (String, String) = { (String(format: "%.0f", $0), "") }
 
@@ -339,8 +343,8 @@ final class BigNumber: DrawnView {
 
     private var scale: CGFloat { window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2 }
 
-    private func attributes(_ font: NSFont, kern: CGFloat = -0.6) -> [NSAttributedString.Key: Any] {
-        [.font: font, .foregroundColor: color, .kern: kern]
+    private func attributes(_ font: NSFont, kern: CGFloat? = nil) -> [NSAttributedString.Key: Any] {
+        [.font: font, .foregroundColor: color, .kern: kern ?? self.kern]
     }
 
     private func width(_ text: String, _ font: NSFont) -> CGFloat {
@@ -349,7 +353,7 @@ final class BigNumber: DrawnView {
 
     /// The font the figure fits in, and whether it fits without shrinking.
     private func fit(_ text: (String, String)) -> (font: NSFont, fits: Bool) {
-        let unitWidth = text.1.isEmpty ? 0 : ceil(NSAttributedString(string: text.1, attributes: [.font: unitFont]).size().width) + 4
+        let unitWidth = text.1.isEmpty ? 0 : ceil(NSAttributedString(string: text.1, attributes: [.font: unitFont]).size().width) + unitGap
         let room = bounds.width - unitWidth
         let full = width(text.0, font)
         guard full > room, room > 0 else { return (font, true) }
@@ -375,8 +379,8 @@ final class BigNumber: DrawnView {
         let (used, fits) = fit(text)
         let top = baseline(used) - used.ascender
         let shown = keep.map { String(text.0.prefix($0)) } ?? text.0
-        let unitText = NSAttributedString(string: text.1, attributes: [.font: unitFont, .foregroundColor: Theme.inkTertiary])
-        let room = bounds.width - (text.1.isEmpty ? 0 : ceil(unitText.size().width) + 4)
+        let unitText = NSAttributedString(string: text.1, attributes: [.font: unitFont, .foregroundColor: unitColor])
+        let room = bounds.width - (text.1.isEmpty ? 0 : ceil(unitText.size().width) + unitGap)
         if fits {
             NSAttributedString(string: shown, attributes: attributes(used)).draw(at: NSPoint(x: 0, y: top))
         } else {
@@ -390,7 +394,7 @@ final class BigNumber: DrawnView {
                       options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         }
         if !text.1.isEmpty {
-            let x = (fits ? width(text.0, used) : min(width(text.0, used), room)) + 4
+            let x = (fits ? width(text.0, used) : min(width(text.0, used), room)) + unitGap
             unitText.draw(at: NSPoint(x: x, y: baseline(used) - unitFont.ascender))
         }
     }
@@ -539,7 +543,7 @@ final class BigNumber: DrawnView {
     /// Width of the figure and its unit as drawn, for placing something after it.
     var naturalWidth: CGFloat {
         let text = drawn.0.isEmpty ? current : drawn
-        let unit = text.1.isEmpty ? 0 : ceil(NSAttributedString(string: text.1, attributes: [.font: unitFont]).size().width) + 4
+        let unit = text.1.isEmpty ? 0 : ceil(NSAttributedString(string: text.1, attributes: [.font: unitFont]).size().width) + unitGap
         return width(text.0, fit(text).font) + unit
     }
 
@@ -755,8 +759,8 @@ final class Segmented: DrawnView {
     var onGlass = false { didSet { needsDisplay = true } }
 
     static func label(_ text: String, on: Bool) -> NSAttributedString {
-        NSAttributedString(string: text, attributes: [.font: Theme.sans(12.5, on ? .semibold : .regular),
-                                                     .foregroundColor: Theme.ink])
+        NSAttributedString(string: text, attributes: [.font: Theme.sans(12, on ? .semibold : .medium),
+                                                     .foregroundColor: on ? A2.primary : A2.secondary])
     }
 
     private static func itemWidth(_ text: String) -> CGFloat {
@@ -796,6 +800,8 @@ final class Segmented: DrawnView {
         let r = rects[selected]
         knob.frame = CGRect(x: r.minX, y: bounds.height - r.maxY, width: r.width, height: r.height)
         knob.cornerRadius = r.height / 2
+        // A shadow with its path set is drawn by the window server; without one it is not.
+        knob.shadowPath = CGPath(roundedRect: CGRect(origin: .zero, size: r.size), cornerWidth: r.height / 2, cornerHeight: r.height / 2, transform: nil)
         CATransaction.commit()
     }
 
@@ -816,9 +822,15 @@ final class Segmented: DrawnView {
     }
 
     private func applyColors() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            knob.backgroundColor = Theme.ink.withAlphaComponent(0.08).cgColor
-        }
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        // The raised pill: white with a hairline and a soft shadow in light, a lighter glass in dark.
+        knob.backgroundColor = NSColor(white: 1, alpha: dark ? 0.18 : 1).cgColor
+        knob.borderWidth = 0.5
+        knob.borderColor = dark ? NSColor(white: 1, alpha: 0.2).cgColor : NSColor(white: 0, alpha: 0.08).cgColor
+        knob.shadowColor = NSColor(srgbRed: 30 / 255, green: 45 / 255, blue: 90 / 255, alpha: 1).cgColor
+        knob.shadowOpacity = dark ? 0 : 0.16
+        knob.shadowRadius = 3
+        knob.shadowOffset = CGSize(width: 0, height: -2)
     }
 
     override func draw(_ dirtyRect: NSRect) {
