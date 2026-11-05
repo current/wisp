@@ -207,6 +207,10 @@ final class Sidebar: NSView {
             surface.addSubview(content)
         }
         content.wantsLayer = true
+        // Glass does not clip its content view; keep every row inside the rounded panel.
+        content.layer?.cornerRadius = 16
+        content.layer?.cornerCurve = .continuous
+        content.layer?.masksToBounds = true
         // The selection is a soft grey fill, as in a Tahoe source list.
         highlight.cornerRadius = 9
         highlight.cornerCurve = .continuous
@@ -276,15 +280,19 @@ final class Sidebar: NSView {
         var rowIndex = 0
         let pagesAlpha: CGFloat = inSettings ? 0 : 1
         let lift: CGFloat = inSettings ? -10 : 0
+        // A short window closes the rows up rather than run them past the Settings row.
+        let headerCount = CGFloat(PageID.sections.filter { $0.0 != nil }.count)
+        let roomPerRow = (bounds.height - 44 - 44 - headerCount * 30) / CGFloat(rows.count)
+        let pitch = max(22, min(28, roomPerRow.rounded(.down)))
         for (sectionIndex, (title, pages)) in PageID.sections.enumerated() {
             if title != nil {
-                y += 12
+                y += pitch < 28 ? 8 : 12
                 result.append((headers[sectionIndex], NSRect(x: 19, y: y + lift, width: width - 38, height: 14), pagesAlpha))
                 y += 18
             }
             for _ in pages {
-                result.append((rows[rowIndex], NSRect(x: 10, y: y + lift, width: width - 20, height: 28), pagesAlpha))
-                y += 28
+                result.append((rows[rowIndex], NSRect(x: 10, y: y + lift, width: width - 20, height: pitch), pagesAlpha))
+                y += pitch
                 rowIndex += 1
             }
         }
@@ -292,7 +300,7 @@ final class Sidebar: NSView {
         let top = NSRect(x: 10, y: 44, width: width - 20, height: 28)
         let settingsFrame = inSettings ? top : bottom
         // A short window hides the settings row rather than draw it over the pages.
-        result.append((settingsRow, settingsFrame, inSettings || y <= bounds.height - 44 ? 1 : 0))
+        result.append((settingsRow, settingsFrame, 1))
         for (index, row) in sectionRows.enumerated() {
             let open = NSRect(x: 10, y: 44 + 36 + CGFloat(index) * 28, width: width - 20, height: 28)
             result.append((row, inSettings ? open : settingsFrame, inSettings ? 1 : 0))
