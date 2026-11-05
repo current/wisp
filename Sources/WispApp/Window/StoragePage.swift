@@ -499,7 +499,6 @@ final class StoragePage: DiskPage {
         delegate.openCleanUp { $0.show(.developer) }
     }
 
-    static func safeToTrash(_ path: String, home: String) -> Bool { StorageAccess.safeToTrash(path, home: home) }
 
     // MARK: History
 

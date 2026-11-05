@@ -420,6 +420,7 @@ final class AppDrawer: NSView {
     init(delegate: AppDelegate) {
         self.delegate = delegate
         super.init(frame: .zero)
+        storageSection.onClean = { [weak self] in self?.delegate.openCleanUp { $0.show(.junk) } }
         wantsLayer = true
         layer?.shadowColor = NSColor.black.cgColor
         layer?.shadowOpacity = 0.12

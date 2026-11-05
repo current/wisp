@@ -139,7 +139,7 @@ final class AppStorageSection: CardView {
         footnote.isHidden = false
         footnote.text = Theme.caption("Measured " + StoragePage.ago(storage.measuredAt) + " · folders in Library named after the app", size: 9)
         clearButton.isHidden = storage.cacheSize == 0
-        clearButton.title = "Clear Cache (\(Format.bytes(storage.cacheSize)))…"
+        clearButton.title = "Clean Up Cache (\(Format.bytes(storage.cacheSize)))…"
         clearButton.invalidateIntrinsicContentSize()
         needsLayout = true
     }
@@ -162,30 +162,8 @@ final class AppStorageSection: CardView {
         }
     }
 
-    @objc private func clearCache() {
-        guard let storage, let path = bundlePath, let window else { return }
-        let home = NSHomeDirectory()
-        let entries = storage.caches.filter { StoragePage.safeToTrash($0.path, home: home) }
-        guard !entries.isEmpty else { return }
-        let name = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
-        let alert = NSAlert()
-        alert.messageText = "Move \(name)'s cache to the Trash?"
-        alert.informativeText = entries.map { "\(Format.bytes($0.size))   \($0.path.replacingOccurrences(of: home, with: "~"))" }.joined(separator: "\n")
-            + "\n\n\(name) makes its cache again as needed. Quit it first so it does not write there while the folders move."
-        alert.addButton(withTitle: "Move to Trash")
-        alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            NSWorkspace.shared.recycle(entries.map { URL(fileURLWithPath: $0.path) }) { _, _ in
-                MainActor.assumeIsolated {
-                    Self.cache[path] = nil
-                    guard let self, self.bundlePath == path else { return }
-                    self.storage = nil
-                    self.refresh()
-                    self.measure(path)
-                    self.enclosingDrawer?.needsLayout = true
-                }
-            }
-        }
-    }
+    /// Removals happen on the Clean Up page, after its review.
+    var onClean: (() -> Void)?
+
+    @objc private func clearCache() { onClean?() }
 }
