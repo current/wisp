@@ -290,7 +290,12 @@ final class CleanUpPage: CardPage {
     /// The items on screen: this tab's, narrowed to one app when Leftovers was opened for it.
     private var shown: [CleanItem] {
         if tab == .uninstall { return uninstall.chosen == nil ? [] : uninstall.plan ?? [] }
-        let items = found[tab]?.items ?? []
+        var items = found[tab]?.items ?? []
+        if tab == .largeFiles {
+            // A duplicate is listed once, under Duplicates, after hashing finds it.
+            let duplicated = Set(items.filter { $0.group == duplicatesGroup }.flatMap(\.paths))
+            if !duplicated.isEmpty { items.removeAll { $0.group != duplicatesGroup && $0.paths.allSatisfy(duplicated.contains) } }
+        }
         guard tab == .leftovers, let leftoversOf else { return items }
         return items.filter { $0.ownerBundleID == leftoversOf.id }
     }
@@ -465,7 +470,7 @@ final class CleanUpPage: CardPage {
             } else if hasScanners, let date = found[tab]?.scannedAt {
                 let locked = tab == .largeFiles && !StorageAccess.hasFullDiskAccess
                 statusText = (found[tab]?.complete == false ? "Stopped " : "Scanned ") + StoragePage.ago(date)
-                    + (locked ? " · Desktop, Documents and Downloads need Full Disk Access" : "")
+                    + (locked ? " · Some folders need Full Disk Access" : "")
             } else {
                 statusText = ""
             }
@@ -603,7 +608,10 @@ final class CleanUpPage: CardPage {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     let removed = Set(report.removed.map(\.item.id))
-                    for tab in self.found.keys { self.found[tab]?.items.removeAll { removed.contains($0.id) } }
+                    let removedPaths = Set(report.removed.flatMap(\.item.paths))
+                    for tab in self.found.keys {
+                        self.found[tab]?.items.removeAll { removed.contains($0.id) || $0.paths.contains(where: removedPaths.contains) }
+                    }
                     self.uninstall.cleaned(removed)
                     self.selected.subtract(removed)
                     self.history?.append(record)

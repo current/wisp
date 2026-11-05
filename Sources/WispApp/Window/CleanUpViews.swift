@@ -387,7 +387,9 @@ final class CleanReview: NSView {
         let count = items.count == 1 ? "1 item" : "\(items.count) items"
         if permanent.isEmpty {
             setTitle("Move \(count) to the Trash?")
-            summary.stringValue = "\(bytes). You can put them back from the Trash until you empty it. Wisp checks each one again first and leaves alone anything in use."
+            summary.stringValue = items.count == 1
+                ? "\(bytes). You can put it back from the Trash until you empty it. Wisp checks it again first and leaves it alone if it is in use."
+                : "\(bytes). You can put them back from the Trash until you empty it. Wisp checks each one again first and leaves alone anything in use."
             goButton.title = "Move to Trash"
         } else {
             setTitle(trash.isEmpty ? "Remove \(count) for good?" : "Clean \(count)?")
