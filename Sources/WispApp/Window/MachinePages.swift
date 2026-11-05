@@ -1,8 +1,12 @@
 import AppKit
 import WispCore
 
-/// A machine page: a large chart with a Live/Hour/Day switch, a row of tiles,
+/// A machine page: a large chart with a 5 Min/Hour/Day switch, a row of tiles,
 /// optional extra cards and the apps that use the most of this resource.
+///
+/// The default layout stacks them at their natural heights, for pages that build on it
+/// (Storage, Battery, Containers). The CPU, Memory, GPU and Network pages place their
+/// cards to fill the window, as in the A2 mockups, through `fill(...)` helpers.
 @MainActor
 class MachinePage: CardPage {
     let hero: ChartCard
@@ -15,9 +19,15 @@ class MachinePage: CardPage {
     let onSelect: (Selection?) -> Void
     var metric: SystemMetric
     var secondMetric: SystemMetric?
+    /// The hero's height in the default layout.
+    var heroHeight: CGFloat = 256
+    /// False on pages whose apps card is replaced by other cards (Network).
+    var showsTable = true { didSet { tableCard.isHidden = !showsTable } }
     private var lastMinute = 0
     private(set) var lastTable: ProcessTable?
     private let maxRows = 40
+    /// How many apps fit when the table fills its card; nil lists up to `maxRows`.
+    private var fittedRows: Int?
 
     init(title: String, metric: SystemMetric, delegate: AppDelegate, onSelect: @escaping (Selection?) -> Void) {
         hero = ChartCard(title)
@@ -42,22 +52,33 @@ class MachinePage: CardPage {
         }
         table.onSelect = { [weak self] id in self?.onSelect(.app(id)) }
         setUp()
-        let tint = pageTint
-        hero.tint = tint
-        for tile in tiles { tile.tint = tint }
+        hero.tint = chartTint
+        hero.labelTint = labelTint
+        table.barColor = chartTint
+        for tile in tiles { tile.tint = labelTint }
     }
 
-    override var pageTint: NSColor { (PageID.allCases.first { $0.title == hero.title } ?? .cpu).tint }
+    var pageID: PageID { PageID.allCases.first { $0.title == hero.title } ?? .cpu }
+    override var pageTint: NSColor { pageID.tint }
+    override var labelTint: NSColor { A2.labelTint(pageID) }
+    /// The colour of the hero's line.
+    var chartTint: NSColor { pageTint }
 
-    /// The Live / Hour / Day switch sits in the toolbar on its glass capsule.
+    /// The 5 Min / Hour / Day switch sits in the toolbar on its glass capsule.
     override var toolbarItems: [NSView] { hero.range.items.count > 1 ? [hero.range] : [] }
 
     /// Subclasses add tiles, extras and table columns here.
     func setUp() {}
 
+    /// The toolbar's subtitle, longest first; a narrow toolbar shows the first that fits.
+    func subtitle(_ variants: [String]) {
+        let (_, line) = headingLines ?? heading(hero.title)
+        line.variants = (variants + [""]).map(Toolbar.subtitle)
+    }
+
     override func arrange(width: CGFloat) -> CGFloat {
         let inner = width - margin * 2
-        hero.frame = NSRect(x: margin, y: margin, width: inner, height: 300)
+        hero.frame = NSRect(x: margin, y: margin, width: inner, height: heroHeight)
         var y = hero.frame.maxY + gap
         if !tiles.isEmpty {
             let columns = min(tiles.count, 6)
@@ -80,10 +101,63 @@ class MachinePage: CardPage {
                 index += 2
             }
         }
-        tableTitle.frame = NSRect(x: 20, y: 16, width: inner - 40, height: 20)
-        table.frame = NSRect(x: 12, y: 44, width: inner - 24, height: table.naturalHeight)
-        tableCard.frame = NSRect(x: margin, y: y, width: inner, height: table.naturalHeight + 56)
+        guard showsTable else { return y - gap + margin }
+        placeTable(NSRect(x: margin, y: y, width: inner, height: 0), fill: false)
         return tableCard.frame.maxY + margin
+    }
+
+    // MARK: Filling the window
+
+    /// The height cards may take between the toolbar and the bottom margin.
+    var room: CGFloat { scroll.contentSize.height - Self.topInset - margin * 2 }
+
+    /// Card edges on whole points: `count` columns from `first` of a row split by `weights`.
+    func span(_ first: Int, _ count: Int, weights: [CGFloat], width: CGFloat) -> (x: CGFloat, width: CGFloat) {
+        let inner = width - margin * 2
+        let unit = (inner - gap * CGFloat(weights.count - 1)) / weights.reduce(0, +)
+        let start = weights.prefix(first).reduce(0, +) * unit + CGFloat(first) * gap
+        let end = start + weights[first..<(first + count)].reduce(0, +) * unit + CGFloat(count - 1) * gap
+        let left = (margin + start).rounded(), right = (margin + end).rounded()
+        return (left, right - left)
+    }
+
+    /// Places views side by side in one row, sized by `weights`.
+    func row(_ views: [NSView], weights: [CGFloat], y: CGFloat, height: CGFloat, width: CGFloat) {
+        for (index, view) in views.enumerated() {
+            let (x, w) = span(index, 1, weights: weights, width: width)
+            view.frame = NSRect(x: x, y: y, width: w, height: height)
+        }
+    }
+
+    /// The tiles in one row when the page is wide enough, else wrapped by `grid`. Returns the bottom edge.
+    func placeTiles(top: CGFloat, width: CGFloat, height: CGFloat = 112) -> CGFloat {
+        guard width - margin * 2 >= 760 else { return grid(tiles, top: top, width: width, columns: tiles.count, height: height) }
+        row(tiles, weights: tiles.map { _ in 1 }, y: top, height: height, width: width)
+        return top + height
+    }
+
+    /// The apps card at `frame`. With `fill` the table shows as many apps as fit its height
+    /// at 34 pt or more a row, sharing the height evenly; otherwise the card grows to its rows.
+    func placeTable(_ frame: NSRect, fill: Bool) {
+        let top: CGFloat = A2.padTop + 16 + 8, foot: CGFloat = 10
+        tableTitle.frame = NSRect(x: A2.padSide, y: A2.padTop, width: frame.width - A2.padSide * 2, height: 16)
+        if fill {
+            let body = max(table.headerHeight + 34, frame.height - top - foot) - table.headerHeight
+            let rows = max(1, Int(body / 34))
+            table.rowHeight = (body / CGFloat(rows) * 2).rounded(.down) / 2
+            tableCard.frame = frame
+            table.frame = NSRect(x: A2.padSide - table.inset, y: top, width: frame.width - (A2.padSide - table.inset) * 2,
+                                 height: frame.height - top - foot)
+            if fittedRows != rows {
+                fittedRows = rows
+                if let lastTable { fillTable(lastTable) }
+            }
+        } else {
+            fittedRows = nil
+            table.rowHeight = 34
+            table.frame = NSRect(x: A2.padSide - table.inset, y: top, width: frame.width - (A2.padSide - table.inset) * 2, height: table.naturalHeight)
+            tableCard.frame = NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: top + table.naturalHeight + foot)
+        }
     }
 
     // MARK: Chart
@@ -97,7 +171,26 @@ class MachinePage: CardPage {
     func updateHero(_ s: SystemSnapshot) {}
     func updateTiles(_ s: SystemSnapshot) {}
 
-    /// Live redraws every tick; Hour and Day only when a new minute is in.
+    /// "Last 4 minutes", "Last hour", "Last 24 hours": what the chart spans now.
+    var rangeName: String {
+        switch hero.range.selected {
+        case 0 where hero.range.items.first == "5 Min" || hero.range.items == ["Live"]:
+            let minutes = Int((Double(HistoryStore.recentSamples) * delegate.settings.interval / 60).rounded())
+            return minutes <= 1 ? "Last minute" : "Last \(minutes) minutes"
+        case 1: return "Last hour"
+        case 2: return "Last 24 hours"
+        default: return ""
+        }
+    }
+
+    static func peak(_ values: [Float]) -> Float { values.lazy.filter { !$0.isNaN }.max() ?? 0 }
+
+    /// The legend in the hero's corner: the highest point in view, then the span.
+    func showPeak(_ text: String) {
+        hero.header.items = [.init(text: "Peak", value: text), .init(text: rangeName, faint: true)]
+    }
+
+    /// 5 Min redraws every tick; Hour and Day only when a new minute is in.
     func refreshChart(force: Bool) {
         let history = delegate.monitor.history
         switch hero.range.selected {
@@ -116,13 +209,17 @@ class MachinePage: CardPage {
             hero.chart.secondary = secondMetric.map { history.day($0, minutes: minutes) } ?? []
             SpikeLabels.refresh(self, minutes: minutes)
         }
+        chartChanged()
     }
+
+    /// After the chart has new values: subclasses set its scale and the legend.
+    func chartChanged() {}
 
     // MARK: Table
 
     override func update(table: ProcessTable) {
         lastTable = table
-        fillTable(table)
+        if showsTable { fillTable(table) }
         updateApps(table)
     }
 
@@ -135,7 +232,7 @@ class MachinePage: CardPage {
 
     func fillTable(_ processTable: ProcessTable) {
         let column = table.sortColumn
-        let sorted = processTable.apps.sorted { sortValue($0, column: column) > sortValue($1, column: column) }.prefix(maxRows)
+        let sorted = processTable.apps.sorted { sortValue($0, column: column) > sortValue($1, column: column) }.prefix(fittedRows ?? maxRows)
         let peak = max(sorted.map(barColumnValue).max() ?? 0, 0.000_001)
         let rows = sorted.map { app in
             ColumnTable.Row(id: app.id, icon: Icons.icon(for: app), cells: cells(app, table: processTable),
@@ -143,7 +240,7 @@ class MachinePage: CardPage {
         }
         let countChanged = rows.count != table.rows.count
         table.rows = rows
-        if countChanged { relayout() }
+        if countChanged, fittedRows == nil { relayout() }
     }
 
     func appCPU(_ app: AppGroup, _ table: ProcessTable) -> String {
@@ -153,6 +250,23 @@ class MachinePage: CardPage {
     func busiest(_ table: ProcessTable, by key: (AppGroup) -> Double) -> AppGroup? {
         table.apps.max { key($0) < key($1) }
     }
+
+    /// "Apple M3 Max", from the CPU's brand string.
+    static let chip: String = {
+        var size = 0
+        sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
+        var bytes = [CChar](repeating: 0, count: max(size, 1))
+        sysctlbyname("machdep.cpu.brand_string", &bytes, &size, nil, 0)
+        return String(cString: bytes)
+    }()
+
+    static var uptime: String? { Uptime.bootDate().map { Uptime.label(Date().timeIntervalSince($0)) } }
+
+    /// Gigabytes as the mockups write them: "27", or "4.2" under ten.
+    static func gigabytes(_ bytes: Double) -> String {
+        let value = bytes / 1_073_741_824
+        return String(format: value >= 9.95 ? "%.0f" : "%.1f", value)
+    }
 }
 
 // MARK: - CPU
@@ -161,16 +275,16 @@ final class CPUPage: MachinePage {
     private let user = Tile("User"), system = Tile("System"), load = Tile("Load average")
     private let temperature = Tile("Temperature"), processes = Tile("Processes"), busiest = Tile("Busiest app")
     private let coresCard = CardView()
-    private let coresTitle = TextLine()
-    private let coresMeta = TextLine()
-    private let heatmap = Heatmap()
-    private let heatKey = HeatKey()
+    private let coresHeader = A2Header()
+    private let coreMap = A2CoreMap()
+    private let heatKey = A2HeatKey()
     private var busiestID: String?
 
     override var demand: Demand { [.cpuCores] }
+    override var chartTint: NSColor { A2.cpu }
 
     override func setUp() {
-        hero.chart.ceiling = 1
+        heroHeight = 228
         hero.chart.format = { String(format: "%.0f%%", $0 * 100) }
         hero.figure.format = { (String(format: "%.0f", $0 * 100), "%") }
         hero.state.isHidden = false
@@ -179,24 +293,58 @@ final class CPUPage: MachinePage {
         busiest.onClick = { [weak self] in if let id = self?.busiestID { self?.onSelect(.app(id)) } }
         tiles = [user, system, load, temperature, processes, busiest]
 
-        heatmap.columns = HistoryStore.recentCoreSamples
-        heatmap.rowPitch = 14
-        heatmap.labelWidth = 34
-        for view in [coresTitle, coresMeta, heatmap, heatKey] as [NSView] { coresCard.addSubview(view) }
-        extras = [(coresCard, 60 + 14 * 14 + 40)]
-        table.columns = [.init(title: "App", width: 0), .init(title: "CPU", width: 150, bar: true),
-                         .init(title: "Memory", width: 80), .init(title: "Power", width: 70), .init(title: "Processes", width: 70)]
+        coreMap.columns = HistoryStore.recentCoreSamples
+        coresHeader.title = "Cores"
+        coresHeader.symbol = "square.grid.2x2"
+        coresHeader.tint = labelTint
+        for view in [coresHeader, coreMap, heatKey] as [NSView] { coresCard.addSubview(view) }
+        canvas.addSubview(coresCard)
+        table.columns = [.init(title: "App", width: 0), .init(title: "CPU", width: 143, bar: true, valueWidth: 52),
+                         .init(title: "Memory", width: 58), .init(title: "Power", width: 50), .init(title: "Processes", width: 62)]
+        table.barEnd = A2.cpuLight
         tableTitle.text = cardTitle("Apps", "by CPU")
+        showSubtitle(cores: ProcessInfo.processInfo.activeProcessorCount)
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        showSubtitle(cores: delegate.system.cpu?.cores.count ?? ProcessInfo.processInfo.activeProcessorCount)
+    }
+
+    private func showSubtitle(cores: Int) {
+        let base = [Self.chip, "\(cores) cores"]
+        subtitle([(base + [Self.uptime].compactMap { $0 }).joined(separator: " · "), base.joined(separator: " · "), Self.chip])
     }
 
     override func arrange(width: CGFloat) -> CGFloat {
-        let bottom = super.arrange(width: width)
-        let inner = coresCard.bounds.width - 40
-        coresTitle.frame = NSRect(x: 20, y: 16, width: inner, height: 20)
-        coresMeta.frame = NSRect(x: 20, y: 38, width: inner, height: 14)
-        heatmap.frame = NSRect(x: 20, y: 62, width: inner, height: heatmap.naturalHeight)
-        heatKey.frame = NSRect(x: 20 + inner - 160, y: heatmap.frame.maxY + 14, width: 160, height: 14)
-        return bottom
+        let inner = width - margin * 2
+        hero.frame = NSRect(x: margin, y: margin, width: inner, height: heroHeight)
+        var y = placeTiles(top: hero.frame.maxY + gap, width: width) + gap
+        let left = room - (y - margin)
+        if inner >= 760 {
+            let height = max(300, left)
+            row([coresCard, tableCard], weights: [2, 3], y: y, height: height, width: width)
+            placeTable(tableCard.frame, fill: true)
+            y += height
+        } else {
+            coresCard.frame = NSRect(x: margin, y: y, width: inner, height: 300)
+            y += 300 + gap
+            placeTable(NSRect(x: margin, y: y, width: inner, height: max(300, left - 300 - gap)), fill: true)
+            y = tableCard.frame.maxY
+        }
+        let cardWidth = coresCard.bounds.width - A2.padSide * 2
+        coresHeader.frame = NSRect(x: A2.padSide, y: A2.padTop, width: cardWidth, height: 16)
+        let keyHeight: CGFloat = 14
+        coreMap.frame = NSRect(x: A2.padSide, y: A2.padTop + 16 + 12, width: cardWidth,
+                               height: coresCard.bounds.height - (A2.padTop + 16 + 12) - 12 - keyHeight - A2.padTop)
+        heatKey.frame = NSRect(x: A2.padSide, y: coreMap.frame.maxY + 12, width: cardWidth, height: keyHeight)
+        return y + margin
+    }
+
+    override func chartChanged() {
+        let peak = Self.peak(hero.chart.primary)
+        hero.chart.ceiling = Float(min(1, ChartScale.ceiling(peak: Double(peak), minimum: 0.1)))
+        showPeak(Format.percent(Double(peak)))
     }
 
     override func updateHero(_ s: SystemSnapshot) {
@@ -204,18 +352,19 @@ final class CPUPage: MachinePage {
         hero.figure.set(c.total)
         hero.state.text = c.total >= 0.85 ? "Strained" : (c.total >= 0.6 ? "Busy" : "Normal")
         hero.state.tone = c.total >= 0.85 ? .bad : (c.total >= 0.6 ? .warn : .good)
-        hero.meta.text = Theme.caption("\(c.performanceCores) performance and \(c.efficiencyCores) efficiency cores")
+        hero.meta.text = A2.plain("\(c.performanceCores) performance and \(c.efficiencyCores) efficiency cores")
         hero.needsLayout = true
 
         let history = delegate.monitor.history.cores()
         let efficiency = min(c.efficiencyCores, history.count)
-        var rows: [Heatmap.Row] = []
-        for (number, index) in (efficiency..<history.count).enumerated() { rows.append(.init(label: "P\(number + 1)", tag: "", values: history[index])) }
-        for index in 0..<efficiency { rows.append(.init(label: "E\(index + 1)", tag: "", values: history[index])) }
-        heatmap.rows = rows
-        coresTitle.text = cardTitle("Cores", "\(c.cores.count)")
+        var rows: [A2CoreMap.Row] = []
+        for (number, index) in (efficiency..<history.count).enumerated() { rows.append(.init(label: "P\(number + 1)", values: history[index])) }
+        for index in 0..<efficiency { rows.append(.init(label: "E\(index + 1)", values: history[index])) }
+        coreMap.rows = rows
+        coreMap.groupBreak = history.count - efficiency
+        coresHeader.detail = "\(c.cores.count)"
         let busy = c.cores.filter { $0 >= 0.8 }.count
-        coresMeta.text = Theme.caption("Last \(Int(Double(HistoryStore.recentCoreSamples) * delegate.settings.interval)) s · \(busy) busy now")
+        coresHeader.items = [.init(text: "Last \(Int(Double(HistoryStore.recentCoreSamples) * delegate.settings.interval)) s · \(busy) busy now")]
     }
 
     override func updateTiles(_ s: SystemSnapshot) {
@@ -264,65 +413,96 @@ final class MemoryPage: MachinePage {
     private let pressure = Tile("Pressure"), available = Tile("Available"), swapTile = Tile("Swap used")
     private let compressed = Tile("Compressed"), largest = Tile("Largest app")
     private let typesCard = CardView()
-    private let typesTitle = TextLine()
-    private let waffle = Waffle()
-    private let legend = LegendStrip()
+    private let typesHeader = A2Header()
+    private let waffle = A2Waffle()
+    private let keys = A2ShareKeys()
     private var largestID: String?
+    private var total: UInt64 = 0
+
+    override var chartTint: NSColor { A2.memoryApp }
 
     override func setUp() {
-        hero.figure.format = { value in DashboardView.split(Format.memory(value)) }
+        heroHeight = 228
+        hero.figure.format = { (Self.gigabytes($0), "GB") }
         hero.chart.format = { Format.memory(Double($0)) }
         hero.state.isHidden = false
         available.showsMeter = true
         largest.onClick = { [weak self] in if let id = self?.largestID { self?.onSelect(.app(id)) } }
         tiles = [pressure, available, swapTile, compressed, largest]
-        waffle.cell = 9
-        waffle.gap = 3
-        for view in [typesTitle, waffle, legend] as [NSView] { typesCard.addSubview(view) }
-        typesTitle.text = cardTitle("By kind", "")
-        waffle.onHover = { [weak self] hover in self?.legend.highlighted = hover?.0 }
-        legend.onHover = { [weak self] index in self?.waffle.highlighted = index }
-        extras = [(typesCard, 190)]
-        table.columns = [.init(title: "App", width: 0), .init(title: "Memory", width: 160, bar: true),
-                         .init(title: "CPU", width: 70), .init(title: "Processes", width: 70)]
+        typesHeader.title = "By kind"
+        typesHeader.symbol = "square.grid.2x2"
+        typesHeader.tint = labelTint
+        for view in [typesHeader, waffle, keys] as [NSView] { typesCard.addSubview(view) }
+        canvas.addSubview(typesCard)
+        table.columns = [.init(title: "App", width: 0), .init(title: "Memory", width: 201, bar: true, valueWidth: 60),
+                         .init(title: "CPU", width: 48), .init(title: "Processes", width: 62)]
+        table.barEnd = Theme.dynamic(0x8E8CF0, 0xB4B2FF)
         tableTitle.text = cardTitle("Apps", "by memory")
+        subtitle(["\(Format.memory(ProcessInfo.processInfo.physicalMemory)) unified memory"])
     }
 
     override var barColumnValue: (AppGroup) -> Double { { Double($0.memory) } }
 
     override func arrange(width: CGFloat) -> CGFloat {
-        let bottom = super.arrange(width: width)
-        let inner = typesCard.bounds.width - 40
-        typesTitle.frame = NSRect(x: 20, y: 16, width: inner, height: 20)
-        waffle.frame = NSRect(x: 20, y: 48, width: inner, height: 6 * 12 - 3)
-        legend.frame = NSRect(x: 20, y: 136, width: inner, height: 36)
-        return bottom
+        let inner = width - margin * 2
+        hero.frame = NSRect(x: margin, y: margin, width: inner, height: heroHeight)
+        var y = placeTiles(top: hero.frame.maxY + gap, width: width) + gap
+        let left = room - (y - margin)
+        if inner >= 760 {
+            let height = max(300, left)
+            row([typesCard, tableCard], weights: [2, 3], y: y, height: height, width: width)
+            placeTable(tableCard.frame, fill: true)
+            y += height
+        } else {
+            typesCard.frame = NSRect(x: margin, y: y, width: inner, height: 300)
+            y += 300 + gap
+            placeTable(NSRect(x: margin, y: y, width: inner, height: max(300, left - 300 - gap)), fill: true)
+            y = tableCard.frame.maxY
+        }
+        let cardWidth = typesCard.bounds.width - A2.padSide * 2
+        typesHeader.frame = NSRect(x: A2.padSide, y: A2.padTop, width: cardWidth, height: 16)
+        // Five kinds in three columns: two rows of keys.
+        let keysHeight = A2ShareKeys.keyHeight * 2 + A2ShareKeys.rowGap
+        let waffleTop = A2.padTop + 16 + 14
+        waffle.frame = NSRect(x: A2.padSide, y: waffleTop, width: cardWidth,
+                              height: max(40, typesCard.bounds.height - waffleTop - 16 - keysHeight - A2.padTop))
+        keys.frame = NSRect(x: A2.padSide, y: waffle.frame.maxY + 16, width: cardWidth, height: keysHeight)
+        return y + margin
+    }
+
+    override func chartChanged() {
+        if total > 0 { hero.chart.ceiling = Float(total) }
+        showPeak(Format.memory(Double(Self.peak(hero.chart.primary))))
     }
 
     override func updateHero(_ s: SystemSnapshot) {
         guard let m = s.memory else { return }
+        if m.total != total {
+            total = m.total
+            hero.chart.ceiling = Float(m.total)
+        }
         hero.figure.set(Double(m.used))
-        hero.chart.ceiling = Float(m.total)
         let level = m.pressure == .normal ? "Normal" : (m.pressure == .warning ? "Warning" : "Critical")
         hero.state.text = level
         hero.state.tone = m.pressure == .normal ? .good : (m.pressure == .warning ? .warn : .bad)
-        hero.meta.text = Theme.caption("Used of \(Format.memory(m.total)) · \(Format.percent(m.usedFraction))")
+        hero.meta.text = A2.plain("Used of \(Format.memory(m.total)) · \(Format.percent(m.usedFraction))")
         hero.needsLayout = true
+        subtitle(["\(Format.memory(m.total)) unified memory · \(Self.gigabytes(Double(m.used))) GB in use", "\(Format.memory(m.total)) unified memory"])
         let parts: [(String, UInt64, NSColor)] = [
-            ("App", m.app, Theme.indigo), ("Wired", m.wired, Theme.orange), ("Compressed", m.compressed, Theme.indigo.withAlphaComponent(0.45)),
-            ("Cached", m.cached, Theme.teal), ("Free", m.free, Theme.track),
+            ("App", m.app, A2.memoryApp), ("Wired", m.wired, A2.memoryWired), ("Compressed", m.compressed, A2.memoryCompressed),
+            ("Cached", m.cached, A2.teal), ("Free", m.free, A2.track),
         ]
-        waffle.parts = parts.map { .init(name: $0.0, value: Double($0.1), color: $0.2) }
-        legend.items = parts.map {
-            .init(name: $0.0, value: Format.memory($0.1), share: Format.percent(Double($0.1) / Double(max(m.total, 1))), color: $0.2)
-        }
+        waffle.parts = parts.map { .init(value: Double($0.1), color: $0.2) }
+        let whole = Double(max(m.total, 1))
+        keys.keys = parts.map { .init(label: $0.0, share: Format.percent(Double($0.1) / whole), value: Format.memory($0.1), color: $0.2) }
+        typesHeader.items = [.init(text: "\(Format.memory(m.total)) total")]
     }
 
     override func updateTiles(_ s: SystemSnapshot) {
         guard let m = s.memory else { return }
         let level = m.pressure == .normal ? "Normal" : (m.pressure == .warning ? "Warning" : "Critical")
         pressure.set(text: level)
-        pressure.figure.color = m.pressure == .normal ? Theme.good : (m.pressure == .warning ? Theme.warn : Theme.bad)
+        pressure.figure.color = m.pressure == .normal ? A2.good : (m.pressure == .warning ? A2.warn : A2.bad)
         pressure.set(note: m.pressure == .normal ? "Plenty to spare" : "Apps are being squeezed")
         let free = m.total > m.used ? m.total - m.used : 0
         let (value, unit) = DashboardView.split(Format.memory(free))
@@ -398,12 +578,12 @@ class DiskPage: MachinePage {
         if Date().timeIntervalSince(volumesCheckedAt) > 30 { refreshVolumes() }
         guard let d = s.disk else { return }
         hero.figure.set(Double(d.volumeFree))
-        hero.meta.text = Theme.caption("Free on the startup disk of \(Format.bytes(d.volumeTotal)) · read \(Format.rate(d.readBytesPerSecond)) · write \(Format.rate(d.writeBytesPerSecond))")
+        hero.meta.text = A2.plain("Free on the startup disk of \(Format.bytes(d.volumeTotal)) · read \(Format.rate(d.readBytesPerSecond)) · write \(Format.rate(d.writeBytesPerSecond))")
         hero.state.isHidden = !Strain.disk(d)
         hero.state.text = "Low space"
         hero.state.tone = .bad
-        hero.chart.secondaryColor = PageID.cpu.tint
-        hero.legend.text = legendText(("Read", pageTint), ("Write", PageID.cpu.tint))
+        hero.chart.secondaryColor = A2.cpu
+        hero.header.items = [.init(text: "Read", dot: chartTint), .init(text: "Write", dot: A2.cpu), .init(text: rangeName, faint: true)]
         hero.needsLayout = true
     }
 
@@ -482,32 +662,78 @@ final class NetworkPage: MachinePage {
     private let week = Tile("Last 7 days"), month = Tile("Last 30 days"), busiestTile = Tile("Busiest app")
     private var busiestID: String?
     private var totalsAt = Date.distantPast
+    private var placeAt = Date.distantPast
     private lazy var cards = NetworkCards(page: self)
 
     override var demand: Demand { [.appNetwork] }
+    override var chartTint: NSColor { A2.down }
 
     override func setUp() {
         metric = .networkIn
         secondMetric = .networkOut
+        heroHeight = 262
+        hero.chartTop = 86
+        hero.header.title = "Throughput"
         hero.chart.format = { Format.rate(Double($0)) }
         hero.chart.names = ("Down", "Up")
-        hero.figure.format = { DashboardView.split(Format.rate($0)) }
+        hero.chart.secondaryColor = A2.up
+        hero.figure.format = { value in
+            let (number, unit) = DashboardView.split(Format.rate(value))
+            return (number, unit + " down")
+        }
         busiestTile.onClick = { [weak self] in if let id = self?.busiestID { self?.onSelect(.app(id)) } }
         tiles = [downToday, upToday, week, month, busiestTile]
+        for tile in tiles { tile.plain = true }
         extras = cards.extras
-        table.columns = [.init(title: "App", width: 0), .init(title: "Download", width: 150, bar: true), .init(title: "Upload", width: 80),
-                         .init(title: "CPU", width: 70), .init(title: "Memory", width: 80)]
-        tableTitle.text = cardTitle("Apps", "by download")
+        showsTable = false
+        subtitle(["Network"])
     }
 
-    override var barColumnValue: (AppGroup) -> Double { { $0.networkInPerSecond } }
+    override func arrange(width: CGFloat) -> CGFloat {
+        let inner = width - margin * 2
+        hero.frame = NSRect(x: margin, y: margin, width: inner, height: heroHeight)
+        var y = hero.frame.maxY + gap
+        if inner >= 760 {
+            row(tiles, weights: [1, 1, 1, 1, 1.25], y: y, height: 96, width: width)
+            y += 96 + gap
+        } else {
+            y = grid(tiles, top: y, width: width, columns: 3, height: 96) + gap
+        }
+        let left = room - (y - margin)
+        let lists = extras.map(\.0)
+        if inner >= 760 {
+            let height = max(NetworkCards.height, left)
+            row(lists, weights: [1, 1], y: y, height: height, width: width)
+            y += height
+        } else {
+            for card in lists {
+                card.frame = NSRect(x: margin, y: y, width: inner, height: NetworkCards.height)
+                y += NetworkCards.height + gap
+            }
+            y -= gap
+        }
+        return y + margin
+    }
+
+    override func chartChanged() {
+        let down = Self.peak(hero.chart.primary), up = Self.peak(hero.chart.secondary)
+        hero.chart.ceiling = Float(ChartScale.ceiling(peak: Double(max(down, up)), minimum: 10_000))
+        peakText = Format.rate(Double(max(down, up)))
+    }
+
+    private var peakText = "–"
 
     override func updateHero(_ s: SystemSnapshot) {
+        if Date().timeIntervalSince(placeAt) > 30 {
+            placeAt = Date()
+            let place = NetworkPlace.current()
+            subtitle([place.map { [$0.kind, $0.address].joined(separator: " · ") } ?? "Not connected", place?.kind ?? ""])
+        }
         guard let n = s.network else { return }
         hero.figure.set(n.receivedBytesPerSecond)
-        hero.meta.text = Theme.caption("Download · upload \(Format.rate(n.sentBytesPerSecond))")
-        hero.chart.secondaryColor = PageID.cpu.tint
-        hero.legend.text = legendText(("Down", pageTint), ("Up", PageID.cpu.tint))
+        hero.meta.text = A2.facts([.init(label: "Upload", value: Format.rate(n.sentBytesPerSecond)), .init(label: "Peak", value: peakText)])
+        hero.header.items = [.init(text: "Down \(Format.rate(n.receivedBytesPerSecond))", dot: A2.down),
+                             .init(text: "Up \(Format.rate(n.sentBytesPerSecond))", dot: A2.up), .init(text: rangeName, faint: true)]
         hero.needsLayout = true
     }
 
@@ -544,22 +770,6 @@ final class NetworkPage: MachinePage {
             busiestTile.set(note: "Per-app traffic is off")
         }
     }
-
-    override func sortValue(_ app: AppGroup, column: Int) -> Double {
-        switch column {
-        case 2: return app.networkOutPerSecond
-        case 3: return app.cpu
-        case 4: return Double(app.memory)
-        default: return app.networkInPerSecond
-        }
-    }
-
-    override func cells(_ app: AppGroup, table: ProcessTable) -> [String] {
-        let measured = table.networkMeasured
-        return [app.name, measured && app.networkInPerSecond > 0 ? Format.rate(app.networkInPerSecond) : "–",
-                measured && app.networkOutPerSecond > 0 ? Format.rate(app.networkOutPerSecond) : "–",
-                appCPU(app, table), Format.memory(app.memory)]
-    }
 }
 
 // MARK: - GPU
@@ -571,21 +781,40 @@ final class GPUPage: MachinePage {
     private let clients = GPUClients()
     private var gpuShare: [String: Double] = [:]
 
+    override var chartTint: NSColor { A2.gpu }
+
     override func setUp() {
-        hero.chart.ceiling = 1
         hero.chart.format = { String(format: "%.0f%%", $0 * 100) }
         hero.figure.format = { (String(format: "%.0f", $0 * 100), "%") }
         for tile in [average, peak] { tile.figure.format = { (String(format: "%.0f", $0 * 100), "%") }; tile.showsMeter = true }
         tiles = [memoryTile, average, peak, temperature, power]
-        table.columns = [.init(title: "App", width: 0), .init(title: "GPU", width: 150, bar: true), .init(title: "CPU", width: 80),
-                         .init(title: "Memory", width: 80), .init(title: "Processes", width: 70)]
+        table.columns = [.init(title: "App", width: 0), .init(title: "GPU", width: 295, bar: true, valueWidth: 64), .init(title: "CPU", width: 64),
+                         .init(title: "Memory", width: 76), .init(title: "Processes", width: 80)]
+        table.barEnd = Theme.dynamic(0xFF7A96, 0xFF8AA0)
         tableTitle.text = cardTitle("Apps", "by GPU time")
+        subtitle(["Shares \(Format.memory(ProcessInfo.processInfo.physicalMemory)) of unified memory with the CPU"])
+    }
+
+    override func arrange(width: CGFloat) -> CGFloat {
+        let inner = width - margin * 2
+        hero.frame = NSRect(x: margin, y: margin, width: inner, height: heroHeight)
+        let y = placeTiles(top: hero.frame.maxY + gap, width: width) + gap
+        // A narrow window has no room for the long GPU bar.
+        table.columns[1].width = inner >= 760 ? 295 : 140
+        placeTable(NSRect(x: margin, y: y, width: inner, height: max(260, room - (y - margin))), fill: true)
+        return tableCard.frame.maxY + margin
+    }
+
+    override func chartChanged() {
+        let top = Self.peak(hero.chart.primary)
+        hero.chart.ceiling = Float(min(1, ChartScale.ceiling(peak: Double(top), minimum: 0.1)))
+        showPeak(Format.percent(Double(top)))
     }
 
     override func updateHero(_ s: SystemSnapshot) {
         guard let g = s.gpu else { return }
         hero.figure.set(g.utilization)
-        hero.meta.text = Theme.caption(g.name + (g.coreCount.map { " · \($0) cores" } ?? ""))
+        hero.meta.text = A2.plain(g.name + (g.coreCount.map { " · \($0) cores" } ?? ""))
         hero.needsLayout = true
     }
 

@@ -109,17 +109,14 @@ class CardPage: NSViewController, Page {
         }
     }
 
-    /// The page's colour, for the icon tiles in card titles.
+    /// The page's colour, for charts and the icons in card titles.
     var pageTint: NSColor { Theme.accent }
+    /// The page's colour for 12 and 13 pt text and icons: darker in light mode for contrast.
+    var labelTint: NSColor { pageTint }
 
-    /// A card title: the card's icon tile, its name, and a quieter detail after it.
+    /// A card title in the A2 style: the card's symbol, its name, and a quieter detail after it.
     func cardTitle(_ name: String, _ detail: String) -> NSAttributedString {
-        let text = NSMutableAttributedString(attributedString: Theme.header(name, symbol: Theme.symbol(for: name), tint: pageTint,
-                                                                            size: 14, tile: 20, color: Theme.ink, weight: .semibold))
-        if !detail.isEmpty {
-            text.append(NSAttributedString(string: "  " + detail, attributes: [.font: Theme.sans(13), .foregroundColor: Theme.inkTertiary]))
-        }
-        return text
+        A2.title(name, symbol: Theme.symbol(for: name), tint: labelTint, detail: detail)
     }
 
     /// Places views left to right in equal columns, wrapping to new rows. Returns the bottom edge.
@@ -164,110 +161,173 @@ class CardPage: NSViewController, Page {
     func place(_ title: TextLine, _ caption: TextLine, width: CGFloat) -> CGFloat { margin }
 }
 
-/// A small card with a caption, one figure and a line of context under it, and
-/// optionally a tick meter.
+/// A small A2 card: the name under a symbol in the page's colour, one figure, an
+/// optional meter and a line of context on the card's floor. `plain` drops the symbol
+/// and sets a smaller figure, as on the Network page's totals.
 final class Tile: CardView {
     let caption = TextLine()
     let figure = BigNumber()
     let note = TextLine()
-    let meter = TickMeter()
+    let meter = A2Meter()
     var showsMeter = false { didSet { meter.isHidden = !showsMeter; needsLayout = true } }
     let name: String
-    /// The page's colour for the icon tile; pages set it after creating their tiles.
-    var tint: NSColor = Theme.accent { didSet { caption.text = Theme.header(name, symbol: Theme.symbol(for: name), tint: tint) } }
+    /// The page's colour for the symbol and meter; pages set it after creating their tiles.
+    var tint: NSColor = Theme.accent { didSet { label(); meter.color = tint } }
+    var plain = false { didSet { label(); styleFigure(); needsLayout = true } }
 
     init(_ name: String) {
         self.name = name
         super.init()
-        caption.text = Theme.header(name, symbol: Theme.symbol(for: name), tint: tint)
-        figure.font = Theme.figure(24, .regular)
-        figure.unitFont = Theme.sans(13)
         figure.format = { (String(format: "%.0f", $0), "") }
+        figure.color = A2.primary
+        figure.unitColor = A2.secondary
+        figure.unitGap = 3
+        styleFigure()
         meter.isHidden = true
+        label()
         for view in [caption, figure, note, meter] { addSubview(view) }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private func label() {
+        caption.text = plain
+            ? NSAttributedString(string: name, attributes: [.font: Theme.sans(11.5, .medium), .foregroundColor: A2.secondary])
+            : A2.title(name, symbol: Theme.symbol(for: name), tint: tint, size: 12, color: A2.secondary)
+    }
+
+    private func styleFigure() {
+        figure.font = Theme.figure(plain ? 24 : 26, .semibold)
+        figure.unitFont = Theme.sans(13, .medium)
+        figure.kern = plain ? -0.72 : -0.91
+    }
+
     /// Shows text in place of a counted number.
     func set(text: String, unit: String = "") { figure.show(text, unit: unit) }
 
     func set(note text: String, color: NSColor = Theme.inkTertiary) {
-        note.text = Theme.caption(text, color: color, size: 9.5)
+        let shown = color == Theme.inkTertiary || color == Theme.inkSecondary ? A2.secondary : color
+        note.text = NSAttributedString(string: text, attributes: [.font: Theme.digits(11), .foregroundColor: shown])
     }
 
     override func layout() {
         super.layout()
-        let width = bounds.width - 32
-        caption.frame = NSRect(x: 16, y: 12, width: width, height: 22)
-        figure.frame = NSRect(x: 16, y: 38, width: width, height: 30)
-        if showsMeter {
-            note.frame = NSRect(x: 16, y: bounds.height - 40, width: width, height: 14)
-            meter.frame = NSRect(x: 16, y: bounds.height - 20, width: width, height: 8)
-        } else {
-            note.frame = NSRect(x: 16, y: bounds.height - 28, width: width, height: 14)
-        }
+        let width = bounds.width - A2.padSide * 2
+        caption.frame = NSRect(x: A2.padSide, y: 13, width: width, height: 16)
+        // The mockup's 26 pt figure sits 13 pt under the label, baseline 63 pt down; the
+        // plain 24 pt one 10 pt under a smaller label.
+        let baseline: CGFloat = plain ? 57 : 63
+        let font = figure.font, height: CGFloat = 34
+        figure.frame = NSRect(x: A2.padSide, y: (baseline - (height + font.ascender + font.descender) / 2).rounded(), width: width, height: height)
+        let noteY = plain ? max(66, bounds.height - 29) : bounds.height - 27
+        note.frame = NSRect(x: A2.padSide, y: noteY, width: width, height: 14)
+        meter.frame = NSRect(x: A2.padSide, y: noteY - 8 - 4 + 1, width: width, height: 4)
     }
-
 }
 
-/// The big chart at the top of a machine page: caption and state, the current
-/// figure, a context line, a Live/Hour/Day switch and a time chart.
+/// The big chart at the top of a machine page: the name in the page's colour with a
+/// state badge, the figure and a sub line, a legend on the right, and a time chart that
+/// runs edge to edge on the card's floor. The range switch lives in the toolbar.
 final class ChartCard: CardView {
-    let caption = TextLine()
+    let header = A2Header()
     let state = Pill()
-    let figure = BigNumber()
+    let figure = A2.figure()
     let meta = TextLine()
-    let range = Segmented(["Live", "Hour", "Day"])
+    let range = Segmented(["5 Min", "Hour", "Day"])
     let chart = TimeChart()
+    /// A legend in the header's corner, for pages that write their own ("● Charging").
     let legend = TextLine()
     var onRange: ((Int) -> Void)?
+    /// Where the chart starts, from the card's top.
+    var chartTop: CGFloat = 80 { didSet { needsLayout = true } }
 
-    var tint: NSColor = Theme.accent { didSet { setHeader() } }
+    var tint: NSColor = Theme.accent { didSet { chart.primaryColor = tint } }
+    /// The page's colour for the name and its symbol.
+    var labelTint: NSColor = Theme.accent { didSet { header.tint = labelTint; header.titleColor = labelTint } }
     let title: String
-    private var name: String { title }
-
-    private func setHeader() {
-        caption.text = Theme.header(name, symbol: Theme.symbol(for: name), tint: tint, size: 14, tile: 24, color: Theme.ink, weight: .semibold)
-        chart.primaryColor = tint
-    }
+    private var bandsObserver: NSObjectProtocol?
 
     init(_ name: String) {
         self.title = name
         super.init()
-        figure.font = Theme.figure(40, .regular)
-        figure.unitFont = Theme.sans(17)
+        header.title = name
+        header.symbol = Theme.symbol(for: name)
         state.isHidden = true
+        chart.edgeToEdge = true
+        legend.alignment = .right
         range.onChange = { [weak self] index in self?.onRange?(index) }
-        for view in [caption, state, figure, meta, range, chart, legend] as [NSView] { addSubview(view) }
-        setHeader()
+        for view in [header, state, figure, meta, legend, range, chart] as [NSView] { addSubview(view) }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    deinit { bandsObserver.map(NotificationCenter.default.removeObserver) }
+
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        // The battery's charging shading assumes TimeChart's old inset plot; keep it on the
+        // edge-to-edge plot instead, whoever moves it.
+        guard subview is ChargeBands else { return }
+        subview.postsFrameChangedNotifications = true
+        bandsObserver = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: subview, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated { self?.needsLayout = true }
+        }
+    }
+
     override func layout() {
         super.layout()
-        let width = bounds.width - 40
-        caption.frame = NSRect(x: 20, y: 14, width: caption.naturalWidth + 4, height: 26)
-        state.frame = NSRect(x: caption.frame.maxX + 8, y: 17, width: state.naturalWidth, height: 18)
-        let rangeWidth = range.naturalWidth
+        let width = bounds.width - A2.padSide * 2
+        header.frame = NSRect(x: A2.padSide, y: A2.padTop, width: width, height: 16)
+        state.frame = NSRect(x: A2.padSide + header.titleRight + 10, y: 13, width: state.naturalWidth, height: 18)
+        legend.frame = NSRect(x: A2.padSide + width / 2, y: A2.padTop, width: width / 2, height: 16)
         // The switch normally lives in the toolbar; place it only while it is still here.
-        if range.superview === self { range.frame = NSRect(x: 20 + width - rangeWidth, y: 14, width: rangeWidth, height: 26) }
-        figure.frame = NSRect(x: 20, y: 40, width: width / 2, height: 50)
-        meta.frame = NSRect(x: 20, y: 94, width: width, height: 14)
-        legend.frame = NSRect(x: 20 + width / 2, y: 60, width: width / 2, height: 14)
-        legend.alignment = .right
-        chart.frame = NSRect(x: 20, y: 120, width: width, height: bounds.height - 136)
+        range.isHidden = range.superview === self && range.items.count < 2
+        if range.superview === self {
+            let rangeWidth = range.naturalWidth
+            range.frame = NSRect(x: A2.padSide + width - rangeWidth, y: 10, width: rangeWidth, height: 26)
+        }
+        figure.frame = A2.figureFrame(x: A2.padSide, baseline: 71, width: width / 2)
+        meta.frame = NSRect(x: A2.padSide, y: 82, width: width, height: 15)
+        if meta.text.length > 0 { meta.text = A2Restyle.sub(meta.text) }
+        chart.frame = NSRect(x: 0, y: chartTop, width: bounds.width, height: max(40, bounds.height - chartTop))
+        for case let bands as ChargeBands in subviews {
+            let plot = chart.plotRect
+            let wanted = NSRect(x: chart.frame.minX + plot.minX, y: chart.frame.minY + plot.minY - 6, width: plot.width + 46, height: plot.height + 30)
+            if bands.frame != wanted { bands.frame = wanted }
+        }
     }
 }
 
-/// A time chart with one or two series, light grid lines, a time axis and a
-/// hover readout. Gaps (NaN) break the line instead of joining across them.
+/// Sub lines other pages still write as captions, moved to the A2 sub-line style.
+enum A2Restyle {
+    static func sub(_ text: NSAttributedString) -> NSAttributedString {
+        let result = NSMutableAttributedString(attributedString: text)
+        result.enumerateAttribute(.font, in: NSRange(location: 0, length: result.length)) { value, range, _ in
+            guard let font = value as? NSFont, font.pointSize == 11, font.fontDescriptor.symbolicTraits.contains(.bold) == false else { return }
+            result.addAttribute(.font, value: A2.subFont, range: range)
+            if (result.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor) == Theme.inkSecondary {
+                result.addAttribute(.foregroundColor, value: A2.secondary, range: range)
+            }
+        }
+        return result
+    }
+}
+
+/// A time chart with up to three series, light grid lines and a hover readout. Gaps
+/// (NaN) break the line instead of joining across them. `edgeToEdge` is the A2 look:
+/// the plot fills the view to its bottom edge, with dotted lines at half and the top
+/// of the scale, one label for the top, and every series filled. Otherwise it keeps a
+/// label column on the right and a time axis under the plot.
 final class TimeChart: BitmapView {
     var primary: [Float] = [] { didSet { needsDisplay = true } }
     var secondary: [Float] = [] { didSet { needsDisplay = true } }
+    var tertiary: [Float] = [] { didSet { needsDisplay = true } }
     var primaryColor: NSColor = Theme.accent
     var secondaryColor: NSColor = Theme.series[1]
+    var tertiaryColor: NSColor = Theme.series[2]
+    /// How strong the second and third fills are against the first's.
+    var secondaryFill: CGFloat = 1
+    var tertiaryFill: CGFloat = 0.2
     var ceiling: Float?
     /// The lowest the scale goes, so a near-zero series does not fill the chart.
     var minimumCeiling: Float = 0
@@ -275,10 +335,12 @@ final class TimeChart: BitmapView {
     var step: Double = 2
     var format: (Float) -> String = { String(format: "%.0f", $0) }
     var names = ("", "")
+    var tertiaryName = ""
     /// Bars: `primary` is the whole bar, `secondary` the part of it drawn on top in its own colour
-    /// (CPU total with the system share). Line: two lines, the primary filled.
+    /// (CPU total with the system share). Line: up to three lines, each filled.
     enum Style { case line, bars }
     var style: Style = .line { didSet { needsDisplay = true } }
+    var edgeToEdge = false { didSet { needsDisplay = true } }
     /// The time labels under the plot; compact cards leave them off.
     var showsTimeAxis = true { didSet { needsDisplay = true } }
     /// The value at the bottom of the scale, for series that never reach zero (memory, temperature).
@@ -291,13 +353,27 @@ final class TimeChart: BitmapView {
     var spikes: [ChartSpike] { get { marks.spikes } set { marks.spikes = newValue; marks.color = primaryColor; needsDisplay = true } }
     var onSpike: ((ChartSpike) -> Void)?
 
-    private var plot: NSRect {
-        NSRect(x: 0, y: 6 + marks.inset, width: bounds.width - axisWidth - 6, height: bounds.height - (showsTimeAxis ? 30 : 12) - marks.inset)
+    /// The mockup's charts keep 28 pt above the top of the scale and end 1 pt above the edge.
+    private static let edgeTop: CGFloat = 28
+
+    /// The plot area in the view's coordinates.
+    var plotRect: NSRect {
+        if edgeToEdge {
+            let top = Self.edgeTop + marks.inset
+            return NSRect(x: 0, y: top, width: bounds.width, height: max(1, bounds.height - 1 - top))
+        }
+        return NSRect(x: 0, y: 6 + marks.inset, width: bounds.width - axisWidth - 6, height: bounds.height - (showsTimeAxis ? 30 : 12) - marks.inset)
     }
+
+    private var series: [([Float], NSColor, CGFloat)] {
+        [(tertiary, tertiaryColor, tertiaryFill), (secondary, secondaryColor, secondaryFill), (primary, primaryColor, 1)]
+    }
+
+    private var count: Int { max(primary.count, secondary.count, tertiary.count) }
 
     private var top: Float {
         if let ceiling { return ceiling }
-        let peak = max(primary.filter { !$0.isNaN }.max() ?? 0, secondary.filter { !$0.isNaN }.max() ?? 0)
+        let peak = [primary, secondary, tertiary].map { $0.filter { !$0.isNaN }.max() ?? 0 }.max() ?? 0
         return max(Self.niceCeiling(peak), minimumCeiling)
     }
 
@@ -309,42 +385,119 @@ final class TimeChart: BitmapView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let rect = plot
+        let rect = plotRect
         // Nothing recorded yet (a fresh launch, or an app that just started): no axes to read.
-        guard primary.lazy.filter({ !$0.isNaN }).count > 1 || secondary.lazy.filter({ !$0.isNaN }).count > 1 else {
-            let text = Theme.caption("Collecting history", size: 9.5)
+        guard [primary, secondary, tertiary].contains(where: { $0.lazy.filter { !$0.isNaN }.count > 1 }) else {
+            let text = NSAttributedString(string: "Collecting history", attributes: [.font: Theme.sans(11), .foregroundColor: A2.tertiary])
             let size = text.size()
             text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
             return
         }
         let top = self.top
         let bottom = min(self.bottom, top * 0.99)
-        let axisFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        // Grid at the bottom, half and top, with labels on the right.
+        let count = self.count
+        let dx = rect.width / CGFloat(max(1, count - 1))
+        func y(_ value: Float) -> CGFloat { rect.maxY - CGFloat(min(1, max(0, (value - bottom) / (top - bottom)))) * rect.height }
+
+        if edgeToEdge, let context = NSGraphicsContext.current?.cgContext {
+            context.saveGState()
+            context.addPath(A2.bottomRounded(bounds))
+            context.clip()
+            drawEdgeGrid(rect, context: context)
+            if style == .bars {
+                drawBars(in: rect, y: y)
+            } else {
+                drawEdgeSeries(rect, dx: dx, count: count, y: y, context: context)
+            }
+            context.restoreGState()
+            let label = format(top) as NSString
+            let font = Theme.digits(10)
+            let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: A2.gridLabel]
+            let size = label.size(withAttributes: attributes)
+            label.draw(at: NSPoint(x: bounds.width - 16 - size.width, y: floor(rect.minY) - 5 - font.ascender), withAttributes: attributes)
+        } else {
+            drawInsetGrid(rect, top: top, bottom: bottom)
+            if style == .bars {
+                drawBars(in: rect, y: y)
+            } else {
+                drawInsetSeries(rect, dx: dx, count: count, y: y)
+            }
+        }
+
+        marks.draw(in: rect, x: { rect.minX + CGFloat($0) * dx }, top: { [primary, secondary] index in
+            let tops = [primary, secondary].compactMap { index < $0.count && !$0[index].isNaN ? $0[index] : nil }
+            return tops.max().map(y)
+        })
+
+        // Time axis: the oldest point and now.
+        if showsTimeAxis, !edgeToEdge {
+            let span = Double(count - 1) * step
+            let oldest = Theme.caption(Self.ago(span), size: 9)
+            oldest.draw(at: NSPoint(x: rect.minX, y: rect.maxY + 8))
+            let now = Theme.caption("Now", size: 9)
+            now.draw(at: NSPoint(x: rect.maxX - now.size().width, y: rect.maxY + 8))
+        }
+
+        if let index = hoverIndex, index < count, marks.hovered == nil { drawReadout(index, rect: rect, dx: dx, count: count, y: y) }
+    }
+
+    /// Dotted lines at half and at the top of the scale.
+    private func drawEdgeGrid(_ rect: NSRect, context: CGContext) {
+        context.setStrokeColor((A2.grid.usingColorSpace(.sRGB) ?? A2.grid).cgColor)
+        context.setLineWidth(1)
+        context.setLineDash(phase: 0, lengths: [2, 4])
+        for fraction: CGFloat in [0.5, 1] {
+            let lineY = floor(rect.maxY - fraction * rect.height) + 0.5
+            context.move(to: CGPoint(x: 0, y: lineY))
+            context.addLine(to: CGPoint(x: bounds.width, y: lineY))
+            context.strokePath()
+        }
+        context.setLineDash(phase: 0, lengths: [])
+    }
+
+    /// Each series as a line over a fill that fades down the full height to the floor.
+    private func drawEdgeSeries(_ rect: NSRect, dx: CGFloat, count: Int, y: (Float) -> CGFloat, context: CGContext) {
+        let alpha: CGFloat = A2.drawingDark ? 0.32 : 0.2
+        for (values, color, strength) in series where values.count > 1 {
+            let offset = count - values.count
+            let runs = A2.runs(values, x: { rect.minX + CGFloat($0 + offset) * dx }, y: y)
+            for run in runs {
+                let area = CGMutablePath()
+                area.move(to: CGPoint(x: run[0].x, y: bounds.height))
+                run.forEach { area.addLine(to: $0) }
+                area.addLine(to: CGPoint(x: run[run.count - 1].x, y: bounds.height))
+                area.closeSubpath()
+                A2.fade(area, color: color, alpha: alpha * strength, from: rect.minY, to: bounds.height, in: context)
+            }
+            context.setStrokeColor((color.usingColorSpace(.sRGB) ?? color).cgColor)
+            context.setLineWidth(1.8)
+            context.setLineJoin(.round)
+            for run in runs {
+                context.addLines(between: run)
+                context.strokePath()
+            }
+        }
+    }
+
+    /// Grid at the bottom, half and top, with labels on the right.
+    private func drawInsetGrid(_ rect: NSRect, top: Float, bottom: Float) {
+        let axisFont = Theme.digits(10)
         for fraction: CGFloat in [0, 0.5, 1] {
             let y = rect.maxY - fraction * rect.height
             let path = NSBezierPath()
             path.move(to: NSPoint(x: rect.minX, y: y + 0.5))
             path.line(to: NSPoint(x: rect.maxX, y: y + 0.5))
             if fraction > 0 { path.setLineDash([2, 3], count: 2, phase: 0) }
-            Theme.rule.setStroke()
+            A2.grid.setStroke()
             path.lineWidth = 1
             path.stroke()
             let label = format(bottom + (top - bottom) * Float(fraction)) as NSString
-            label.draw(at: NSPoint(x: rect.maxX + 6, y: y - 7), withAttributes: [.font: axisFont, .foregroundColor: Theme.inkSecondary])
+            label.draw(at: NSPoint(x: rect.maxX + 6, y: y - 7), withAttributes: [.font: axisFont, .foregroundColor: A2.gridLabel])
         }
-        let count = max(primary.count, secondary.count)
-        guard count > 1 else {
-            Theme.caption("Collecting", size: 9.5).draw(at: NSPoint(x: rect.midX - 28, y: rect.midY - 6))
-            return
-        }
-        let dx = rect.width / CGFloat(count - 1)
-        func y(_ value: Float) -> CGFloat { rect.maxY - CGFloat(min(1, max(0, (value - bottom) / (top - bottom)))) * rect.height }
+    }
 
-        if style == .bars {
-            drawBars(in: rect, y: y)
-        } else {
-        for (values, color, fill) in [(secondary, secondaryColor, false), (primary, primaryColor, true)] where values.count > 1 {
+    private func drawInsetSeries(_ rect: NSRect, dx: CGFloat, count: Int, y: (Float) -> CGFloat) {
+        for (values, color, strength) in series where values.count > 1 {
             let offset = count - values.count
             var segment: [NSPoint] = []
             func flush() {
@@ -352,13 +505,11 @@ final class TimeChart: BitmapView {
                 let line = NSBezierPath()
                 line.move(to: segment[0])
                 segment.dropFirst().forEach { line.line(to: $0) }
-                if fill {
-                    let area = line.copy() as! NSBezierPath
-                    area.line(to: NSPoint(x: segment.last!.x, y: rect.maxY))
-                    area.line(to: NSPoint(x: segment[0].x, y: rect.maxY))
-                    area.close()
-                    NSGradient(starting: color.withAlphaComponent(0.22), ending: color.withAlphaComponent(0.02))?.draw(in: area, angle: -90)
-                }
+                let area = line.copy() as! NSBezierPath
+                area.line(to: NSPoint(x: segment.last!.x, y: rect.maxY))
+                area.line(to: NSPoint(x: segment[0].x, y: rect.maxY))
+                area.close()
+                NSGradient(starting: color.withAlphaComponent(0.22 * strength), ending: color.withAlphaComponent(0.04 * strength))?.draw(in: area, angle: -90)
                 color.setStroke()
                 line.lineWidth = 1.5
                 line.lineJoinStyle = .round
@@ -371,47 +522,31 @@ final class TimeChart: BitmapView {
             }
             flush()
         }
-        }
+    }
 
-        marks.draw(in: rect, x: { rect.minX + CGFloat($0) * dx }, top: { [primary, secondary] index in
-            let tops = [primary, secondary].compactMap { index < $0.count && !$0[index].isNaN ? $0[index] : nil }
-            return tops.max().map(y)
-        })
-
-        // Time axis: the oldest point and now.
-        if showsTimeAxis {
-            let span = Double(count - 1) * step
-            let oldest = Theme.caption(Self.ago(span), size: 9)
-            oldest.draw(at: NSPoint(x: rect.minX, y: rect.maxY + 8))
-            let now = Theme.caption("Now", size: 9)
-            now.draw(at: NSPoint(x: rect.maxX - now.size().width, y: rect.maxY + 8))
+    private func drawReadout(_ index: Int, rect: NSRect, dx: CGFloat, count: Int, y: (Float) -> CGFloat) {
+        let x = rect.minX + CGFloat(index) * dx
+        A2.tertiary.setFill()
+        NSRect(x: x, y: rect.minY, width: 1, height: rect.height).fill()
+        var lines: [(NSColor, Float, String)] = []
+        for (values, color, name) in [(primary, primaryColor, names.0), (secondary, secondaryColor, names.1), (tertiary, tertiaryColor, tertiaryName)] {
+            let at = index - (count - values.count)
+            guard at >= 0, at < values.count, !values[at].isNaN else { continue }
+            lines.append((color, values[at], (name.isEmpty ? "" : name + "  ") + format(values[at])))
         }
-
-        if let index = hoverIndex, index < count, marks.hovered == nil {
-            let x = rect.minX + CGFloat(index) * dx
-            Theme.inkTertiary.withAlphaComponent(0.5).setFill()
-            NSRect(x: x, y: rect.minY, width: 1, height: rect.height).fill()
-            var lines: [(NSColor, String)] = []
-            if index < primary.count, !primary[index].isNaN { lines.append((primaryColor, (names.0.isEmpty ? "" : names.0 + "  ") + format(primary[index]))) }
-            let secondaryIndex = index - (count - secondary.count)
-            if secondaryIndex >= 0, secondaryIndex < secondary.count, !secondary[secondaryIndex].isNaN {
-                lines.append((secondaryColor, (names.1.isEmpty ? "" : names.1 + "  ") + format(secondary[secondaryIndex])))
-            }
-            for (color, _) in lines {
-                let value = color == primaryColor ? primary[index] : secondary[secondaryIndex]
-                color.setFill()
-                NSBezierPath(ovalIn: NSRect(x: x - 3, y: y(value) - 3, width: 6, height: 6)).fill()
-            }
-            let when = Self.ago(Double(count - 1 - index) * step)
-            let text = ([when] + lines.map(\.1)).joined(separator: "   ") as NSString
-            let attributes: [NSAttributedString.Key: Any] = [.font: Theme.figure(11, .medium), .foregroundColor: NSColor.white]
-            let size = text.size(withAttributes: attributes)
-            var box = NSRect(x: x + 8, y: rect.minY, width: size.width + 16, height: 22)
-            if box.maxX > rect.maxX { box.origin.x = x - 8 - box.width }
-            Theme.tooltip.setFill()
-            NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6).fill()
-            text.draw(at: NSPoint(x: box.minX + 8, y: box.minY + (22 - size.height) / 2), withAttributes: attributes)
+        for (color, value, _) in lines {
+            color.setFill()
+            NSBezierPath(ovalIn: NSRect(x: x - 3, y: y(value) - 3, width: 6, height: 6)).fill()
         }
+        let when = Self.ago(Double(count - 1 - index) * step)
+        let text = ([when] + lines.map(\.2)).joined(separator: "   ") as NSString
+        let attributes: [NSAttributedString.Key: Any] = [.font: Theme.figure(11, .medium), .foregroundColor: NSColor.white]
+        let size = text.size(withAttributes: attributes)
+        var box = NSRect(x: x + 8, y: rect.minY, width: size.width + 16, height: 22)
+        if box.maxX > rect.maxX { box.origin.x = x - 8 - box.width }
+        Theme.tooltip.setFill()
+        NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6).fill()
+        text.draw(at: NSPoint(x: box.minX + 8, y: box.minY + (22 - size.height) / 2), withAttributes: attributes)
     }
 
     /// Stacked bars, newest on the right, as many as fit at a comfortable width.
@@ -455,8 +590,9 @@ final class TimeChart: BitmapView {
     override func mouseMoved(with event: NSEvent) {
         if marks.hover(at: convert(event.locationInWindow, from: nil)) { needsDisplay = true }
         let x = convert(event.locationInWindow, from: nil).x
-        let count = max(primary.count, secondary.count)
+        let count = self.count
         guard count > 1 else { return }
+        let plot = plotRect
         let index = Int(((x - plot.minX) / plot.width * CGFloat(count - 1)).rounded())
         let clamped = min(max(0, index), count - 1)
         if clamped != hoverIndex {
@@ -476,15 +612,18 @@ final class TimeChart: BitmapView {
     }
 }
 
-/// A sortable list of rows with an icon, drawn in one view. Used for the app
-/// lists on machine pages: a few dozen rows, so drawing all of them is cheaper
-/// than a table view with cell reuse.
+/// A sortable list of rows with an icon, drawn in one view, in the A2 table style:
+/// quiet column titles, 22 pt icons, hairlines between rows, the bar column's figure in
+/// bold and the rest quieter. Used for the app lists on machine pages: a few dozen rows,
+/// so drawing all of them is cheaper than a table view with cell reuse.
 final class ColumnTable: BitmapView {
     struct Column {
         var title: String
         var width: CGFloat
         var right = true
         var bar = false
+        /// For a bar column: the room its figure takes at the right of the column.
+        var valueWidth: CGFloat = 55
     }
 
     struct Row {
@@ -506,86 +645,88 @@ final class ColumnTable: BitmapView {
     var selectedID: String? { didSet { if selectedID != oldValue { needsDisplay = true } } }
     var onSort: ((Int) -> Void)?
     var onSelect: ((String) -> Void)?
-    let rowHeight: CGFloat = 30
-    let headerHeight: CGFloat = 30
+    var rowHeight: CGFloat = 34 { didSet { if rowHeight != oldValue { needsDisplay = true } } }
+    let headerHeight: CGFloat = 22
+    /// Space at each side, so the hover wash reaches a little past the icons and figures.
+    var inset: CGFloat = 8
+    /// The bar's colours: the column's own, fading into a lighter one.
+    var barColor: NSColor = A2.cpu
+    var barEnd: NSColor? = A2.cpuLight
     private var hoverRow: Int?
 
     var naturalHeight: CGFloat { headerHeight + CGFloat(rows.count) * rowHeight }
 
+    private static let spacing: CGFloat = 11
+    private static let iconSize: CGFloat = 22
+
     private func columnFrames() -> [NSRect] {
-        let fixed = columns.dropFirst().reduce(0) { $0 + $1.width + 16 }
-        let first = max(120, bounds.width - fixed)
-        var x: CGFloat = 0
+        let fixed = columns.dropFirst().reduce(0) { $0 + $1.width + Self.spacing }
+        let first = max(120, bounds.width - inset * 2 - fixed)
+        var x = inset
         return columns.enumerated().map { index, column in
             let width = index == 0 ? first : column.width
-            defer { x += width + (index == 0 ? 0 : 16) }
-            return NSRect(x: index == 0 ? 0 : x + 16, y: 0, width: width, height: rowHeight)
+            defer { x += width + Self.spacing }
+            return NSRect(x: x, y: 0, width: width, height: rowHeight)
         }
     }
 
+    /// The column whose figure is bold: the bar column, else the first after the name.
+    private var strongColumn: Int { columns.firstIndex(where: \.bar) ?? 1 }
+
     override func draw(_ dirtyRect: NSRect) {
         let frames = columnFrames()
-        let headerFont = Theme.mono(9.5)
+        let headerFont = Theme.sans(11, .medium)
         for (index, column) in columns.enumerated() {
-            let sorted = index == sortColumn
-            let title = Theme.caption(column.title + (sorted ? " ↓" : ""), color: sorted ? Theme.ink : Theme.inkTertiary, size: 9.5)
-            let size = title.size()
+            let color = index == sortColumn && index > 0 ? A2.secondary : A2.tertiary
+            let width = A2.width(column.title, headerFont)
             let frame = frames[index]
-            let x = column.right && index > 0 ? frame.maxX - size.width : frame.minX + (index == 0 ? 8 : 0)
-            title.draw(at: NSPoint(x: x, y: (headerHeight - (headerFont.ascender - headerFont.descender)) / 2))
+            let x = column.right && index > 0 ? frame.maxX - width : frame.minX + (index == 0 && rows.contains { $0.icon != nil } ? Self.iconSize + Self.spacing : 0)
+            A2.draw(column.title, at: x, mid: headerHeight / 2, font: headerFont, color: color)
         }
-        Theme.rule.setFill()
-        NSRect(x: 0, y: headerHeight - 1, width: bounds.width, height: 1).fill()
 
-        let nameFont = Theme.sans(13)
-        let figureFont = Theme.figure(12.5)
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingTail
         let first = max(0, Int((dirtyRect.minY - headerHeight) / rowHeight))
         let last = min(rows.count, Int((dirtyRect.maxY - headerHeight) / rowHeight) + 1)
         guard first < last else { return }
+        let strong = strongColumn
         for index in first..<last {
             let row = rows[index]
-            let y = headerHeight + CGFloat(index) * rowHeight
+            let top = headerHeight + CGFloat(index) * rowHeight
+            let mid = top + rowHeight / 2
+            let wash = NSRect(x: 0, y: top + 2, width: bounds.width, height: rowHeight - 4)
             if row.id == selectedID {
                 Theme.accentLow.setFill()
-                NSBezierPath(roundedRect: NSRect(x: 0, y: y + 1, width: bounds.width, height: rowHeight - 2), xRadius: 6, yRadius: 6).fill()
+                NSBezierPath(roundedRect: wash, xRadius: 8, yRadius: 8).fill()
             } else if index == hoverRow {
-                Theme.hover.setFill()
-                NSBezierPath(roundedRect: NSRect(x: 0, y: y + 1, width: bounds.width, height: rowHeight - 2), xRadius: 6, yRadius: 6).fill()
-            } else if index % 2 == 1 {
-                Theme.stripe.setFill()
-                NSBezierPath(roundedRect: NSRect(x: 0, y: y + 1, width: bounds.width, height: rowHeight - 2), xRadius: 6, yRadius: 6).fill()
+                A2.rowHover.setFill()
+                NSBezierPath(roundedRect: wash, xRadius: 8, yRadius: 8).fill()
+            } else if index > 0, index - 1 != hoverRow, rows[index - 1].id != selectedID {
+                A2.hairline.setFill()
+                NSRect(x: inset, y: top, width: bounds.width - inset * 2, height: 0.5).fill()
             }
             for (column, text) in row.cells.enumerated() where column < columns.count {
-                let frame = frames[column].offsetBy(dx: 0, dy: y)
+                let frame = frames[column].offsetBy(dx: 0, dy: top)
                 if column == 0 {
-                    var x = frame.minX + 8
+                    var x = frame.minX
                     if let icon = row.icon {
-                        icon.draw(in: NSRect(x: x, y: y + 7, width: 16, height: 16), from: .zero, operation: .sourceOver, fraction: 1,
-                                  respectFlipped: true, hints: nil)
-                        x += 24
+                        icon.draw(in: NSRect(x: x, y: (mid - Self.iconSize / 2).rounded(), width: Self.iconSize, height: Self.iconSize), from: .zero,
+                                  operation: .sourceOver, fraction: row.faint ? 0.5 : 1, respectFlipped: true, hints: nil)
+                        x += Self.iconSize + Self.spacing
                     }
-                    (text as NSString).draw(with: NSRect(x: x, y: y + 6, width: frame.maxX - x - 4, height: 18),
-                                            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                            attributes: [.font: nameFont, .foregroundColor: row.faint ? Theme.inkTertiary : Theme.ink,
-                                                         .paragraphStyle: paragraph])
+                    A2.drawTruncated(text, in: NSRect(x: x, y: frame.minY, width: frame.maxX - x, height: rowHeight), font: A2.rowFont,
+                                     color: row.faint ? A2.tertiary : A2.primary)
                     continue
                 }
-                let attributes: [NSAttributedString.Key: Any] = [.font: figureFont,
-                                                                 .foregroundColor: row.faint || text == "–" ? Theme.inkTertiary : Theme.ink]
-                let size = (text as NSString).size(withAttributes: attributes)
-                if columns[column].bar {
-                    let bar = NSRect(x: frame.minX, y: y + rowHeight / 2 - 1.5, width: max(0, frame.width - 66), height: 3)
-                    Theme.track.setFill()
-                    NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
-                    Theme.accent.setFill()
-                    var filled = bar
-                    filled.size.width = max(2, bar.width * CGFloat(min(1, max(0, row.fraction))))
-                    NSBezierPath(roundedRect: filled, xRadius: 1.5, yRadius: 1.5).fill()
+                let spec = columns[column]
+                let quiet = row.faint || text == "–"
+                let font = column == strong ? A2.valueFont : A2.quietValueFont
+                let color = quiet ? A2.tertiary : (column == strong ? A2.primary : A2.secondary)
+                var textFrame = frame
+                if spec.bar {
+                    let bar = NSRect(x: frame.minX, y: mid - 2.5, width: max(0, frame.width - spec.valueWidth - Self.spacing), height: 5)
+                    A2.meter(bar, fraction: max(0.012, row.fraction), color: barColor, end: barEnd)
+                    textFrame = NSRect(x: frame.maxX - spec.valueWidth, y: frame.minY, width: spec.valueWidth, height: frame.height)
                 }
-                let x = columns[column].right ? frame.maxX - size.width : frame.minX
-                (text as NSString).draw(at: NSPoint(x: x, y: y + (rowHeight - size.height) / 2), withAttributes: attributes)
+                A2.drawTruncated(text, in: textFrame, font: font, color: color, alignment: spec.right ? .right : .left)
             }
         }
     }
@@ -603,12 +744,15 @@ final class ColumnTable: BitmapView {
         return rows.indices.contains(index) ? index : nil
     }
 
+    /// A row and the hairline under it, which hover hides.
+    private func rowRect(_ row: Int) -> NSRect {
+        NSRect(x: 0, y: headerHeight + CGFloat(row) * rowHeight, width: bounds.width, height: rowHeight + 1)
+    }
+
     override func mouseMoved(with event: NSEvent) {
         let index = rowIndex(convert(event.locationInWindow, from: nil))
         if index != hoverRow {
-            for row in [hoverRow, index].compactMap({ $0 }) {
-                setNeedsDisplay(NSRect(x: 0, y: headerHeight + CGFloat(row) * rowHeight, width: bounds.width, height: rowHeight))
-            }
+            for row in [hoverRow, index].compactMap({ $0 }) { setNeedsDisplay(rowRect(row)) }
             hoverRow = index
         }
     }
@@ -616,7 +760,7 @@ final class ColumnTable: BitmapView {
     override func mouseExited(with event: NSEvent) {
         if let row = hoverRow {
             hoverRow = nil
-            setNeedsDisplay(NSRect(x: 0, y: headerHeight + CGFloat(row) * rowHeight, width: bounds.width, height: rowHeight))
+            setNeedsDisplay(rowRect(row))
         }
     }
 

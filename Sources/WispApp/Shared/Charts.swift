@@ -93,7 +93,7 @@ enum MiniGraph {
 
     /// Two short right-aligned lines, used where one number is not enough (network up and down).
     static func twoLines(_ top: String, _ bottom: String, width: CGFloat, tint: NSColor?) -> NSImage {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+        let font = Theme.digits(9, .medium)
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .right
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: tint ?? NSColor.black, .paragraphStyle: paragraph]

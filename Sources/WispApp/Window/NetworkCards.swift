@@ -1,4 +1,5 @@
 import AppKit
+import SystemConfiguration
 import WispCore
 
 /// The Network page's two extra cards: the apps that used the most data (last
@@ -17,17 +18,23 @@ final class NetworkCards {
     private var lastTable: ProcessTable?
     private let work = DispatchQueue(label: "app.wisp.network.hosts", qos: .utility)
     private var busy = false
-    static let rows = 6
-    static let height: CGFloat = 46 + CGFloat(rows) * 34 + 40
+    nonisolated static let rows = 6
+    /// The cards' height when the window leaves them no more room.
+    static let height: CGFloat = 314
 
     init(page: MachinePage) {
         self.page = page
-        dataCard.title.text = page.cardTitle("Most data", "this month")
+        dataCard.header.title = "Most data"
+        dataCard.header.detail = "this month"
         dataCard.toggle = Segmented(["5 min", "Today", "Month"])
         dataCard.toggle?.select(2, animated: false)
         dataCard.toggle?.onChange = { [weak self] _ in self?.dataAt = .distantPast; self?.refreshData() }
-        hostsCard.title.text = page.cardTitle("Hosts", "all apps")
-        hostsCard.footnote.text = Theme.caption("Open connections, counted since each one opened", size: 9.5)
+        dataCard.meterColor = A2.down
+        dataCard.meterEnd = A2.up
+        hostsCard.header.title = "Hosts"
+        hostsCard.header.detail = "all apps"
+        hostsCard.meterColor = A2.cpu
+        hostsCard.footnote.text = Self.footnote("Open connections, counted since each one opened")
         for (index, row) in dataCard.rows.enumerated() {
             row.onClick = { [weak self] in
                 guard let self, index < self.appIDs.count else { return }
@@ -37,6 +44,10 @@ final class NetworkCards {
     }
 
     var extras: [(CardView, CGFloat)] { [(dataCard, Self.height), (hostsCard, Self.height)] }
+
+    static func footnote(_ text: String) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [.font: Theme.sans(10.5), .foregroundColor: A2.tertiary])
+    }
 
     func update(table: ProcessTable) {
         lastTable = table
@@ -59,7 +70,7 @@ final class NetworkCards {
         case 1: totals = usage.totals(since: Calendar.current.startOfDay(for: now))
         default: totals = usage.totals(since: usage.startOfMonth(now))
         }
-        dataCard.title.text = page.cardTitle("Most data", ["in the last 5 minutes", "today", "this month"][mode])
+        dataCard.header.detail = ["in the last 5 minutes", "today", "this month"][mode]
         let top = totals.sorted { $0.value.bytes > $1.value.bytes }.filter { $0.value.bytes >= 1 }.prefix(Self.rows)
         appIDs = top.map(\.key)
         let peak = max(top.first?.value.bytes ?? 1, 1)
@@ -71,16 +82,15 @@ final class NetworkCards {
             let note = mode == 0 ? "\(Format.rate(entry.bytes / window)) on average"
                 : "↓ \(Format.bytes(entry.received)) ↑ \(Format.bytes(entry.sent))"
             return NetworkListCard.Item(icon: icon, name: app?.name ?? entry.name, note: note, value: Format.bytes(entry.bytes),
-                                 fraction: entry.bytes / peak)
+                                        fraction: entry.bytes / peak)
         }, empty: usage.since == nil || !table.networkMeasured && totals.isEmpty ? "Nothing counted yet" : "No data used")
         if mode == 0 {
             let minutes = Int((seconds / 60).rounded())
-            dataCard.footnote.text = Theme.caption(seconds < 280 ? "Measured for \(max(minutes, seconds > 0 ? 1 : 0)) of the last 5 minutes"
-                                                   : "Average rates, for finding what uses a hotspot", size: 9.5)
+            dataCard.footnote.text = Self.footnote(seconds < 280 ? "Measured for \(max(minutes, seconds > 0 ? 1 : 0)) of the last 5 minutes"
+                                                   : "Average rates, for finding what uses a hotspot")
         } else {
-            dataCard.footnote.text = Theme.caption(AppNetworkSection.sinceNote(usage.since, background: page.delegate.settings.trackAppNetwork,
-                                                                               monthStart: mode == 1 ? Calendar.current.startOfDay(for: now) : usage.startOfMonth(now)),
-                                                   size: 9.5)
+            dataCard.footnote.text = Self.footnote(AppNetworkSection.sinceNote(usage.since, background: page.delegate.settings.trackAppNetwork,
+                                                                               monthStart: mode == 1 ? Calendar.current.startOfDay(for: now) : usage.startOfMonth(now)))
         }
     }
 
@@ -88,7 +98,10 @@ final class NetworkCards {
 
     private func refreshHosts(_ table: ProcessTable) {
         guard let page, !busy, table.networkMeasured else {
-            if !table.networkMeasured { hostsCard.fill([], empty: "Per-app traffic is off") }
+            if !table.networkMeasured {
+                hostsCard.fill([], empty: "Per-app traffic is off")
+                hostsCard.header.items = []
+            }
             return
         }
         busy = true
@@ -97,20 +110,25 @@ final class NetworkCards {
         for process in table.processes { appOf[process.pid] = table.app(process.groupID)?.name ?? process.name }
         work.async { [weak self] in
             let flows = monitor.networkFlows(pids: nil) ?? []
-            let items = Self.hosts(flows, appOf: appOf)
+            let (items, open) = Self.hosts(flows, appOf: appOf)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.busy = false
                 self.hostsCard.fill(items, empty: "No connections")
+                self.hostsCard.header.items = open > 0 ? [.init(text: open == 1 ? "1 open connection" : "\(open) open connections")] : []
             }
         }
     }
 
-    nonisolated private static func hosts(_ flows: [NetworkFlow], appOf: [Int32: String]) -> [NetworkListCard.Item] {
+    /// The busiest hosts, and how many connections leave the Mac.
+    nonisolated private static func hosts(_ flows: [NetworkFlow], appOf: [Int32: String]) -> ([NetworkListCard.Item], Int) {
         // Only flows that left the Mac, by the far end's address.
         var byAddress: [String: (endpoint: NetworkEndpoint, bytes: UInt64, received: UInt64, sent: UInt64, apps: [String: UInt64])] = [:]
+        var open = 0
         for flow in flows {
-            guard let remote = flow.remote, !remote.isUnspecified, !remote.isLoopback, flow.received &+ flow.sent > 0 else { continue }
+            guard let remote = flow.remote, !remote.isUnspecified, !remote.isLoopback else { continue }
+            open += 1
+            guard flow.received &+ flow.sent > 0 else { continue }
             var entry = byAddress[remote.address] ?? (remote, 0, 0, 0, [:])
             entry.bytes &+= flow.received &+ flow.sent
             entry.received &+= flow.received
@@ -136,15 +154,17 @@ final class NetworkCards {
         }
         let top = groups.sorted { $0.value.bytes > $1.value.bytes }.prefix(rows)
         let peak = Double(max(top.first?.value.bytes ?? 1, 1))
-        return top.map { name, group in
+        let items = top.map { name, group in
             let apps = group.apps.sorted { $0.value > $1.value }.map(\.key)
             let note = apps.count > 2 ? "\(apps[0]), \(apps[1]) and \(apps.count - 2) more" : apps.joined(separator: ", ")
             return NetworkListCard.Item(icon: nil, name: name, note: note, value: Format.bytes(group.bytes), fraction: Double(group.bytes) / peak)
         }
+        return (items, open)
     }
 }
 
-/// `ListCard` with a switch in the title row and a footnote, same row metrics.
+/// A list card of the Network page: a header with an optional switch, six rows that
+/// share the height (icon, name over a detail, a meter and the amount) and a footnote.
 final class NetworkListCard: CardView {
     struct Item: Sendable {
         var icon: NSImage?
@@ -154,15 +174,18 @@ final class NetworkListCard: CardView {
         var fraction: Double
     }
 
-    let title = TextLine()
+    let header = A2Header()
     let footnote = TextLine()
     private let empty = TextLine()
-    let rows: [ListRow] = (0..<NetworkCards.rows).map { _ in ListRow() }
+    let rows: [A2Row] = (0..<NetworkCards.rows).map { _ in A2Row() }
     var toggle: Segmented? { didSet { oldValue?.removeFromSuperview(); toggle.map(addSubview) } }
+    var meterColor = A2.cpu
+    var meterEnd: NSColor?
 
     override init() {
         super.init()
-        for view in [title, footnote, empty] as [NSView] { addSubview(view) }
+        for view in [header, footnote, empty] as [NSView] { addSubview(view) }
+        empty.alignment = .center
         for row in rows {
             row.isHidden = true
             addSubview(row)
@@ -176,26 +199,53 @@ final class NetworkListCard: CardView {
             row.isHidden = index >= items.count
             guard index < items.count else { continue }
             let item = items[index]
-            row.icon = item.icon
+            row.lead = item.icon.map { .image($0) } ?? .glyph("globe", nil)
             row.name = item.name
-            row.note = item.note
-            row.value = item.value
-            row.fraction = item.fraction
-            row.showsRule = index < items.count - 1
+            row.detail = item.note
+            row.cells = [.init(kind: .meter(item.fraction, meterColor, meterEnd), width: 96),
+                         .init(kind: .text(item.value, A2.primary, A2.valueFont, .right), width: 56)]
+            row.showsRule = index > 0
         }
-        empty.text = Theme.caption(items.isEmpty ? text : "", size: 10)
+        empty.text = NSAttributedString(string: items.isEmpty ? text : "", attributes: [.font: A2.subFont, .foregroundColor: A2.secondary])
     }
 
     override func layout() {
         super.layout()
-        let inner = bounds.width - 40
-        title.frame = NSRect(x: 20, y: 16, width: inner - (toggle?.naturalWidth ?? 0) - 12, height: 20)
+        let inner = bounds.width - A2.padSide * 2
+        let toggleWidth = toggle?.naturalWidth ?? 0
+        header.frame = NSRect(x: A2.padSide, y: A2.padTop + 5, width: inner - (toggle == nil ? 0 : toggleWidth + 12), height: 16)
         if let toggle {
-            let width = toggle.naturalWidth
-            toggle.frame = NSRect(x: 20 + inner - width, y: 12, width: width, height: 26)
+            toggle.frame = NSRect(x: A2.padSide + inner - toggleWidth, y: A2.padTop, width: toggleWidth, height: 26)
         }
-        for (index, row) in rows.enumerated() { row.frame = NSRect(x: 20, y: 46 + CGFloat(index) * 34, width: inner, height: 34) }
-        empty.frame = NSRect(x: 20, y: 54, width: inner, height: 14)
-        footnote.frame = NSRect(x: 20, y: bounds.height - 30, width: inner, height: 15)
+        let top = A2.padTop + 26 + 8
+        let footY = bounds.height - A2.padTop - 13
+        footnote.frame = NSRect(x: A2.padSide, y: footY, width: inner, height: 13)
+        let pitch = ((footY - 6 - top) / CGFloat(rows.count)).rounded(.down)
+        for (index, row) in rows.enumerated() {
+            row.frame = NSRect(x: A2.padSide, y: top + CGFloat(index) * pitch, width: inner, height: pitch)
+        }
+        empty.frame = NSRect(x: A2.padSide, y: top + (footY - top) / 2 - 8, width: inner, height: 16)
+    }
+}
+
+/// How the Mac is connected now: the primary interface's kind and its IPv4 address.
+/// Read from the system configuration store, only while the Network page is open.
+enum NetworkPlace {
+    struct Place {
+        var kind: String
+        var address: String
+    }
+
+    static func current() -> Place? {
+        guard let store = SCDynamicStoreCreate(nil, "Wisp" as CFString, nil, nil),
+              let global = SCDynamicStoreCopyValue(store, "State:/Network/Global/IPv4" as CFString) as? [String: Any],
+              let interface = global["PrimaryInterface"] as? String else { return nil }
+        var kind = "Network"
+        for item in (SCNetworkInterfaceCopyAll() as? [SCNetworkInterface]) ?? [] where SCNetworkInterfaceGetBSDName(item) as String? == interface {
+            kind = (SCNetworkInterfaceGetLocalizedDisplayName(item) as String?) ?? kind
+        }
+        let state = SCDynamicStoreCopyValue(store, "State:/Network/Interface/\(interface)/IPv4" as CFString) as? [String: Any]
+        let address = (state?["Addresses"] as? [String])?.first ?? interface
+        return Place(kind: kind, address: address)
     }
 }
