@@ -215,7 +215,7 @@ import Testing
         var cleaner = Cleaner(home: scratch.home, guards: fakes.guards)
         cleaner.selectionChecks = [{ ids in !ids.contains("test:" + a) }]
         let report = cleaner.clean([item([a])])
-        #expect(report.results[0].outcome == .skipped("This would remove every copy of a file. Keep at least one copy ticked off"))
+        #expect(report.results[0].outcome == .skipped("This would remove every copy of a file. Untick at least one copy"))
         #expect(fakes.trashed.isEmpty)
         #expect(CleanRegistry.selectionRefusal([item([a])], checks: [{ _ in true }]) == nil)
     }

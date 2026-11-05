@@ -28,7 +28,7 @@ public enum CleanRegistry {
     /// Nil when `items` may be cleaned together, otherwise the reason they may not.
     public static func selectionRefusal(_ items: [CleanItem], checks: [@Sendable (Set<String>) -> Bool] = selectionChecks) -> String? {
         let ids = Set(items.map(\.id))
-        return checks.allSatisfy { $0(ids) } ? nil : "This would remove every copy of a file. Keep at least one copy ticked off"
+        return checks.allSatisfy { $0(ids) } ? nil : "This would remove every copy of a file. Untick at least one copy"
     }
 
     public static func scanners(for tab: CleanTab) -> [any CleanScanner] {
