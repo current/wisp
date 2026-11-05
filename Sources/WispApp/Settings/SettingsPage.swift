@@ -133,7 +133,9 @@ final class SettingsPage: NSViewController, Page {
         headingTitle.text = Toolbar.title(section.title)
         rebuild()
         updateDemand()
-        scroll.contentView.scroll(to: NSPoint(x: 0, y: -Toolbar.height))
+        // WISP_SCROLL=<points> scrolls part of the way, for screenshots.
+        let offset = ProcessInfo.processInfo.environment["WISP_SCROLL"].flatMap(Double.init) ?? 0
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: offset - Toolbar.height))
         scroll.reflectScrolledClipView(scroll.contentView)
         if animated { Motion.enter(page, from: CGPoint(x: 0, y: 6), duration: 0.2) }
     }
@@ -156,22 +158,22 @@ final class SettingsPage: NSViewController, Page {
             return [
                 SettingsGroup(nil, [
                     .control("Update every", "While a Wisp window or the dashboard is open.",
-                             popup(intervals.map { $0 == 1 ? "Second" : "\(Int($0)) seconds" }, intervals.firstIndex(of: s.interval) ?? 1) { [unowned self] i in
+                             SettingsControls.popup(intervals.map { $0 == 1 ? "Second" : "\(Int($0)) seconds" }, intervals.firstIndex(of: s.interval) ?? 1) { [unowned self] i in
                                  delegate.change { $0.interval = intervals[i] }
                              }),
                     .control("Menu bar", "Redrawing the menu bar is most of what Wisp costs with every window closed.",
-                             popup(menuIntervals.map { $0 == 1 ? "Every second" : "Every \(Int($0)) seconds" }, menuIntervals.firstIndex(of: s.menuInterval) ?? 2) { [unowned self] i in
+                             SettingsControls.popup(menuIntervals.map { $0 == 1 ? "Every second" : "Every \(Int($0)) seconds" }, menuIntervals.firstIndex(of: s.menuInterval) ?? 2) { [unowned self] i in
                                  delegate.change { $0.menuInterval = menuIntervals[i] }
                              }),
                 ]),
                 SettingsGroup("History", [
                     .control("Keep a year of per-app history", "Minute by minute for a day, hourly totals for a year, on this Mac only.",
-                             toggle(s.keepHistory) { [unowned self] on in delegate.change { $0.keepHistory = on } }),
+                             SettingsControls.toggle(s.keepHistory) { [unowned self] on in delegate.change { $0.keepHistory = on } }),
                     .control("Track network per app in the background", "Off, per-app network is measured only while a window shows it.",
-                             toggle(s.trackAppNetwork) { [unowned self] on in delegate.change { $0.trackAppNetwork = on } }),
+                             SettingsControls.toggle(s.trackAppNetwork) { [unowned self] on in delegate.change { $0.trackAppNetwork = on } }),
                 ]),
                 SettingsGroup("Startup", [
-                    .control("Open Wisp at login", nil, toggle(SMAppService.mainApp.status == .enabled) { on in
+                    .control("Open Wisp at login", nil, SettingsControls.toggle(SMAppService.mainApp.status == .enabled) { on in
                         do {
                             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
                         } catch {
@@ -182,19 +184,19 @@ final class SettingsPage: NSViewController, Page {
             ]
         case .menuBar:
             var rows: [SettingsRow] = s.menuItems.enumerated().map { index, item in
-                let style = popup(MenuStyle.allCases.map(\.title), MenuStyle.allCases.firstIndex(of: item.style) ?? 0) { [unowned self] i in
+                let style = SettingsControls.popup(MenuStyle.allCases.map(\.title), MenuStyle.allCases.firstIndex(of: item.style) ?? 0) { [unowned self] i in
                     delegate.change { $0.menuItems[index].style = MenuStyle.allCases[i] }
                 }
-                let enable = toggle(item.enabled) { [unowned self] on in delegate.change { $0.menuItems[index].enabled = on } }
+                let enable = SettingsControls.toggle(item.enabled) { [unowned self] on in delegate.change { $0.menuItems[index].enabled = on } }
                 return .pair(item.metric.title, item.metric.symbol, style, enable)
             }
             rows.append(.control("Show icons next to numbers", "A reading turns red when the Mac is under strain.",
-                                 toggle(s.showIcons) { [unowned self] on in delegate.change { $0.showIcons = on } }))
+                                 SettingsControls.toggle(s.showIcons) { [unowned self] on in delegate.change { $0.showIcons = on } }))
             builder.needsLayout = true
             return [
                 SettingsGroup("Dashboard", [
                     .custom(builder, builder.preferredHeight),
-                    .control("Reset the dashboard", "Back to the CPU, meters, cores and apps.", pill("Reset to Default") { [unowned self] in builder.reset() }),
+                    .control("Reset the dashboard", "Back to the CPU, meters, cores and apps.", SettingsControls.pill("Reset to Default") { [unowned self] in builder.reset() }),
                 ], footer: "The dashboard opens from the menu bar. It reads only what its blocks show, and nothing while it is closed."),
                 SettingsGroup("Shown in the menu bar", rows),
             ]
@@ -203,25 +205,25 @@ final class SettingsPage: NSViewController, Page {
             let pages = PageID.allCases.filter { $0 != .settings }
             return [
                 SettingsGroup("Window", [
-                    .control("Appearance", nil, popup(["Light", "Dark", "Match the system"], looks.firstIndex(of: s.look) ?? 0) { [unowned self] i in
+                    .control("Appearance", nil, SettingsControls.popup(["Light", "Dark", "Match the system"], looks.firstIndex(of: s.look) ?? 0) { [unowned self] i in
                         delegate.change { $0.look = looks[i] }
                     }),
-                    .control("Show Wisp in the Dock", nil, toggle(s.showInDock) { [unowned self] on in delegate.change { $0.showInDock = on } }),
+                    .control("Show Wisp in the Dock", nil, SettingsControls.toggle(s.showInDock) { [unowned self] on in delegate.change { $0.showInDock = on } }),
                     .control("Open the window when Wisp starts", nil,
-                             toggle(s.openWindowAtLaunch) { [unowned self] on in delegate.change { $0.openWindowAtLaunch = on } }),
+                             SettingsControls.toggle(s.openWindowAtLaunch) { [unowned self] on in delegate.change { $0.openWindowAtLaunch = on } }),
                     .control("Start on", "The page a new window opens on.",
-                             popup(pages.map(\.title), pages.firstIndex { $0.rawValue == s.startPage } ?? 0) { [unowned self] i in
+                             SettingsControls.popup(pages.map(\.title), pages.firstIndex { $0.rawValue == s.startPage } ?? 0) { [unowned self] i in
                                  delegate.change { $0.startPage = pages[i].rawValue }
                              }),
                 ]),
                 SettingsGroup("Units", [
-                    .control("App CPU", "How a busy app's CPU reads.", popup(["100% is one core", "100% is the whole Mac"], s.cpuOfMachine ? 1 : 0) { [unowned self] i in
+                    .control("App CPU", "How a busy app's CPU reads.", SettingsControls.popup(["100% is one core", "100% is the whole Mac"], s.cpuOfMachine ? 1 : 0) { [unowned self] i in
                         delegate.change { $0.cpuOfMachine = i == 1 }
                     }),
-                    .control("Temperature", nil, popup(["Celsius", "Fahrenheit"], s.fahrenheit ? 1 : 0) { [unowned self] i in
+                    .control("Temperature", nil, SettingsControls.popup(["Celsius", "Fahrenheit"], s.fahrenheit ? 1 : 0) { [unowned self] i in
                         delegate.change { $0.fahrenheit = i == 1 }
                     }),
-                    .control("Network", nil, popup(["Bytes per second", "Bits per second"], s.bits ? 1 : 0) { [unowned self] i in
+                    .control("Network", nil, SettingsControls.popup(["Bytes per second", "Bits per second"], s.bits ? 1 : 0) { [unowned self] i in
                         delegate.change { $0.bits = i == 1 }
                     }),
                 ]),
@@ -232,14 +234,14 @@ final class SettingsPage: NSViewController, Page {
                 var parts: [String] = []
                 if let bytes = limit.memoryBytes { parts.append("over \(Format.memory(bytes)) of memory") }
                 if let cores = limit.cpu { parts.append("over \(Format.percent(cores)) CPU") }
-                let remove = pill("Remove") { [unowned self] in
+                let remove = SettingsControls.pill("Remove") { [unowned self] in
                     delegate.change { $0.alerts.appLimits.remove(at: index) }
                     rebuild()
                 }
                 return .control(limit.appName, "Tell me when it goes " + parts.joined(separator: " or ") + " for a minute.", remove)
             }
             limits.append(.control(rules.appLimits.isEmpty ? "No app limits yet" : "Add another", "A memory or CPU limit for one app.",
-                                   pill("Add Limit…") { [unowned self] in addLimit() }))
+                                   SettingsControls.pill("Add Limit…") { [unowned self] in addLimit() }))
             let recent = delegate.monitor.perform { $0.alerts.recent }.suffix(8).reversed()
             let time = DateFormatter()
             time.dateFormat = "MMM d, HH:mm"
@@ -247,7 +249,7 @@ final class SettingsPage: NSViewController, Page {
             if history.isEmpty {
                 history = [.control("Nothing yet", "Alerts Wisp raises show up here and survive a restart.", nil)]
             } else {
-                history.append(.control("", nil, pill("Clear History") { [unowned self] in
+                history.append(.control("", nil, SettingsControls.pill("Clear History") { [unowned self] in
                     delegate.monitor.perform { $0.alerts.clear() }
                     rebuild()
                 }))
@@ -255,15 +257,15 @@ final class SettingsPage: NSViewController, Page {
             return [
                 SettingsGroup("Tell me when", [
                     .control("An app keeps a core busy", "For \(Int(rules.cpuMinutes)) minutes.",
-                             toggle(rules.cpuEnabled) { [unowned self] on in delegate.change { $0.alerts.cpuEnabled = on } }),
+                             SettingsControls.toggle(rules.cpuEnabled) { [unowned self] on in delegate.change { $0.alerts.cpuEnabled = on } }),
                     .control("An app keeps growing in memory", "By \(Format.bytes(rules.memoryGrowthBytes)) in \(rules.memoryWindowMinutes) minutes.",
-                             toggle(rules.memoryEnabled) { [unowned self] on in delegate.change { $0.alerts.memoryEnabled = on } }),
+                             SettingsControls.toggle(rules.memoryEnabled) { [unowned self] on in delegate.change { $0.alerts.memoryEnabled = on } }),
                     .control("An app writes a lot to disk", "\(Format.rate(rules.diskBytesPerSecond)) for \(Int(rules.diskMinutes)) minutes.",
-                             toggle(rules.diskEnabled) { [unowned self] on in delegate.change { $0.alerts.diskEnabled = on } }),
+                             SettingsControls.toggle(rules.diskEnabled) { [unowned self] on in delegate.change { $0.alerts.diskEnabled = on } }),
                     .control("An app moves a lot of data", "\(Format.rate(rules.networkBytesPerSecond)) for \(Int(rules.networkMinutes)) minutes.",
-                             toggle(rules.networkEnabled) { [unowned self] on in delegate.change { $0.alerts.networkEnabled = on } }),
+                             SettingsControls.toggle(rules.networkEnabled) { [unowned self] on in delegate.change { $0.alerts.networkEnabled = on } }),
                     .control("The CPU runs hot", "Above \(Format.celsius(rules.temperatureCelsius)) for \(Int(rules.temperatureMinutes)) minutes.",
-                             toggle(rules.temperatureEnabled) { [unowned self] on in delegate.change { $0.alerts.temperatureEnabled = on } }),
+                             SettingsControls.toggle(rules.temperatureEnabled) { [unowned self] on in delegate.change { $0.alerts.temperatureEnabled = on } }),
                 ], footer: "Each app is mentioned at most once every \(Int(rules.cooldownMinutes)) minutes per rule, also with every window closed."),
                 SettingsGroup("App limits", limits),
                 SettingsGroup("Recent", history),
@@ -273,15 +275,15 @@ final class SettingsPage: NSViewController, Page {
             return [
                 SettingsGroup("MCP server", [
                     .control("Let Claude, Codex and Cursor read Wisp", "They see what the CLI prints. They can ask you to quit an app; nothing quits unless you agree.",
-                             toggle(s.allowMCP) { [unowned self] on in delegate.change { $0.allowMCP = on } }),
-                    .control("Add it to Claude Code", command, pill("Copy") {
+                             SettingsControls.toggle(s.allowMCP) { [unowned self] on in delegate.change { $0.allowMCP = on } }),
+                    .control("Add it to Claude Code", command, SettingsControls.pill("Copy") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(command, forType: .string)
                     }),
                 ]),
                 SettingsGroup("Plan limits", [
                     .control("Show AI plan limits and tokens used today", "Adds Wisp to Claude Code's status line (yours keeps working) and reads Codex's session logs. No sign-ins are read and nothing is sent.",
-                             toggle(s.planUsage) { [unowned self] on in
+                             SettingsControls.toggle(s.planUsage) { [unowned self] on in
                                  delegate.change { $0.planUsage = on }
                                  PlanLimitsSetup.apply(on: on)
                              }),
@@ -291,7 +293,7 @@ final class SettingsPage: NSViewController, Page {
             return CleanUpSettings.groups(delegate.cleanUp, rebuild: { [unowned self] in rebuild() })
         case .about:
             return [
-                SettingsGroup(nil, [.custom(AboutCard(), 168)]),
+                SettingsGroup(nil, [.custom(AboutCard(), AboutCard.height)]),
                 SettingsGroup("Privacy", [
                     .control("Nothing leaves this Mac", "No analytics, no updater, no network requests beyond looking up host names. History lives in ~/Library/Application Support/Wisp.", nil),
                 ]),
@@ -299,32 +301,6 @@ final class SettingsPage: NSViewController, Page {
         }
     }
 
-    // MARK: Controls
-
-    private func toggle(_ on: Bool, _ body: @escaping (Bool) -> Void) -> NSView {
-        ActionSwitch(on: on, body)
-    }
-
-    private func popup(_ titles: [String], _ selected: Int, _ body: @escaping (Int) -> Void) -> NSView {
-        let button = MenuButton()
-        button.titles = titles
-        button.selected = selected
-        button.onPick = body
-        // As wide as the longest choice, so picking one does not move the button.
-        let longest = titles.max { $0.count < $1.count } ?? ""
-        let probe = MenuButton()
-        probe.titles = [longest]
-        button.frame.size = NSSize(width: probe.naturalWidth, height: 26)
-        return button
-    }
-
-    private func pill(_ title: String, _ body: @escaping () -> Void) -> NSView {
-        let pill = GlassPill(title)
-        pill.onPress = body
-        let width = ceil((title as NSString).size(withAttributes: [.font: Theme.sans(13, .semibold)]).width) + 32
-        pill.frame.size = NSSize(width: width, height: 30)
-        return pill
-    }
 
     private func addLimit() {
         guard let window = view.window else { return }
@@ -388,30 +364,36 @@ struct SettingsGroup {
     }
 }
 
-/// The scrolling column of a settings section: its title and its grouped cards.
+/// The scrolling column of a settings section: grouped cards, each under a caption,
+/// in a 620 pt column centred on the page, as in the A2 Settings mockup.
 @MainActor
 final class SettingsPageView: NSView {
     var groups: [SettingsGroup] = []
     var width: CGFloat = 560
     private var built: [NSView] = []
 
+    /// The mockup's spacing: 26 pt under a card, 8 between a caption and its card.
+    private static let groupGap: CGFloat = 26
+    private static let captionFont = Theme.sans(12, .semibold)
+    private static let footerFont = Theme.sans(11.5)
+
     override var isFlipped: Bool { true }
 
     func relayout() {
         built.forEach { $0.removeFromSuperview() }
         built = []
-        let inner = min(620, width - 48)
-        let left = (width - inner) / 2
+        let inner = min(620, width - 44)
+        let left = ((width - inner) / 2).rounded()
         var y: CGFloat = 8
         for group in groups {
             if let groupTitle = group.title {
-                let caption = TextLine(Theme.caption(groupTitle))
-                caption.frame = NSRect(x: left + 6, y: y, width: inner, height: 14)
+                let caption = TextLine(NSAttributedString(string: groupTitle, attributes: [.font: Self.captionFont, .foregroundColor: A2.secondary]))
+                caption.frame = NSRect(x: left + 6, y: y, width: inner - 12, height: 15)
                 add(caption)
-                y += 22
+                y += 23
             }
             let card = CardView()
-            card.radius = 14
+            card.radius = A2.radius
             var rowY: CGFloat = 0
             for (index, row) in group.rows.enumerated() {
                 let view = RowView(row, width: inner)
@@ -420,29 +402,30 @@ final class SettingsPageView: NSView {
                 rowY += view.frame.height
                 if index < group.rows.count - 1 {
                     let rule = CardView()
-                    rule.fill = Theme.rule
+                    rule.fill = A2.hairline
                     rule.stroke = .clear
                     rule.radius = 0
-                    rule.frame = NSRect(x: 18, y: rowY, width: inner - 36, height: 1)
+                    rule.frame = NSRect(x: RowView.inset, y: rowY - 0.5, width: inner - RowView.inset * 2, height: 0.5)
                     card.addSubview(rule)
                 }
             }
             card.frame = NSRect(x: left, y: y, width: inner, height: rowY)
             add(card)
-            y += rowY + 8
+            y += rowY
             if let footer = group.footer {
                 let note = NSTextField(wrappingLabelWithString: footer)
-                note.font = Theme.sans(11.5)
-                note.textColor = Theme.inkTertiary
+                note.font = Self.footerFont
+                note.textColor = A2.secondary
+                note.isSelectable = false
                 note.preferredMaxLayoutWidth = inner - 12
                 let size = note.sizeThatFits(NSSize(width: inner - 12, height: 200))
-                note.frame = NSRect(x: left + 6, y: y, width: inner - 12, height: ceil(size.height))
+                note.frame = NSRect(x: left + 6, y: y + 8, width: inner - 12, height: ceil(size.height))
                 add(note)
-                y += ceil(size.height) + 4
+                y += 8 + ceil(size.height) - 4
             }
-            y += 18
+            y += Self.groupGap
         }
-        frame = NSRect(x: 0, y: 0, width: width, height: max(y + 20, superview?.bounds.height ?? 0))
+        frame = NSRect(x: 0, y: 0, width: width, height: max(y - Self.groupGap + 22, superview?.bounds.height ?? 0))
     }
 
     private func add(_ view: NSView) {
@@ -451,13 +434,21 @@ final class SettingsPageView: NSView {
     }
 }
 
-/// One row: title and explanation on the left, the control on the right.
+/// One row: title and explanation on the left, the control on the right. 16 pt in
+/// from the card's edges, 11 above and below the text, at least 48 tall.
 @MainActor
 final class RowView: NSView {
+    static let inset: CGFloat = 16
+    private static let gap: CGFloat = 16
+    private static let minHeight: CGFloat = 48
+    private static let titleFont = Theme.sans(13, .medium)
+    private static let detailFont = Theme.sans(11.5)
+
     override var isFlipped: Bool { true }
 
     init(_ row: SettingsRow, width: CGFloat) {
-        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 52))
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: Self.minHeight))
+        let inset = Self.inset
         switch row {
         case .control(let title, let detail, let control):
             var controlWidth: CGFloat = 0
@@ -467,33 +458,37 @@ final class RowView: NSView {
                 addSubview(control)
                 control.frame.size = size
             }
-            let textWidth = width - 36 - (controlWidth > 0 ? controlWidth + 20 : 0)
-            let titleField = Self.label(title, font: Theme.sans(13, .medium), color: Theme.ink, width: textWidth)
-            var height: CGFloat = 16 + titleField.frame.height
-            titleField.frame.origin = NSPoint(x: 18, y: 14)
-            if !title.isEmpty { addSubview(titleField) } else { height = 14 }
-            if let detail, !detail.isEmpty {
-                let detailField = Self.label(detail, font: Theme.sans(11.5), color: Theme.inkSecondary, width: textWidth)
-                detailField.frame.origin = NSPoint(x: 18, y: height)
-                addSubview(detailField)
-                height += detailField.frame.height + 2
-            }
-            height = max(48, height + 12)
+            let textWidth = width - inset * 2 - (controlWidth > 0 ? controlWidth + Self.gap : 0)
+            var fields: [NSTextField] = []
+            if !title.isEmpty { fields.append(Self.label(title, font: Self.titleFont, color: A2.primary, width: textWidth)) }
+            if let detail, !detail.isEmpty { fields.append(Self.label(detail, font: Self.detailFont, color: A2.secondary, width: textWidth)) }
+            let textHeight = fields.map(\.frame.height).reduce(0, +) + (fields.count > 1 ? 3 : 0)
+            let height = max(Self.minHeight, textHeight + 22)
             frame.size.height = height
+            var y = ((height - textHeight) / 2).rounded()
+            for field in fields {
+                field.frame.origin = NSPoint(x: inset, y: y)
+                addSubview(field)
+                y += field.frame.height + 3
+            }
             if let control {
-                control.frame.origin = NSPoint(x: width - 18 - control.frame.width, y: (height - control.frame.height) / 2)
+                control.frame.origin = NSPoint(x: width - inset - control.frame.width, y: ((height - control.frame.height) / 2).rounded())
             }
         case .pair(let title, let symbol, let first, let second):
-            let icon = NSImageView(image: IconTile.image(symbol, tint: Theme.accent, size: 24, appearance: NSApp.effectiveAppearance))
-            icon.frame = NSRect(x: 18, y: 14, width: 24, height: 24)
+            let height = Self.minHeight
+            let icon = SymbolTile(symbol)
+            icon.frame = NSRect(x: inset, y: (height - 24) / 2, width: 24, height: 24)
             addSubview(icon)
-            let titleField = Self.label(title, font: Theme.sans(13, .medium), color: Theme.ink, width: 200)
-            titleField.frame.origin = NSPoint(x: 54, y: (52 - titleField.frame.height) / 2)
+            let secondSize = second.frame.size.width > 0 ? second.frame.size : second.fittingSize
+            second.frame = NSRect(x: width - inset - secondSize.width, y: ((height - secondSize.height) / 2).rounded(),
+                                  width: secondSize.width, height: secondSize.height)
+            let firstSize = first.frame.size
+            first.frame = NSRect(x: second.frame.minX - Self.gap - firstSize.width, y: ((height - firstSize.height) / 2).rounded(),
+                                 width: firstSize.width, height: firstSize.height)
+            let titleX = inset + 24 + 12
+            let titleField = Self.label(title, font: Self.titleFont, color: A2.primary, width: max(40, first.frame.minX - Self.gap - titleX))
+            titleField.frame.origin = NSPoint(x: titleX, y: ((height - titleField.frame.height) / 2).rounded())
             addSubview(titleField)
-            let secondSize = second.fittingSize
-            second.frame = NSRect(x: width - 18 - secondSize.width, y: (52 - secondSize.height) / 2, width: secondSize.width, height: secondSize.height)
-            let firstSize = NSSize(width: 170, height: first.fittingSize.height)
-            first.frame = NSRect(x: second.frame.minX - 16 - firstSize.width, y: (52 - firstSize.height) / 2, width: firstSize.width, height: firstSize.height)
             addSubview(first)
             addSubview(second)
         case .custom(let view, let height):
@@ -505,10 +500,10 @@ final class RowView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Tracked in by 0.006 em, as the mockup's text is.
     private static func label(_ text: String, font: NSFont, color: NSColor, width: CGFloat) -> NSTextField {
         let field = NSTextField(wrappingLabelWithString: text)
-        field.font = font
-        field.textColor = color
+        field.attributedStringValue = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color, .kern: -0.006 * font.pointSize])
         field.isSelectable = false
         field.preferredMaxLayoutWidth = width
         let size = field.sizeThatFits(NSSize(width: width, height: 400))
@@ -517,36 +512,56 @@ final class RowView: NSView {
     }
 }
 
-/// The app icon, name, version and what it costs to run.
-final class AboutCard: DrawnView {
+/// A metric's symbol on a tinted tile, drawn for the current appearance so it follows
+/// a switch between light and dark.
+final class SymbolTile: DrawnView {
+    private let symbol: String
+
+    init(_ symbol: String) {
+        self.symbol = symbol
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
     override func draw(_ dirtyRect: NSRect) {
+        IconTile.image(symbol, tint: Theme.accent, size: bounds.width, appearance: effectiveAppearance)
+            .draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+}
+
+/// The app icon, then the name, version and what it costs to run, centred beside it.
+final class AboutCard: DrawnView {
+    static let height: CGFloat = 128
+    private static let blurb = "A system monitor that stays out of the way: about 0.2% of one core and 18 MB with only the menu bar showing."
+    private static let nameFont = Theme.sans(22, .semibold)
+    private static let versionFont = Theme.sans(11.5)
+    private static let blurbFont = Theme.sans(13)
+
+    override func draw(_ dirtyRect: NSRect) {
+        let iconSize: CGFloat = 80
         if let icon = NSApp.applicationIconImage {
-            icon.draw(in: NSRect(x: 18, y: 24, width: 96, height: 96), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            icon.draw(in: NSRect(x: RowView.inset, y: ((bounds.height - iconSize) / 2).rounded(), width: iconSize, height: iconSize),
+                      from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
-        NSAttributedString(string: "Wisp", attributes: [.font: Theme.sans(24, .semibold), .foregroundColor: Theme.ink])
-            .draw(at: NSPoint(x: 134, y: 30))
-        Theme.caption("Version \(Wisp.version)", size: 10).draw(at: NSPoint(x: 136, y: 66))
-        let text = "A system monitor that stays out of the way: about 0.2% of one core and 18 MB with only the menu bar showing."
-        (text as NSString).draw(with: NSRect(x: 136, y: 88, width: bounds.width - 160, height: 60), options: [.usesLineFragmentOrigin],
-                                attributes: [.font: Theme.sans(12.5), .foregroundColor: Theme.inkSecondary])
+        let x = RowView.inset + iconSize + 16
+        let room = bounds.width - x - RowView.inset
+        let name = NSAttributedString(string: "Wisp", attributes: [.font: Self.nameFont, .foregroundColor: A2.primary])
+        let version = NSAttributedString(string: "Version \(Wisp.version)", attributes: [.font: Self.versionFont, .foregroundColor: A2.secondary])
+        let blurb = NSAttributedString(string: Self.blurb, attributes: [.font: Self.blurbFont, .foregroundColor: A2.secondary])
+        let nameHeight = ceil(Self.nameFont.ascender - Self.nameFont.descender)
+        let versionHeight = ceil(Self.versionFont.ascender - Self.versionFont.descender)
+        let blurbHeight = ceil(blurb.boundingRect(with: NSSize(width: room, height: 80), options: [.usesLineFragmentOrigin]).height)
+        var y = ((bounds.height - nameHeight - 2 - versionHeight - 8 - blurbHeight) / 2).rounded()
+        name.draw(at: NSPoint(x: x, y: y))
+        y += nameHeight + 2
+        version.draw(at: NSPoint(x: x, y: y))
+        y += versionHeight + 8
+        blurb.draw(with: NSRect(x: x, y: y, width: room, height: blurbHeight), options: [.usesLineFragmentOrigin])
     }
 }
 
 // MARK: - Controls that run a closure
-
-final class ActionSwitch: NSSwitch {
-    private let body: (Bool) -> Void
-    init(on: Bool, _ body: @escaping (Bool) -> Void) {
-        self.body = body
-        super.init(frame: .zero)
-        state = on ? .on : .off
-        target = self
-        action = #selector(toggled)
-        frame.size = fittingSize
-    }
-    required init?(coder: NSCoder) { fatalError() }
-    @objc private func toggled() { body(state == .on) }
-}
 
 final class ActionPopUp: NSPopUpButton {
     private let body: (Int) -> Void

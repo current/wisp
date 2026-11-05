@@ -12,15 +12,15 @@ import WispCore
 final class DashboardBuilder: DrawnView {
     private unowned let delegate: AppDelegate
     static let scale: CGFloat = 0.6
-    private let inset: CGFloat = 20
+    private let inset: CGFloat = 16
     /// Room under the preview so a block dragged in has somewhere to go.
     private let slack: CGFloat = 150
 
     private let stage = CardView()
     private let holder = Holder()
     let preview: DashboardView
-    private let paletteTitle = TextLine(NSAttributedString(string: "Blocks", attributes: [.font: Theme.sans(13, .semibold), .foregroundColor: Theme.ink]))
-    private let paletteNote = TextLine(Theme.caption("Drag one onto the preview, or click to add it."))
+    private let paletteTitle = TextLine(NSAttributedString(string: "Blocks", attributes: [.font: A2.titleFont, .foregroundColor: A2.primary]))
+    private let paletteNote = TextLine(A2.plain("Drag one onto the preview, or click to add it."))
     private var chips: [PaletteChip] = []
     private let removeButton = RemoveButton()
     private let indicator = CAShapeLayer()
@@ -752,7 +752,7 @@ final class PaletteChip: DrawnView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
         if placeholder {
             shape.setLineDash([4, 3], count: 2, phase: 0)
             Theme.cardBorderHover.setStroke()
@@ -770,11 +770,11 @@ final class PaletteChip: DrawnView {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         (block.title as NSString).draw(with: NSRect(x: 44, y: 5, width: room, height: 17), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                       attributes: [.font: Theme.sans(13, .medium), .foregroundColor: Theme.ink.withAlphaComponent(alpha), .paragraphStyle: paragraph])
+                                       attributes: [.font: Theme.sans(13, .medium), .foregroundColor: A2.primary.withAlphaComponent(alpha), .paragraphStyle: paragraph])
         (block.detail as NSString).draw(with: NSRect(x: 44, y: 22, width: room, height: 15), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                        attributes: [.font: Theme.sans(11), .foregroundColor: Theme.inkSecondary.withAlphaComponent(alpha), .paragraphStyle: paragraph])
+                                        attributes: [.font: A2.subFont, .foregroundColor: A2.secondary.withAlphaComponent(alpha), .paragraphStyle: paragraph])
         if inUse {
-            let text = NSAttributedString(string: "Shown", attributes: [.font: Theme.sans(11), .foregroundColor: Theme.inkSecondary])
+            let text = NSAttributedString(string: "Shown", attributes: [.font: A2.subFont, .foregroundColor: A2.secondary])
             let size = text.size()
             IconTile.glyph("checkmark", tint: Theme.inkSecondary, size: 12, appearance: effectiveAppearance)
                 .draw(in: NSRect(x: bounds.width - 14 - size.width - 16, y: (bounds.height - 12) / 2, width: 12, height: 12),
