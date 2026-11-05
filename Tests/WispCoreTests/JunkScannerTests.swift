@@ -177,9 +177,10 @@ final class FakeHome {
 
     @Test func registryHasEveryScanner() {
         let scanners = CleanRegistry.scanners
-        #expect(scanners.count == 8)
         #expect(scanners.filter { $0.tab == .junk }.count == 4)
         #expect(scanners.filter { $0.tab == .developer }.count == 4)
+        #expect(scanners.filter { $0.tab == .leftovers }.count == 1)
+        #expect(scanners.filter { $0.tab == .largeFiles }.count == 1)
     }
 }
 

@@ -13,13 +13,15 @@ public enum CleanRegistry {
             ProjectArtifactScanner(staleAfter: TimeInterval(CleanSettings.load().staleProjectDays) * 86_400),
             WorktreeScanner(),
             LeftoversScanner(),
+            LargeFilesScanner(),
         ]
     }
 
     /// Checks on a whole selection, given the item ids; each returns false when the
-    /// selection must not be cleaned together. One line per check, e.g.
+    /// selection must not be cleaned together. One line per check.
     public static var selectionChecks: [@Sendable (Set<String>) -> Bool] {
         [
+            { LargeFileIndex.shared.keepsACopy($0) },
         ]
     }
 
