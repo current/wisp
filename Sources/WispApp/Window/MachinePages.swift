@@ -376,7 +376,8 @@ final class CPUPage: MachinePage {
         system.meter.fraction = c.system
         system.set(note: "macOS")
         load.figure.set(c.loadAverage.first ?? 0)
-        load.set(note: c.loadAverage.count == 3 ? String(format: "5 min %.1f · 15 min %.1f", c.loadAverage[1], c.loadAverage[2]) : "")
+        load.set(notes: c.loadAverage.count == 3 ? [String(format: "5 min %.1f · 15 min %.1f", c.loadAverage[1], c.loadAverage[2]),
+                                                    String(format: "5 min %.1f · 15 min %.1f", c.loadAverage[1], c.loadAverage[2]).replacingOccurrences(of: " min", with: "m")] : [""])
         if let t = s.thermal, let celsius = t.cpuCelsius {
             temperature.set(text: Format.temperature(celsius).0, unit: Format.temperature(celsius).1)
             temperature.set(note: t.fans.isEmpty ? "No fans" : "Fans " + t.fans.map { "\(Int($0.rpm))" }.joined(separator: ", ") + " rpm")
@@ -389,7 +390,7 @@ final class CPUPage: MachinePage {
         if let app = busiest(table, by: { $0.cpu }) {
             busiestID = app.id
             busiest.set(text: app.name)
-            busiest.set(note: appCPU(app, table) + " · \(app.processCount) processes")
+            busiest.set(notes: [appCPU(app, table) + " · \(app.processCount) processes", appCPU(app, table)])
         }
     }
 
@@ -521,7 +522,7 @@ final class MemoryPage: MachinePage {
         if let app = busiest(table, by: { Double($0.memory) }) {
             largestID = app.id
             largest.set(text: app.name)
-            largest.set(note: Format.memory(app.memory) + " · \(app.processCount) processes")
+            largest.set(notes: [Format.memory(app.memory) + " · \(app.processCount) processes", Format.memory(app.memory)])
         }
     }
 
@@ -636,7 +637,7 @@ class DiskPage: MachinePage {
         if let app = busiest(table, by: { $0.diskWritePerSecond }), app.diskWritePerSecond > 0 {
             writerID = app.id
             writer.set(text: app.name)
-            writer.set(note: Format.rate(app.diskWritePerSecond) + " · \(app.processCount) processes")
+            writer.set(notes: [Format.rate(app.diskWritePerSecond) + " · \(app.processCount) processes", Format.rate(app.diskWritePerSecond)])
         }
     }
 

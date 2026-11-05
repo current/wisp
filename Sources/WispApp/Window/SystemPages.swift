@@ -228,8 +228,9 @@ final class SensorsCardPage: CardPage {
         stateSub.frame = NSRect(x: A2.padSide, y: 81, width: inner, height: 15)
         let linesHeight: CGFloat = 4 * 28
         stateLines.frame = NSRect(x: A2.padSide, y: height - A2.padTop - linesHeight, width: inner, height: linesHeight)
-        stateEnds.frame = NSRect(x: A2.padSide, y: stateLines.frame.minY - 6 - 13, width: inner, height: 13)
-        stateEnd.frame = stateEnds.frame
+        // The current state on the left, the scale's far end on the right, each in its own half.
+        stateEnds.frame = NSRect(x: A2.padSide, y: stateLines.frame.minY - 6 - 13, width: floor(inner / 2), height: 13)
+        stateEnd.frame = NSRect(x: stateEnds.frame.maxX, y: stateEnds.frame.minY, width: inner - stateEnds.frame.width, height: 13)
         stateBar.frame = NSRect(x: A2.padSide, y: stateEnds.frame.minY - 6 - 8, width: inner, height: 8)
     }
 

@@ -470,8 +470,9 @@ final class OverviewPage: CardPage {
         refreshCharts(force: false)
         if let c = s.cpu {
             cpu.figure.set(c.total)
-            cpu.sub.text = A2.facts([.init(label: "User", value: Format.percent(c.user)), .init(label: "System", value: Format.percent(c.system)),
-                                     .init(label: "Load", value: String(format: "%.1f", c.loadAverage.first ?? 0))])
+            let split: [A2.Fact] = [.init(label: "User", value: Format.percent(c.user)), .init(label: "System", value: Format.percent(c.system))]
+            // A narrow card drops the load average before it cuts anything off.
+            cpu.sub.variants = [A2.facts(split + [.init(label: "Load", value: String(format: "%.1f", c.loadAverage.first ?? 0))]), A2.facts(split)]
         }
         if let m = s.memory {
             let total = "of \(Int((Double(m.total) / 1_073_741_824).rounded())) GB"

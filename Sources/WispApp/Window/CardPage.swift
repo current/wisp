@@ -210,6 +210,12 @@ final class Tile: CardView {
         note.text = NSAttributedString(string: text, attributes: [.font: Theme.digits(11), .foregroundColor: shown])
     }
 
+    /// Notes longest first; the tile shows the first that fits its width.
+    func set(notes texts: [String], color: NSColor = Theme.inkTertiary) {
+        let shown = color == Theme.inkTertiary || color == Theme.inkSecondary ? A2.secondary : color
+        note.variants = texts.map { NSAttributedString(string: $0, attributes: [.font: Theme.digits(11), .foregroundColor: shown]) }
+    }
+
     override func layout() {
         super.layout()
         let width = bounds.width - A2.padSide * 2

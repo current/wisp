@@ -253,7 +253,7 @@ final class PowerPage: MachinePage {
         }
         if let rate = BatteryStats.drainPerHour(samples, since: today) {
             drain.set(text: String(format: rate >= 10 ? "%.0f" : "%.1f", rate), unit: "% an hour")
-            drain.set(note: "Average on battery today")
+            drain.set(note: "Average on battery")
         } else {
             drain.set(text: "–")
             drain.set(note: minutes > 0 ? "Needs ten minutes on battery" : "No time on battery today")
@@ -315,7 +315,7 @@ final class PowerPage: MachinePage {
         }
         let lowPowerOn = s.battery?.lowPowerMode ?? ProcessInfo.processInfo.isLowPowerModeEnabled
         lowPower.set(text: lowPowerOn ? "On" : "Off")
-        lowPower.set(note: lowPowerOn ? "Slower, lasts longer" : "Change in System Settings")
+        lowPower.set(note: lowPowerOn ? "Slower, lasts longer" : "Set in System Settings")
         if let b = s.battery {
             if let watts = b.systemWatts {
                 systemPower.set(text: String(format: watts >= 10 ? "%.0f" : "%.1f", watts), unit: "W")
