@@ -18,7 +18,8 @@ enum CleanUpDemo {
         }
     }
 
-    static var scanners: [any CleanScanner] { CleanTab.allCases.filter { $0 != .history }.map { Scanner(tab: $0) } }
+    /// Uninstall lists the real apps (reading them changes nothing); its removals still go through `guards`.
+    static var scanners: [any CleanScanner] { CleanTab.allCases.filter { $0 != .history && $0 != .uninstall }.map { Scanner(tab: $0) } }
 
     static let guards = CleanGuards(processUse: { ProcessUse() }, gitState: { _ in .clean }, runTool: { _, _ in (0, "") },
                                     trash: { _ in }, developerTools: { true })
@@ -65,8 +66,6 @@ enum CleanUpDemo {
                  "~/Library/Application Support/discord", 820 * mb, safety: .checkFirst, owner: "com.hnc.Discord"),
             item(.leftovers, "Discord", "Discord preferences", "The app is gone.",
                  "~/Library/Preferences/com.hnc.Discord.plist", 12_000, safety: .checkFirst, owner: "com.hnc.Discord"),
-            item(.uninstall, "Apps", "GarageBand", "Not opened in 14 months. Its sound library goes with it.",
-                 "/Applications/GarageBand.app", 2_900 * mb, safety: .checkFirst, ticked: false),
         ]
     }
 }

@@ -323,4 +323,37 @@ private extension Array where Element == CleanItem {
         #expect(!UninstallPlan.mayRemove(home + "/Library/Mobile Documents/com~apple~CloudDocs", home: home))
         #expect(!UninstallPlan.mayRemove(home + "/Library/Keychains/login.keychain-db", home: home))
     }
+
+    @Test func theDrawerOffersUninstallOnlyForListedApps() {
+        let home = "/Users/someone"
+        #expect(InstalledApps.isUninstallable(path: "/Applications/Slack.app", bundleID: "com.tinyspeck.slackmacgap", home: home))
+        #expect(InstalledApps.isUninstallable(path: "/Applications/Utilities/Tool.app", bundleID: "com.foo.Tool", home: home))
+        #expect(InstalledApps.isUninstallable(path: home + "/Applications/Zed.app", bundleID: "dev.zed.Zed", home: home))
+        #expect(!InstalledApps.isUninstallable(path: "/Applications/Safari.app", bundleID: "com.apple.Safari", home: home))
+        #expect(!InstalledApps.isUninstallable(path: "/Applications/Wisp.app", bundleID: Wisp.bundleIdentifier, home: home))
+        #expect(!InstalledApps.isUninstallable(path: "/Applications/Tool.app", bundleID: nil, home: home))
+        #expect(!InstalledApps.isUninstallable(path: home + "/Downloads/Tool.app", bundleID: "com.foo.Tool", home: home))
+        #expect(!InstalledApps.isUninstallable(path: "/Applications/Suite.app/Contents/Helper.app", bundleID: "com.foo.Helper", home: home))
+        #expect(!InstalledApps.isUninstallable(path: "/Applications/a/b/Deep.app", bundleID: "com.foo.Deep", home: home))
+        #expect(!InstalledApps.isUninstallable(path: "/usr/local/bin/tool", bundleID: "com.foo.tool", home: home))
+    }
+
+    @Test func theCleanerTakesAppBundlesWhereInstalledAppsFindsThem() {
+        let home = "/Users/someone"
+        #expect(CleanPathRules.refusal(resolved: "/Applications/Slack.app", homeReal: home) == nil)
+        #expect(CleanPathRules.refusal(resolved: "/Applications/Utilities/Tool.app", homeReal: home) == nil)
+        #expect(CleanPathRules.refusal(resolved: "/Applications/Suite.app/Contents/Helper.app", homeReal: home) != nil)
+        #expect(CleanPathRules.refusal(resolved: "/Applications/a/b/Deep.app", homeReal: home) != nil)
+        #expect(CleanPathRules.refusal(resolved: "/Applications/Utilities", homeReal: home) != nil)
+    }
+
+    @Test func bundleSizesStopWhenCancelled() throws {
+        let mac = try FakeMac()
+        let path = try mac.app("Big", id: "com.foo.Big")
+        try mac.file(path + "/Contents/Resources/blob", bytes: 300_000)
+        #expect(InstalledApps.bundleBytes(path, cancel: ScanFlag()) >= 300_000)
+        let stopped = ScanFlag()
+        stopped.set()
+        #expect(InstalledApps.bundleBytes(path, cancel: stopped) < 300_000)
+    }
 }

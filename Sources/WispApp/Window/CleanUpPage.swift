@@ -39,8 +39,14 @@ final class CleanUpPage: CardPage {
         button.secondary = true
         return button
     }()
+    private lazy var backButton: ActionButton = {
+        let button = ActionButton(title: "All Apps", target: self, action: #selector(backToApps))
+        button.secondary = true
+        return button
+    }()
     private let listCard = CardView(), list = CleanList(), emptyNote = TextLine()
-    private lazy var footer = CleanFooter(target: self, safe: #selector(cleanSafe), clean: #selector(cleanSelected))
+    private lazy var footer = CleanFooter(target: self, safe: #selector(cleanSafe), clean: #selector(cleanSelected), quit: #selector(quitApp))
+    private let uninstall = UninstallBrowser()
     private let root = Root()
     private static let work = DispatchQueue(label: "app.wisp.clean", qos: .utility)
 
@@ -66,23 +72,27 @@ final class CleanUpPage: CardPage {
         root.addSubview(footer)
         view = root
         for view in [headerCard, listCard] { canvas.addSubview(view) }
-        for view in [headerTitle, figure, status, scanButton, showAllButton] as [NSView] { headerCard.addSubview(view) }
+        for view in [headerTitle, figure, status, scanButton, showAllButton, backButton, uninstall.search, uninstall.removalLabel,
+                     uninstall.removalToggle] as [NSView] { headerCard.addSubview(view) }
         for view in [list, emptyNote] as [NSView] { listCard.addSubview(view) }
         list.drawsVisibleOnly = true
         list.onToggle = { [weak self] ids, on in self?.toggle(ids, on) }
-        list.onExclude = { [weak self] item in self?.exclude(item) }
+        uninstall.onChange = { [weak self] in self?.fill() }
+        uninstall.onProgress = { [weak self] in self?.queueRefresh() }
         tabs.onChange = { [weak self] index in self?.pick(CleanTab.allCases[index]) }
         // WISP_CLEAN_TAB=developer opens on one tab, for screenshots.
         if let name = ProcessInfo.processInfo.environment["WISP_CLEAN_TAB"], let start = CleanTab(rawValue: name) {
             tab = start
             tabs.select(CleanTab.allCases.firstIndex(of: start) ?? 0, animated: false)
         }
+        // WISP_CLEAN_APP=<name or bundle path> opens that app's plan on the Uninstall tab, for screenshots.
+        if let app = ProcessInfo.processInfo.environment["WISP_CLEAN_APP"] { uninstall.open(app) }
         fill()
     }
 
     override func viewDidLayout() {
         scroll.frame = root.bounds
-        let showsFooter = tab != .history
+        let showsFooter = tab != .history && !(tab == .uninstall && uninstall.chosen == nil)
         footer.isHidden = !showsFooter
         footer.frame = NSRect(x: margin, y: root.bounds.height - CleanFooter.height - 16, width: max(0, root.bounds.width - margin * 2),
                               height: CleanFooter.height)
@@ -100,11 +110,15 @@ final class CleanUpPage: CardPage {
         visible = true
         scanIfNeeded()
         // WISP_CLEAN_REVIEW=1 opens the review for the ticked items (=all for every item on the tab), for screenshots.
-        if let review = ProcessInfo.processInfo.environment["WISP_CLEAN_REVIEW"] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                guard let self else { return }
-                if review == "all" { self.presentReview(self.shown, trigger: .manual) } else { self.cleanSelected() }
-            }
+        if let review = ProcessInfo.processInfo.environment["WISP_CLEAN_REVIEW"] { openReviewWhenFound(all: review == "all", tries: 10) }
+    }
+
+    /// Waits for the tab's items (an uninstall plan can take a few seconds), then opens the review.
+    private func openReviewWhenFound(all: Bool, tries: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            if self.shown.isEmpty, tries > 0 { return self.openReviewWhenFound(all: all, tries: tries - 1) }
+            if all { self.presentReview(self.shown, trigger: .manual) } else { self.cleanSelected() }
         }
     }
 
@@ -113,17 +127,19 @@ final class CleanUpPage: CardPage {
         guard visible else { return }
         visible = false
         stopScan()
+        uninstall.disappear()
     }
 
     override func update(system: SystemSnapshot) {
         // Keeps "scanned 2 min ago" true; redraws only when the words change.
-        if visible, scanning == nil { updateHeader() }
+        if visible, scanning == nil, !uninstall.isScanning { updateHeader() }
     }
 
     // MARK: Scanning
 
     private func scanIfNeeded() {
         guard tab != .history else { return loadHistory() }
+        guard tab != .uninstall else { return uninstall.appear() }
         let tabs = (scheduledPending ? CleanRegistry.safeTabs : [tab]).filter { tab in scanners.contains { $0.tab == tab } }
         if tabs.contains(where: { found[$0]?.complete != true }) { scan(tabs) }
     }
@@ -193,7 +209,9 @@ final class CleanUpPage: CardPage {
     }
 
     @objc private func scanPressed() {
-        if scanning != nil {
+        if tab == .uninstall {
+            if uninstall.isScanning { uninstall.stopScan() } else { uninstall.scan(again: uninstall.complete) }
+        } else if scanning != nil {
             stopScan()
             fill()
         } else {
@@ -208,6 +226,7 @@ final class CleanUpPage: CardPage {
             tabs.select(CleanTab.allCases.firstIndex(of: tab) ?? 0, animated: false)
             return
         }
+        if tab == .uninstall, new != .uninstall { uninstall.disappear() }
         tab = new
         if new != .leftovers { leftoversOf = nil }
         if let scanning, !scanning.tabs.contains(new) { stopScan() }
@@ -242,10 +261,28 @@ final class CleanUpPage: CardPage {
         fill()
     }
 
+    /// The app drawer's Uninstall button: this tab, with that app's plan open.
+    func showUninstall(of path: String) {
+        guard review == nil else { return }
+        uninstall.open(path)
+        tabs.select(CleanTab.allCases.firstIndex(of: .uninstall) ?? 0, animated: false)
+        if tab != .uninstall { pick(.uninstall) } else { fill() }
+    }
+
+    @objc private func backToApps() {
+        uninstall.back()
+        scrollToTop()
+    }
+
+    @objc private func quitApp() {
+        uninstall.quitChosen()
+    }
+
     // MARK: Selection
 
     /// The items on screen: this tab's, narrowed to one app when Leftovers was opened for it.
     private var shown: [CleanItem] {
+        if tab == .uninstall { return uninstall.chosen == nil ? [] : uninstall.plan ?? [] }
         let items = found[tab]?.items ?? []
         guard tab == .leftovers, let leftoversOf else { return items }
         return items.filter { $0.ownerBundleID == leftoversOf.id }
@@ -268,11 +305,16 @@ final class CleanUpPage: CardPage {
     // MARK: Filling in
 
     private func fill() {
-        for item in found.values.flatMap(\.items) where seen.insert(item.id).inserted && item.checkedByDefault {
+        for item in found.values.flatMap(\.items) + (uninstall.plan ?? []) where seen.insert(item.id).inserted && item.checkedByDefault {
             selected.insert(item.id)
         }
+        let listsApps = tab == .uninstall && uninstall.chosen == nil
+        list.onOpen = listsApps ? { [weak self] row in self?.openApp(row.id) } : nil
+        list.onExclude = tab == .uninstall ? nil : { [weak self] item in self?.exclude(item) }
         if tab == .history {
             fillHistory()
+        } else if listsApps {
+            fillApps()
         } else {
             fillItems()
         }
@@ -290,7 +332,9 @@ final class CleanUpPage: CardPage {
         }
         var rows: [CleanList.Row] = []
         for name in order {
-            let items = groups[name]!.sorted { $0.bytes > $1.bytes }
+            // An uninstall plan leads with the app itself, then what it keeps, largest first.
+            let leads = { (item: CleanItem) in self.tab == .uninstall && item.paths.first?.hasSuffix(".app") == true ? 1 : 0 }
+            let items = groups[name]!.sorted { (leads($0), $0.bytes) > (leads($1), $1.bytes) }
             let ids = items.map(\.id)
             let ticked = ids.filter(selected.contains).count
             rows.append(.init(kind: .heading, id: "#" + name, title: name, value: Format.bytes(UInt64(items.totalBytes)),
@@ -303,13 +347,31 @@ final class CleanUpPage: CardPage {
         }
         list.rows = rows
         let hasScanners = scanners.contains { $0.tab == tab }
-        emptyNote.text = Theme.caption(!hasScanners ? "Wisp has nothing to look for on this tab yet"
+        emptyNote.text = Theme.caption(tab == .uninstall ? "Finding what \(uninstall.chosen?.name ?? "the app") keeps on this Mac…"
+                                       : !hasScanners ? "Wisp has nothing to look for on this tab yet"
                                        : scanning != nil ? "Looking…"
                                        : found[tab]?.scannedAt == nil ? "Not scanned yet"
                                        : leftoversOf != nil ? "Nothing left of \(leftoversOf!.name)"
                                        : "Nothing found", size: 12)
         emptyNote.alignment = .center
         emptyNote.isHidden = !rows.isEmpty
+    }
+
+    private func fillApps() {
+        list.rows = uninstall.rows
+        let filter = uninstall.filter
+        emptyNote.text = Theme.caption(!filter.isEmpty && !uninstall.isScanning ? "No app matches \u{201C}\(filter)\u{201D}"
+                                       : uninstall.isScanning ? "Looking…"
+                                       : uninstall.listedAt == nil ? "Not scanned yet"
+                                       : "No apps besides Apple's", size: 12)
+        emptyNote.alignment = .center
+        emptyNote.isHidden = !list.rows.isEmpty
+    }
+
+    private func openApp(_ path: String) {
+        uninstall.open(path)
+        scrollToTop()
+        Motion.enter(listCard, from: CGPoint(x: 0, y: 6), duration: 0.2)
     }
 
     private func loadHistory() {
@@ -360,7 +422,27 @@ final class CleanUpPage: CardPage {
     private func updateHeader() {
         guard isViewLoaded else { return }
         let figureText: String, unitText: String, statusText: String
-        if tab == .history {
+        let title = headerTitleText()
+        if tab == .uninstall, let app = uninstall.chosen {
+            let items = shown
+            figureText = uninstall.plan == nil ? "–" : Format.bytes(UInt64(items.totalBytes))
+            unitText = uninstall.plan == nil ? "" : "can go · " + (items.count == 1 ? "1 item" : "\(items.count) items")
+            statusText = [app.version.map { "Version \($0)" }, uninstall.isRunning(app) ? "Running" : nil].compactMap { $0 }.joined(separator: " · ")
+        } else if tab == .uninstall {
+            let apps = uninstall.listedApps
+            let measured = uninstall.measuredCount
+            figureText = measured == 0 ? "–" : Format.bytes(UInt64(apps.reduce(0) { $0 + (uninstall.size(of: $1) ?? 0) }))
+            unitText = measured == 0 ? "" : "in " + (apps.count == 1 ? "1 app" : "\(apps.count) apps")
+            if uninstall.isScanning {
+                statusText = uninstall.apps.isEmpty ? "Finding apps…" : "Measuring \(measured) of \(uninstall.apps.count) apps…"
+            } else if !uninstall.complete, measured > 0 {
+                statusText = "Stopped at \(measured) of \(uninstall.apps.count) apps"
+            } else if let date = uninstall.listedAt {
+                statusText = "Scanned " + StoragePage.ago(date)
+            } else {
+                statusText = ""
+            }
+        } else if tab == .history {
             let records = history ?? []
             figureText = records.isEmpty ? "–" : Format.bytes(UInt64(records.reduce(0) { $0 + $1.bytesFreed }))
             unitText = records.isEmpty ? "nothing cleaned yet" : "freed in " + (records.count == 1 ? "1 clean" : "\(records.count) cleans")
@@ -379,28 +461,84 @@ final class CleanUpPage: CardPage {
                 statusText = ""
             }
         }
-        headerTitle.text = Theme.header(tab.title, symbol: tab.symbol, tint: pageTint)
+        headerTitle.text = title
         let text = NSMutableAttributedString(string: figureText, attributes: [.font: Theme.figure(28, .regular), .foregroundColor: Theme.ink])
         text.append(NSAttributedString(string: "  " + unitText, attributes: [.font: Theme.sans(15), .foregroundColor: Theme.inkSecondary]))
         figure.text = text
         status.text = Theme.caption(statusText, size: 11)
-        status.alignment = .right
-        let canScan = tab != .history && scanners.contains { $0.tab == tab }
-        scanButton.isHidden = !canScan
-        scanButton.title = scanning != nil ? "Stop" : found[tab]?.scannedAt == nil ? "Scan" : "Scan Again"
-        scanButton.invalidateIntrinsicContentSize()
+        if status.alignment != .right { status.alignment = .right }
+        let choosing = tab == .uninstall && uninstall.chosen == nil
+        let planning = tab == .uninstall && uninstall.chosen != nil
+        // Set only on a change: a new title redraws the button, and this runs every update.
+        let scanTitle: String
+        if tab == .uninstall {
+            scanButton.isHidden = planning
+            scanTitle = uninstall.isScanning ? "Stop" : uninstall.complete ? "Scan Again" : "Scan"
+        } else {
+            scanButton.isHidden = !(tab != .history && scanners.contains { $0.tab == tab })
+            scanTitle = scanning != nil ? "Stop" : found[tab]?.scannedAt == nil ? "Scan" : "Scan Again"
+        }
+        if scanButton.title != scanTitle {
+            scanButton.title = scanTitle
+            scanButton.invalidateIntrinsicContentSize()
+        }
         showAllButton.isHidden = !(tab == .leftovers && leftoversOf != nil)
+        backButton.isHidden = !planning
+        uninstall.search.isHidden = !choosing
+        let homebrew = planning && uninstall.chosen?.brewToken != nil
+        uninstall.removalToggle.isHidden = !homebrew
+        uninstall.removalLabel.isHidden = !homebrew
         placeHeader()
+    }
+
+    private var titleCache: (key: String, title: NSAttributedString)?
+
+    /// The tab's symbol and name, or on the Uninstall tab the chosen app's icon and name.
+    /// Kept until either changes: an icon attachment never equals a new one, so a fresh
+    /// title on every update would redraw the header each time.
+    private func headerTitleText() -> NSAttributedString {
+        let app = tab == .uninstall ? uninstall.chosen : nil
+        let key = (app?.path ?? tab.rawValue) + "|" + NSApp.effectiveAppearance.name.rawValue
+        if let titleCache, titleCache.key == key { return titleCache.title }
+        let title = app.map(Self.appTitle) ?? Theme.header(tab.title, symbol: tab.symbol, tint: pageTint)
+        titleCache = (key, title)
+        return title
+    }
+
+    private static func appTitle(_ app: InstalledApp) -> NSAttributedString {
+        let font = Theme.sans(13, .semibold)
+        let size: CGFloat = 18
+        let attachment = NSTextAttachment()
+        attachment.image = CleanIcons.file(app.path)
+        attachment.bounds = CGRect(x: 0, y: (font.capHeight - size) / 2, width: size, height: size)
+        let text = NSMutableAttributedString(attachment: attachment)
+        text.append(NSAttributedString(string: " " + app.name, attributes: [.font: font, .foregroundColor: Theme.ink]))
+        return text
     }
 
     private func updateFooter() {
         let items = shown
         let ticked = items.filter { selected.contains($0.id) }
+        let app = tab == .uninstall ? uninstall.chosen : nil
+        let running = app.map(uninstall.isRunning) ?? false
+        var line = ticked.isEmpty ? "Nothing selected" : "\(ticked.count) selected · \(Format.bytes(UInt64(ticked.totalBytes)))"
+        if let app, running { line = "Quit \(app.name) to uninstall it" }
         footer.selection.text = NSAttributedString(
-            string: ticked.isEmpty ? "Nothing selected" : "\(ticked.count) selected · \(Format.bytes(UInt64(ticked.totalBytes)))",
-            attributes: [.font: Theme.sans(13, .medium), .foregroundColor: ticked.isEmpty ? Theme.inkSecondary : Theme.ink])
-        footer.set(enabled: footer.cleanButton, !ticked.isEmpty && review == nil)
+            string: line, attributes: [.font: Theme.sans(13, .medium), .foregroundColor: ticked.isEmpty && !running ? Theme.inkSecondary : Theme.ink])
+        footer.set(enabled: footer.cleanButton, !ticked.isEmpty && review == nil && !running)
         footer.set(enabled: footer.safeButton, items.contains(where: \.isSafeTrash) && review == nil)
+        footer.safeButton.isHidden = tab == .uninstall
+        footer.quitButton.isHidden = !running
+        footer.set(enabled: footer.quitButton, review == nil)
+        let cleanTitle = tab == .uninstall ? "Uninstall…" : "Clean Selected…"
+        let quitTitle = "Quit " + (app?.name ?? "")
+        if footer.cleanButton.title != cleanTitle || footer.quitButton.title != quitTitle {
+            footer.cleanButton.title = cleanTitle
+            footer.quitButton.title = quitTitle
+            footer.cleanButton.invalidateIntrinsicContentSize()
+            footer.quitButton.invalidateIntrinsicContentSize()
+        }
+        footer.needsLayout = true
         view.needsLayout = true
     }
 
@@ -421,6 +559,7 @@ final class CleanUpPage: CardPage {
         sheet.onCancel = { [weak self] in self?.dismissReview() }
         sheet.onConfirm = { [weak self] in self?.run(items, trigger: trigger) }
         if let refusal = CleanRegistry.selectionRefusal(items) { sheet.block(refusal) }
+        if tab == .uninstall, let app = uninstall.chosen, uninstall.isRunning(app) { sheet.block("\(app.name) is open. Quit it, then uninstall") }
         root.addSubview(sheet)
         review = sheet
         view.window?.makeFirstResponder(sheet)
@@ -432,6 +571,7 @@ final class CleanUpPage: CardPage {
         guard let review else { return }
         self.review = nil
         Motion.leave(review, to: CGPoint(x: 0, y: 4), duration: 0.14) { review.removeFromSuperview() }
+        uninstall.reviewClosed()
         updateFooter()
     }
 
@@ -455,6 +595,7 @@ final class CleanUpPage: CardPage {
                     guard let self else { return }
                     let removed = Set(report.removed.map(\.item.id))
                     for tab in self.found.keys { self.found[tab]?.items.removeAll { removed.contains($0.id) } }
+                    self.uninstall.cleaned(removed)
                     self.selected.subtract(removed)
                     self.history?.append(record)
                     self.review?.finish(report, permanent: items.contains(where: \.removal.isPermanent))
@@ -484,14 +625,28 @@ final class CleanUpPage: CardPage {
         guard width > 0 else { return }
         headerTitle.frame = NSRect(x: 20, y: 16, width: headerTitle.naturalWidth + 4, height: 22)
         var right = 20 + width
-        for button in [scanButton, showAllButton] where !button.isHidden {
+        for button in [scanButton, showAllButton, backButton] where !button.isHidden {
             let size = button.intrinsicContentSize
             button.frame = NSRect(x: right - size.width, y: 14, width: size.width, height: size.height)
             right -= size.width + 10
         }
         let statusWidth = max(0, min(320, right - headerTitle.frame.maxX - 16))
         status.frame = NSRect(x: right - statusWidth, y: 19, width: statusWidth, height: 16)
-        figure.frame = NSRect(x: 20, y: 48, width: width, height: 36)
+        // The Uninstall tab keeps its filter, or the choice of Trash or Homebrew, at the end of the figure's line.
+        var figureRight = 20 + width
+        if !uninstall.search.isHidden {
+            let fieldWidth = min(240, width / 2)
+            uninstall.search.frame = NSRect(x: figureRight - fieldWidth, y: 53, width: fieldWidth, height: 26)
+            figureRight -= fieldWidth + 16
+        }
+        if !uninstall.removalToggle.isHidden {
+            let toggleWidth = uninstall.removalToggle.naturalWidth
+            uninstall.removalToggle.frame = NSRect(x: figureRight - toggleWidth, y: 52, width: toggleWidth, height: 28)
+            let labelWidth = uninstall.removalLabel.naturalWidth + 4
+            uninstall.removalLabel.frame = NSRect(x: uninstall.removalToggle.frame.minX - 10 - labelWidth, y: 57, width: labelWidth, height: 18)
+            figureRight = uninstall.removalLabel.frame.minX - 16
+        }
+        figure.frame = NSRect(x: 20, y: 48, width: max(0, figureRight - 20), height: 36)
     }
 }
 

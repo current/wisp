@@ -17,6 +17,9 @@ public struct InstallerScanner: CleanScanner {
     static let packages: Set<String> = ["app", "photoslibrary", "musiclibrary", "tvlibrary", "fcpbundle", "xcarchive", "framework",
                                         "bundle", "sparsebundle", "pkg", "mpkg", "imovielibrary", "logicx"]
 
+    /// Folders a build writes into. A .pkg or .dmg there is the project's own output, not a download.
+    static let buildFolders: Set<String> = ["build", "builds", "dist", "out", "target", "deriveddata", "node_modules", "pods", "carthage"]
+
     public var tab: CleanTab { .junk }
     public var minimumBytes: Int64
     public var applications: String
@@ -60,7 +63,7 @@ public struct InstallerScanner: CleanScanner {
                 let ext = (path as NSString).pathExtension.lowercased()
                 batch.append(CleanItem(id: "installer:\(path)", tab: .junk, group: Self.group, name: (path as NSString).lastPathComponent,
                                        detail: Self.kinds[ext] ?? "", paths: [path], bytes: size.bytes, modified: size.modified,
-                                       safety: .checkFirst))
+                                       safety: .checkFirst, checkedByDefault: false))
             }
             if !batch.isEmpty { context.found(batch) }
             items += batch
@@ -72,13 +75,16 @@ public struct InstallerScanner: CleanScanner {
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         // A folder with more entries than this holds data, not downloads worth sorting through.
         guard !context.isCancelled(), let entries = CleanFiles.entries(folder, limit: 10_000, dates: false, buffer: &buffer) else { return }
+        // A git working tree holds a project, and its installers are what it builds or ships.
+        if entries.contains(where: { $0.name == ".git" }) { return }
         var subfolders: [String] = []
         for entry in entries where !entry.name.hasPrefix(".") {
             let path = folder + "/" + entry.name
             let ext = (entry.name as NSString).pathExtension.lowercased()
             if Self.kinds[ext] != nil, entry.isFile || entry.isFolder {
                 if !context.isBlocked(path) && !isDataless(path) { found.append(path) }
-            } else if entry.isFolder, !Self.packages.contains(ext), !context.isExcluded(path) {
+            } else if entry.isFolder, !Self.packages.contains(ext), !Self.buildFolders.contains(entry.name.lowercased()),
+                      !context.isExcluded(path) {
                 subfolders.append(path)
             }
         }
