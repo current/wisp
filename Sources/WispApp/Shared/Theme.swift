@@ -68,17 +68,22 @@ enum Theme {
     static let panelRadius: CGFloat = 18
 
     static func sans(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
-        .systemFont(ofSize: size, weight: weight)
+        Fonts.inter(size, weight)
+    }
+
+    /// Text with tabular digits, so changing figures keep their width.
+    static func digits(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
+        Fonts.inter(size, weight, tabular: true)
     }
 
     /// Figures: SF Pro semibold with tabular digits.
     static func figure(_ size: CGFloat, _ weight: NSFont.Weight = .semibold) -> NSFont {
-        .monospacedDigitSystemFont(ofSize: size, weight: weight == .regular ? .semibold : weight)
+        digits(size, weight == .regular ? .semibold : weight)
     }
 
     /// Small figures and labels. Tahoe keeps SF Pro here too, with tabular digits.
     static func mono(_ size: CGFloat = 10, _ weight: NSFont.Weight = .medium) -> NSFont {
-        .monospacedDigitSystemFont(ofSize: size + 1, weight: weight == .medium ? .regular : weight)
+        digits(size + 1, weight == .medium ? .regular : weight)
     }
 
     static func dynamic(_ light: UInt32, _ dark: UInt32) -> NSColor {
@@ -111,7 +116,7 @@ enum Theme {
     static func caption(_ text: String, color: NSColor = Theme.inkSecondary, size: CGFloat = 10) -> NSAttributedString {
         let sentence = text.prefix(1).uppercased() + text.dropFirst()
         return NSAttributedString(string: sentence, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: size + 1, weight: .regular),
+            .font: digits(size + 1),
             .foregroundColor: color == Theme.inkTertiary ? Theme.inkSecondary : color,
         ])
     }

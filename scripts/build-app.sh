@@ -26,6 +26,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources"
 cp "$bin/WispApp" "$app/Contents/MacOS/Wisp"
 cp "$bin/wisp" "$app/Contents/Helpers/wisp"
 sed -e "s/__VERSION__/$version/" -e "s/__BUILD__/$build_number/" Resources/Info.plist > "$app/Contents/Info.plist"
+cp -R Resources/Fonts "$app/Contents/Resources/Fonts"
 if [[ -f Resources/Wisp.icns ]]; then
     cp Resources/Wisp.icns "$app/Contents/Resources/Wisp.icns"
 fi

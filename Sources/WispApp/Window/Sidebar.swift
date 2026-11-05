@@ -136,7 +136,7 @@ final class NavRow: DrawnView {
         IconTile.glyph(page.symbol, tint: Theme.blue, size: 16, appearance: effectiveAppearance)
             .draw(in: NSRect(x: 10.5, y: (bounds.height - 16) / 2, width: 16, height: 16), from: .zero, operation: .sourceOver,
                   fraction: 1, respectFlipped: true, hints: nil)
-        let valueAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular),
+        let valueAttributes: [NSAttributedString.Key: Any] = [.font: Theme.digits(12, .regular),
                                                               .foregroundColor: valueWarns ? Theme.warn : Theme.inkSecondary]
         let valueWidth = value.isEmpty ? 0 : ceil((value as NSString).size(withAttributes: valueAttributes).width)
         let paragraph = NSMutableParagraphStyle()

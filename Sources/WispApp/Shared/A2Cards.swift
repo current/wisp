@@ -77,7 +77,7 @@ enum A2 {
     static let titleFont = Theme.sans(13, .semibold)
     static let legendFont = Theme.sans(11, .medium)
     static let subFont = Theme.sans(11.5)
-    static let subBold = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .semibold)
+    static let subBold = Theme.digits(11.5, .semibold)
     static let figureFont = Theme.figure(34, .semibold)
     static let unitFont = Theme.sans(15, .medium)
 
@@ -364,7 +364,7 @@ final class A2ActivityChart: BitmapView {
         }
         context.restoreGState()
         let label = format(top) as NSString
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        let font = Theme.digits(10, .regular)
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: A2.gridLabel]
         let size = label.size(withAttributes: attributes)
         label.draw(at: NSPoint(x: bounds.width - 14 - size.width, y: y(top) - 4 - font.ascender), withAttributes: attributes)
@@ -429,7 +429,7 @@ final class A2Keys: BitmapView {
     var rowGap: CGFloat = 6
 
     private static let labelFont = Theme.sans(10.5)
-    private static let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)
+    private static let valueFont = Theme.digits(12.5, .semibold)
     private static let labelLine = ceil((labelFont.ascender - labelFont.descender) * 2) / 2
     private static let valueLine = ceil((valueFont.ascender - valueFont.descender) * 2) / 2
     static let keyHeight = labelLine + 3 + valueLine
@@ -516,8 +516,8 @@ final class A2AppList: BitmapView {
     private static let spacing: CGFloat = 11
     private static let nameFont = Theme.sans(13, .medium)
     private static let detailFont = Theme.sans(11)
-    private static let cpuFont = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)
-    private static let memoryFont = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .medium)
+    private static let cpuFont = Theme.digits(12.5, .semibold)
+    private static let memoryFont = Theme.digits(12.5, .medium)
 
     private var rowHeight: CGFloat { (bounds.height - Self.headerHeight - Self.headerGap) / CGFloat(max(1, max(slots, rows.count))) }
     private func rowTop(_ index: Int) -> CGFloat { Self.headerHeight + Self.headerGap + CGFloat(index) * rowHeight }

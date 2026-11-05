@@ -9,12 +9,12 @@ enum Style {
     static let section: CGFloat = 20
     static let corner: CGFloat = 8
 
-    static let title = NSFont.systemFont(ofSize: 13, weight: .semibold)
-    static let body = NSFont.systemFont(ofSize: 12)
-    static let caption = NSFont.systemFont(ofSize: 11)
-    static let figure = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-    static let bigFigure = NSFont.monospacedDigitSystemFont(ofSize: 20, weight: .medium)
-    static let smallFigure = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+    static let title = Theme.sans(13, .semibold)
+    static let body = Theme.sans(12)
+    static let caption = Theme.sans(11)
+    static let figure = Theme.digits(12, .regular)
+    static let bigFigure = Theme.digits(20, .medium)
+    static let smallFigure = Theme.digits(11, .regular)
 
     static func label(_ text: String = "", font: NSFont = Style.body, color: NSColor = .labelColor) -> NSTextField {
         let field = NSTextField(labelWithString: text)

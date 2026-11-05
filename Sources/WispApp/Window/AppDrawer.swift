@@ -342,7 +342,7 @@ final class PartRow: DrawnView, SelfAuditing {
             NSRect(x: 18, y: bounds.height - 0.5, width: bounds.width - 18, height: 0.5).fill()
         }
         let valueAttributes: [NSAttributedString.Key: Any] = [.font: Theme.figure(13, .semibold), .foregroundColor: Theme.ink]
-        let shareAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular), .foregroundColor: Theme.inkSecondary]
+        let shareAttributes: [NSAttributedString.Key: Any] = [.font: Theme.digits(12, .regular), .foregroundColor: Theme.inkSecondary]
         let valueWidth = ceil((value as NSString).size(withAttributes: valueAttributes).width)
         (value as NSString).draw(at: NSPoint(x: bounds.width - valueWidth, y: (bounds.height - 16) / 2), withAttributes: valueAttributes)
         let shareWidth = ceil((share as NSString).size(withAttributes: shareAttributes).width)

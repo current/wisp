@@ -42,7 +42,7 @@ final class Facts: DrawnView, SelfAuditing {
     var alignRight = false { didSet { needsDisplay = true } }
 
     private static let labelFont = Theme.sans(11)
-    private static let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+    private static let valueFont = Theme.digits(13, .semibold)
 
     private func widths() -> [CGFloat] {
         items.map { item in
@@ -104,7 +104,7 @@ final class LegendRows: DrawnView {
             color.setFill()
             NSBezierPath(ovalIn: NSRect(x: 0, y: y + 5, width: 8, height: 8)).fill()
             (name as NSString).draw(at: NSPoint(x: 14, y: y + 1), withAttributes: [.font: Theme.sans(12), .foregroundColor: Theme.ink])
-            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
+            let attributes: [NSAttributedString.Key: Any] = [.font: Theme.digits(12, .semibold),
                                                              .foregroundColor: Theme.ink]
             let width = (value as NSString).size(withAttributes: attributes).width
             (value as NSString).draw(at: NSPoint(x: bounds.width - width, y: y + 1), withAttributes: attributes)

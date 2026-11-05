@@ -354,7 +354,7 @@ final class ConnectionRow: DrawnView, SelfAuditing {
     private static let nameFont = Theme.sans(13)
     private static let rateAttributes: [NSAttributedString.Key: Any] = [.font: Theme.figure(13, .semibold), .foregroundColor: Theme.ink]
     private static let bytesAttributes: [NSAttributedString.Key: Any] = [
-        .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: Theme.inkSecondary]
+        .font: Theme.digits(11, .regular), .foregroundColor: Theme.inkSecondary]
 
     private var rateWidth: CGFloat { rate.isEmpty ? 0 : ceil((rate as NSString).size(withAttributes: Self.rateAttributes).width) }
     private var bytesWidth: CGFloat { bytes.isEmpty ? 0 : ceil((bytes as NSString).size(withAttributes: Self.bytesAttributes).width) }
