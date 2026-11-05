@@ -54,7 +54,11 @@ public struct LargeFilesScanner: CleanScanner {
         index.reset()
         let state = ScanState(context: context, index: index)
         let home = context.home.path
-        let roots = Self.roots(home: home)
+        // Without Full Disk Access, opening Desktop, Documents or Downloads makes macOS ask the user.
+        let locked = StorageAccess.skipped(home: home)
+        let roots = Self.roots(home: home).filter { root in
+            !locked.contains { root.display == $0 || root.display.hasPrefix($0 + "/") }
+        }
         state.roots = roots
 
         // Each root lists its own entries, then hands each subfolder to the pool as its own task.

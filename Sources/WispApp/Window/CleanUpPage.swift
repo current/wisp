@@ -463,7 +463,9 @@ final class CleanUpPage: CardPage {
             if scanning != nil {
                 statusText = "Scanning…" + (items.isEmpty ? "" : " \(items.count) found so far")
             } else if hasScanners, let date = found[tab]?.scannedAt {
+                let locked = tab == .largeFiles && !StorageAccess.hasFullDiskAccess
                 statusText = (found[tab]?.complete == false ? "Stopped " : "Scanned ") + StoragePage.ago(date)
+                    + (locked ? " · Desktop, Documents and Downloads need Full Disk Access" : "")
             } else {
                 statusText = ""
             }
