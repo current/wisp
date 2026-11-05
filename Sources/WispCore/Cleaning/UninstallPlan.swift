@@ -33,7 +33,10 @@ public enum UninstallPlan {
         }
         let library = home + "/Library/"
         guard path.hasPrefix(library) else { return false }
-        return path.dropFirst(library.count).split(separator: "/").count >= 2
+        let parts = path.dropFirst(library.count).split(separator: "/")
+        // iCloud Drive, synced cloud folders, keychains and mail hold the user's own data, never an app's leftovers.
+        let userData: Set<Substring> = ["Mobile Documents", "CloudStorage", "Keychains", "Mail", "Messages", "Accounts"]
+        return parts.count >= 2 && !userData.contains(parts[0])
     }
 }
 

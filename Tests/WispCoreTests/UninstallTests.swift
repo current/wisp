@@ -320,5 +320,7 @@ private extension Array where Element == CleanItem {
         #expect(!UninstallPlan.mayRemove("/Applications", home: home))
         #expect(!UninstallPlan.mayRemove("/System/Applications/Notes.app", home: home))
         #expect(!UninstallPlan.mayRemove(home + "/Library/Caches/../Preferences", home: home))
+        #expect(!UninstallPlan.mayRemove(home + "/Library/Mobile Documents/com~apple~CloudDocs", home: home))
+        #expect(!UninstallPlan.mayRemove(home + "/Library/Keychains/login.keychain-db", home: home))
     }
 }
