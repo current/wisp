@@ -129,7 +129,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.title = "Wisp"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        // Liquid Glass shows what is behind the window, so the window is clear under the
+        // The sidebar blurs what is behind the window, so the window is clear under the
         // sidebar; the page paints its own ground. Snapshots have no glass and stay opaque.
         if Sidebar.usesGlass {
             window.isOpaque = false

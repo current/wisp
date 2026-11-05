@@ -166,7 +166,7 @@ final class NavRow: DrawnView {
 }
 
 /// The sidebar: pages in sections with live figures, settings at the foot. It runs the
-/// full height of the window on Liquid Glass, which shows the desktop behind the window.
+/// full height of the window on a blur of the desktop behind the window.
 /// The window's own corners round its left side. Snapshots, which have no glass, use a
 /// tinted surface in its place.
 @MainActor
@@ -190,10 +190,8 @@ final class Sidebar: NSView {
     private let highlight = CALayer()
     private let surface: NSView
 
-    static var usesGlass: Bool {
-        if #available(macOS 26.0, *) { return !Theme.solidPanels }
-        return false
-    }
+    /// The window server's blur needs a real window behind it; snapshots draw a tint instead.
+    static var usesGlass: Bool { !Theme.solidPanels }
     private let content = FlippedContent()
     /// The hairline on the right edge, against the page, and the one over the Settings row.
     private let edge = CALayer()
@@ -207,11 +205,13 @@ final class Sidebar: NSView {
     }
 
     override init(frame: NSRect) {
-        if #available(macOS 26.0, *), Self.usesGlass {
-            let glass = NSGlassEffectView()
-            glass.style = .regular
-            glass.cornerRadius = 0
-            surface = glass
+        if Self.usesGlass {
+            // Of the behind-window materials, this one keeps the most of the desktop's colour.
+            let blur = NSVisualEffectView()
+            blur.material = .fullScreenUI
+            blur.blendingMode = .behindWindow
+            blur.state = .active
+            surface = blur
         } else {
             surface = SidebarSurface()
         }
