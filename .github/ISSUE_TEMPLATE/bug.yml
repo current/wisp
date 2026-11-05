@@ -1,0 +1,29 @@
+name: Bug report
+description: Something in Wisp is wrong or broken.
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you saw. A screenshot helps.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Wisp version
+      description: In Settings > About, or `wisp --version`.
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and macOS version
+      placeholder: MacBook Pro M3, macOS 27.2
+    validations:
+      required: true
+  - type: textarea
+    id: numbers
+    attributes:
+      label: Numbers that look wrong
+      description: If a figure is off, what Activity Monitor or another tool shows for the same thing.

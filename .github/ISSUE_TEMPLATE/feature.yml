@@ -1,0 +1,14 @@
+name: Feature request
+description: Something Wisp should show or do.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to find out or do
+      description: The question you had about your Mac, or the task. Say what you use today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What Wisp could show
