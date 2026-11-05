@@ -29,23 +29,9 @@ final class CleanUpPage: CardPage {
 
     private let tabs = Segmented(CleanTab.allCases.map(\.title))
     private let headerCard = CardView(), headerTitle = TextLine(), figure = TextLine(), status = TextLine()
-    private lazy var scanButton: ActionButton = {
-        let button = ActionButton(title: "Scan Again", target: self, action: #selector(scanPressed))
-        button.secondary = true
-        return button
-    }()
-    private lazy var showAllButton: ActionButton = {
-        let button = ActionButton(title: "Show All", target: self, action: #selector(showAll))
-        button.secondary = true
-        return button
-    }()
-    private lazy var backButton: ActionButton = {
-        let button = ActionButton(title: "All Apps", target: self, action: #selector(backToApps))
-        button.secondary = true
-        return button
-    }()
+    private let scanButton = A2PillButton(), showAllButton = A2PillButton(), backButton = A2PillButton()
     private let listCard = CardView(), list = CleanList(), emptyNote = TextLine()
-    private lazy var footer = CleanFooter(target: self, safe: #selector(cleanSafe), clean: #selector(cleanSelected), quit: #selector(quitApp))
+    private let footer = CleanFooter()
     private let uninstall = UninstallBrowser()
     private let root = Root()
     private static let work = DispatchQueue(label: "app.wisp.clean", qos: .utility)
@@ -66,8 +52,22 @@ final class CleanUpPage: CardPage {
     override var pageTint: NSColor { PageID.cleanup.tint }
     override var toolbarItems: [NSView] { [tabs] }
 
+    /// The tab's name and symbol in the header: the A2 cyan, as in the mockup.
+    private static let labelTint = A2.labelTint(.disk)
+
     override func loadView() {
         super.loadView()
+        let (_, subtitle) = heading(PageID.cleanup.title)
+        subtitle.variants = ["Nothing moves until you review it", ""].map(Toolbar.subtitle)
+        scanButton.title = "Scan Again"
+        scanButton.onPress = { [weak self] in self?.scanPressed() }
+        showAllButton.title = "Show All"
+        showAllButton.onPress = { [weak self] in self?.showAll() }
+        backButton.title = "All Apps"
+        backButton.onPress = { [weak self] in self?.backToApps() }
+        footer.safeButton.onPress = { [weak self] in self?.cleanSafe() }
+        footer.cleanButton.onPress = { [weak self] in self?.cleanSelected() }
+        footer.quitButton.onPress = { [weak self] in self?.quitApp() }
         root.addSubview(scroll)
         root.addSubview(footer)
         view = root
@@ -92,15 +92,21 @@ final class CleanUpPage: CardPage {
 
     override func viewDidLayout() {
         scroll.frame = root.bounds
-        let showsFooter = tab != .history && !(tab == .uninstall && uninstall.chosen == nil)
+        let showsFooter = footerShown
         footer.isHidden = !showsFooter
         footer.frame = NSRect(x: margin, y: root.bounds.height - CleanFooter.height - margin, width: max(0, root.bounds.width - margin * 2),
                               height: CleanFooter.height)
-        let bottom = showsFooter ? CleanFooter.height + 24 : 0
+        let bottom = showsFooter ? CleanFooter.height + gap : 0
         if scroll.contentInsets.bottom != bottom { scroll.contentInsets.bottom = bottom }
         review?.frame = root.bounds
         super.viewDidLayout()
+        if root.bounds.height != arrangedHeight { relayout() }
     }
+
+    /// The list card reaches the footer, so a taller window lays the page out again.
+    private var arrangedHeight: CGFloat = 0
+
+    private var footerShown: Bool { tab != .history && !(tab == .uninstall && uninstall.chosen == nil) }
 
     // MARK: Open and close
 
@@ -208,7 +214,7 @@ final class CleanUpPage: CardPage {
         }
     }
 
-    @objc private func scanPressed() {
+    private func scanPressed() {
         if tab == .uninstall {
             if uninstall.isScanning { uninstall.stopScan() } else { uninstall.scan(again: uninstall.complete) }
         } else if scanning != nil {
@@ -263,7 +269,7 @@ final class CleanUpPage: CardPage {
         if visible { scan([.leftovers]) }
     }
 
-    @objc private func showAll() {
+    private func showAll() {
         leftoversOf = nil
         fill()
     }
@@ -276,12 +282,12 @@ final class CleanUpPage: CardPage {
         if tab != .uninstall { pick(.uninstall) } else { fill() }
     }
 
-    @objc private func backToApps() {
+    private func backToApps() {
         uninstall.back()
         scrollToTop()
     }
 
-    @objc private func quitApp() {
+    private func quitApp() {
         uninstall.quitChosen()
     }
 
@@ -476,10 +482,10 @@ final class CleanUpPage: CardPage {
             }
         }
         headerTitle.text = title
-        let text = NSMutableAttributedString(string: figureText, attributes: [.font: Theme.figure(28, .regular), .foregroundColor: Theme.ink])
-        text.append(NSAttributedString(string: "  " + unitText, attributes: [.font: Theme.sans(15), .foregroundColor: Theme.inkSecondary]))
+        let text = NSMutableAttributedString(string: figureText, attributes: [.font: Theme.digits(28), .foregroundColor: A2.primary, .kern: -0.84])
+        text.append(NSAttributedString(string: "  " + unitText, attributes: [.font: Theme.sans(15), .foregroundColor: A2.secondary]))
         figure.text = text
-        status.text = Theme.caption(statusText, size: 11)
+        status.text = NSAttributedString(string: statusText, attributes: [.font: Theme.digits(11.5), .foregroundColor: A2.secondary])
         if status.alignment != .right { status.alignment = .right }
         let choosing = tab == .uninstall && uninstall.chosen == nil
         let planning = tab == .uninstall && uninstall.chosen != nil
@@ -492,10 +498,7 @@ final class CleanUpPage: CardPage {
             scanButton.isHidden = !(tab != .history && scanners.contains { $0.tab == tab })
             scanTitle = scanning != nil ? "Stop" : found[tab]?.scannedAt == nil ? "Scan" : "Scan Again"
         }
-        if scanButton.title != scanTitle {
-            scanButton.title = scanTitle
-            scanButton.invalidateIntrinsicContentSize()
-        }
+        scanButton.title = scanTitle
         showAllButton.isHidden = !(tab == .leftovers && leftoversOf != nil)
         backButton.isHidden = !planning
         uninstall.search.isHidden = !choosing
@@ -514,7 +517,7 @@ final class CleanUpPage: CardPage {
         let app = tab == .uninstall ? uninstall.chosen : nil
         let key = (app?.path ?? tab.rawValue) + "|" + NSApp.effectiveAppearance.name.rawValue
         if let titleCache, titleCache.key == key { return titleCache.title }
-        let title = app.map(Self.appTitle) ?? Theme.header(tab.title, symbol: tab.symbol, tint: pageTint)
+        let title = app.map(Self.appTitle) ?? Theme.header(tab.title, symbol: tab.symbol, tint: Self.labelTint)
         titleCache = (key, title)
         return title
     }
@@ -526,7 +529,7 @@ final class CleanUpPage: CardPage {
         attachment.image = CleanIcons.file(app.path)
         attachment.bounds = CGRect(x: 0, y: (font.capHeight - size) / 2, width: size, height: size)
         let text = NSMutableAttributedString(attachment: attachment)
-        text.append(NSAttributedString(string: " " + app.name, attributes: [.font: font, .foregroundColor: Theme.ink]))
+        text.append(NSAttributedString(string: " " + app.name, attributes: [.font: font, .foregroundColor: A2.primary]))
         return text
     }
 
@@ -538,31 +541,25 @@ final class CleanUpPage: CardPage {
         var line = ticked.isEmpty ? "Nothing selected" : "\(ticked.count) selected · \(Format.bytes(UInt64(ticked.totalBytes)))"
         if let app, running { line = "Quit \(app.name) to uninstall it" }
         footer.selection.text = NSAttributedString(
-            string: line, attributes: [.font: Theme.sans(13, .medium), .foregroundColor: ticked.isEmpty && !running ? Theme.inkSecondary : Theme.ink])
-        footer.set(enabled: footer.cleanButton, !ticked.isEmpty && review == nil && !running)
-        footer.set(enabled: footer.safeButton, items.contains(where: \.isSafeTrash) && review == nil)
+            string: line, attributes: [.font: Theme.digits(13, .medium), .foregroundColor: ticked.isEmpty && !running ? A2.secondary : A2.primary])
+        footer.cleanButton.isEnabled = !ticked.isEmpty && review == nil && !running
+        footer.safeButton.isEnabled = items.contains(where: \.isSafeTrash) && review == nil
         footer.safeButton.isHidden = tab == .uninstall
         footer.quitButton.isHidden = !running
-        footer.set(enabled: footer.quitButton, review == nil)
-        let cleanTitle = tab == .uninstall ? "Uninstall…" : "Clean Selected…"
-        let quitTitle = "Quit " + (app?.name ?? "")
-        if footer.cleanButton.title != cleanTitle || footer.quitButton.title != quitTitle {
-            footer.cleanButton.title = cleanTitle
-            footer.quitButton.title = quitTitle
-            footer.cleanButton.invalidateIntrinsicContentSize()
-            footer.quitButton.invalidateIntrinsicContentSize()
-        }
+        footer.quitButton.isEnabled = review == nil
+        footer.cleanButton.title = tab == .uninstall ? "Uninstall…" : "Clean Selected…"
+        footer.quitButton.title = "Quit " + (app?.name ?? "")
         footer.needsLayout = true
         view.needsLayout = true
     }
 
     // MARK: Cleaning
 
-    @objc private func cleanSelected() {
+    private func cleanSelected() {
         presentReview(shown.filter { selected.contains($0.id) }, trigger: .manual)
     }
 
-    @objc private func cleanSafe() {
+    private func cleanSafe() {
         presentReview(shown.filter(\.isSafeTrash), trigger: .manual)
     }
 
@@ -627,9 +624,17 @@ final class CleanUpPage: CardPage {
     override func arrange(width: CGFloat) -> CGFloat {
         let inner = width - margin * 2
         var y = margin
+        arrangedHeight = root.bounds.height
         headerCard.frame = NSRect(x: margin, y: y, width: inner, height: 96)
         y += 96 + gap
-        let listHeight = list.rows.isEmpty ? 120 : list.naturalHeight + 32
+        // The list card reaches down to the footer, as in the mockup; a short list spreads its
+        // items up to 64 pt to fill it, then leaves the rest of the card empty.
+        let footerRoom = footerShown ? CleanFooter.height + gap : 0
+        let room = max(120, root.bounds.height - Self.topInset - y - footerRoom - margin)
+        let items = CGFloat(list.itemCount)
+        let spread = items > 0 ? ((room - 32 - list.baseHeight) / items).rounded(.down) : 0
+        list.itemHeight = min(64, max(CleanList.baseItemHeight, CleanList.baseItemHeight + spread))
+        let listHeight = max(room, list.rows.isEmpty ? 120 : list.naturalHeight + 32)
         listCard.frame = NSRect(x: margin, y: y, width: inner, height: listHeight)
         list.frame = NSRect(x: 20, y: 16, width: inner - 40, height: max(1, list.naturalHeight))
         emptyNote.frame = NSRect(x: 20, y: (listHeight - 18) / 2, width: inner - 40, height: 18)
@@ -643,9 +648,9 @@ final class CleanUpPage: CardPage {
         headerTitle.frame = NSRect(x: 20, y: 16, width: headerTitle.naturalWidth + 4, height: 22)
         var right = 20 + width
         for button in [scanButton, showAllButton, backButton] where !button.isHidden {
-            let size = button.intrinsicContentSize
-            button.frame = NSRect(x: right - size.width, y: 14, width: size.width, height: size.height)
-            right -= size.width + 10
+            let width = button.naturalWidth
+            button.frame = NSRect(x: right - width, y: 15, width: width, height: 26)
+            right -= width + 10
         }
         let statusWidth = max(0, min(320, right - headerTitle.frame.maxX - 16))
         status.frame = NSRect(x: right - statusWidth, y: 19, width: statusWidth, height: 16)

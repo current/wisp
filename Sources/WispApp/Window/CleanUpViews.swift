@@ -4,11 +4,11 @@ import WispCore
 extension CleanTab {
     var symbol: String {
         switch self {
-        case .junk: return "trash.fill"
-        case .developer: return "hammer.fill"
-        case .largeFiles: return "doc.fill"
-        case .leftovers: return "tray.full.fill"
-        case .uninstall: return "xmark.app.fill"
+        case .junk: return "trash"
+        case .developer: return "hammer"
+        case .largeFiles: return "doc"
+        case .leftovers: return "tray.full"
+        case .uninstall: return "xmark.app"
         case .history: return "clock.arrow.circlepath"
         }
     }
@@ -18,7 +18,27 @@ extension CleanTab {
 @MainActor
 enum CleanIcons {
     private static var cache: [String: NSImage] = [:]
+    private static var folders: [String: Bool] = [:]
     static let size: CGFloat = 22
+
+    /// A symbol on a tinted tile for what has no icon of its own: simulators, snapshots and
+    /// plain folders. Nil for apps and files, which show their Finder icon.
+    static func tile(for item: CleanItem) -> (symbol: String, tint: NSColor)? {
+        switch item.removal {
+        case .simulator, .simulatorRuntime: return ("iphone", A2.labelTint(.disk))
+        case .localSnapshot: return ("clock.arrow.circlepath", A2.labelTint(.disk))
+        case .brewCask, .trash: break
+        }
+        if let id = item.ownerBundleID, cache["app:" + id] != nil || NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) != nil { return nil }
+        guard let path = item.paths.first else { return (item.tab.symbol, A2.cpu) }
+        if folders[path] == nil {
+            var isDirectory: ObjCBool = false
+            if folders.count > 2000 { folders.removeAll() }
+            folders[path] = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+                && !NSWorkspace.shared.isFilePackage(atPath: path)
+        }
+        return folders[path] == true ? ("folder", A2.cpu) : nil
+    }
 
     static func icon(for item: CleanItem) -> NSImage {
         switch item.removal {
@@ -89,20 +109,9 @@ final class CleanList: BitmapView {
         var ids: [String] = []
     }
 
-    var rows: [Row] = [] {
-        didSet {
-            offsets = []
-            var y: CGFloat = 0
-            for (index, row) in rows.enumerated() {
-                // A heading after items gets room above it.
-                if row.kind == .heading, index > 0 { y += 10 }
-                offsets.append(y)
-                y += height(row)
-            }
-            total = y
-            needsDisplay = true
-        }
-    }
+    var rows: [Row] = [] { didSet { reflow() } }
+    /// Items are 50 pt; a short list on a tall card spreads them a little, as in the mockup.
+    var itemHeight: CGFloat = CleanList.baseItemHeight { didSet { if itemHeight != oldValue { reflow() } } }
     var onToggle: (([String], Bool) -> Void)?
     var onExclude: ((CleanItem) -> Void)?
     /// Set for a list of rows that open something (the Uninstall tab's apps) instead of ticking.
@@ -117,11 +126,29 @@ final class CleanList: BitmapView {
     }
     private var revealHovered = false
 
-    static let itemHeight: CGFloat = 50
+    static let baseItemHeight: CGFloat = 50
     static let headingHeight: CGFloat = 32
+    private static let headingGap: CGFloat = 10
     var naturalHeight: CGFloat { total }
 
-    private func height(_ row: Row) -> CGFloat { row.kind == .heading ? Self.headingHeight : Self.itemHeight }
+    /// The height with 50 pt items, and how many items share any room beyond it.
+    var baseHeight: CGFloat { total - CGFloat(itemCount) * (itemHeight - Self.baseItemHeight) }
+    var itemCount: Int { rows.filter { $0.kind == .item }.count }
+
+    private func reflow() {
+        offsets = []
+        var y: CGFloat = 0
+        for (index, row) in rows.enumerated() {
+            // A heading after items gets room above it.
+            if row.kind == .heading, index > 0 { y += Self.headingGap }
+            offsets.append(y)
+            y += height(row)
+        }
+        total = y
+        needsDisplay = true
+    }
+
+    private func height(_ row: Row) -> CGFloat { row.kind == .heading ? Self.headingHeight : itemHeight }
     private func frame(_ index: Int) -> NSRect { NSRect(x: 0, y: offsets[index], width: bounds.width, height: height(rows[index])) }
 
     private func index(at point: NSPoint) -> Int? {
@@ -175,26 +202,37 @@ final class CleanList: BitmapView {
                 let size = (row.value as NSString).size(withAttributes: attributes)
                 (row.value as NSString).draw(at: NSPoint(x: rightEdge - size.width, y: frame.midY - size.height / 2), withAttributes: attributes)
             case .item:
-                let icon: NSImage? = row.item.map { CleanIcons.icon(for: $0) }
-                    ?? row.symbol.map { IconTile.image($0, tint: PageID.cleanup.tint, size: CleanIcons.size, appearance: effectiveAppearance) }
-                if let icon {
-                    icon.draw(in: NSRect(x: x, y: frame.midY - CleanIcons.size / 2, width: CleanIcons.size, height: CleanIcons.size),
-                              from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                let iconRect = NSRect(x: x, y: frame.midY - CleanIcons.size / 2, width: CleanIcons.size, height: CleanIcons.size)
+                if let item = row.item, let tile = CleanIcons.tile(for: item) {
+                    drawTile(tile.symbol, tint: tile.tint, in: iconRect)
+                    x += CleanIcons.size + 12
+                } else if let icon = row.item.map({ CleanIcons.icon(for: $0) }) {
+                    icon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                    x += CleanIcons.size + 12
+                } else if let symbol = row.symbol {
+                    drawTile(symbol, tint: A2.labelTint(.disk), in: iconRect)
                     x += CleanIcons.size + 12
                 }
+                // Two lines centred in the row: the name over what it is, the size over how safe it is.
+                let titleFont = Theme.sans(13), detailFont = Theme.sans(11.5)
+                let titleLine = titleFont.ascender - titleFont.descender, detailLine = detailFont.ascender - detailFont.descender
+                let top = (frame.midY - (titleLine + 3 + detailLine) / 2).rounded()
+                let detailTop = top + titleLine + 3
                 let textWidth = max(40, rightEdge - x - valueWidth - 12)
-                (row.title as NSString).draw(with: NSRect(x: x, y: frame.minY + 7, width: textWidth, height: 18),
+                (row.title as NSString).draw(with: NSRect(x: x, y: top, width: textWidth, height: ceil(titleLine)),
                                              options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                             attributes: [.font: Theme.sans(13), .foregroundColor: Theme.ink, .paragraphStyle: paragraph])
-                (row.detail as NSString).draw(with: NSRect(x: x, y: frame.minY + 26, width: textWidth, height: 16),
+                                             attributes: [.font: titleFont, .foregroundColor: A2.primary, .paragraphStyle: paragraph])
+                (row.detail as NSString).draw(with: NSRect(x: x, y: detailTop, width: textWidth, height: ceil(detailLine)),
                                               options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                              attributes: [.font: Theme.sans(11.5), .foregroundColor: Theme.inkSecondary, .paragraphStyle: paragraph])
-                let valueAttributes: [NSAttributedString.Key: Any] = [.font: Theme.figure(13, .medium), .foregroundColor: Theme.ink]
+                                              attributes: [.font: detailFont, .foregroundColor: A2.secondary, .paragraphStyle: paragraph])
+                let valueFont = Theme.digits(13, .medium)
+                let valueAttributes: [NSAttributedString.Key: Any] = [.font: valueFont, .foregroundColor: A2.primary]
                 let valueSize = (row.value as NSString).size(withAttributes: valueAttributes)
-                (row.value as NSString).draw(at: NSPoint(x: rightEdge - valueSize.width, y: frame.minY + 7), withAttributes: valueAttributes)
-                let labelAttributes: [NSAttributedString.Key: Any] = [.font: Theme.sans(11.5), .foregroundColor: row.labelWarns ? Theme.warn : Theme.inkSecondary]
+                (row.value as NSString).draw(at: NSPoint(x: rightEdge - valueSize.width, y: top + titleFont.ascender - valueFont.ascender),
+                                             withAttributes: valueAttributes)
+                let labelAttributes: [NSAttributedString.Key: Any] = [.font: detailFont, .foregroundColor: row.labelWarns ? A2.warn : A2.secondary]
                 let labelSize = (row.label as NSString).size(withAttributes: labelAttributes)
-                (row.label as NSString).draw(at: NSPoint(x: rightEdge - labelSize.width, y: frame.minY + 27), withAttributes: labelAttributes)
+                (row.label as NSString).draw(at: NSPoint(x: rightEdge - labelSize.width, y: detailTop), withAttributes: labelAttributes)
                 if opens(row) {
                     let rect = revealRect(index)
                     IconTile.glyph("chevron.right", tint: index == hovered ? Theme.inkSecondary : Theme.inkTertiary, size: 12, appearance: effectiveAppearance)
@@ -211,11 +249,20 @@ final class CleanList: BitmapView {
                               fraction: 1, respectFlipped: true, hints: nil)
                 }
                 if index + 1 < rows.count, rows[index + 1].kind == .item {
-                    Theme.rule.setFill()
+                    A2.hairline.setFill()
                     NSRect(x: x, y: frame.maxY - 0.5, width: bounds.width - x, height: 0.5).fill()
                 }
             }
         }
+    }
+
+    /// A 22 pt tile in a wash of its colour with the symbol on it.
+    private func drawTile(_ symbol: String, tint: NSColor, in rect: NSRect) {
+        tint.withAlphaComponent(A2.drawingDark ? 0.2 : 0.16).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
+        IconTile.glyph(symbol, tint: tint, size: 13, appearance: effectiveAppearance)
+            .draw(in: NSRect(x: rect.midX - 6.5, y: rect.midY - 6.5, width: 13, height: 13), from: .zero, operation: .sourceOver, fraction: 1,
+                  respectFlipped: true, hints: nil)
     }
 
     private func drawCheck(_ check: Check, at origin: NSPoint) {
@@ -300,36 +347,26 @@ final class CleanList: BitmapView {
 /// Uninstall tab the safe button gives way to one that asks a running app to quit.
 final class CleanFooter: CardView {
     let selection = TextLine()
-    let safeButton: ActionButton
-    let cleanButton: ActionButton
-    let quitButton: ActionButton
+    let safeButton = A2Button("Clean Safe Items…")
+    let cleanButton = A2Button("Clean Selected…", primary: true)
+    let quitButton = A2Button("Quit")
     static let height: CGFloat = 56
 
-    init(target: AnyObject, safe: Selector, clean: Selector, quit: Selector) {
-        safeButton = ActionButton(title: "Clean Safe Items…", target: target, action: safe)
-        safeButton.secondary = true
-        cleanButton = ActionButton(title: "Clean Selected…", target: target, action: clean)
-        quitButton = ActionButton(title: "Quit", target: target, action: quit)
-        quitButton.secondary = true
-        quitButton.isHidden = true
+    override init() {
         super.init()
+        quitButton.isHidden = true
         for view in [selection, safeButton, quitButton, cleanButton] as [NSView] { addSubview(view) }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func set(enabled button: ActionButton, _ on: Bool) {
-        button.isEnabled = on
-        button.alphaValue = on ? 1 : 0.4
-    }
-
     override func layout() {
         super.layout()
-        var right = bounds.width - 16
+        var right = bounds.width - 13
         for button in [cleanButton, safeButton, quitButton] where !button.isHidden {
-            let size = button.intrinsicContentSize
-            button.frame = NSRect(x: right - size.width, y: (bounds.height - size.height) / 2, width: size.width, height: size.height)
-            right -= size.width + 10
+            let width = button.naturalWidth
+            button.frame = NSRect(x: right - width, y: ((bounds.height - 30) / 2).rounded(), width: width, height: 30)
+            right -= width + 10
         }
         selection.frame = NSRect(x: 20, y: (bounds.height - 18) / 2, width: max(0, right - 26), height: 18)
     }
@@ -493,7 +530,7 @@ final class CleanReview: NSView {
         summary.preferredMaxLayoutWidth = inner
         let summaryHeight = ceil(summary.sizeThatFits(NSSize(width: inner, height: 200)).height)
         let chrome: CGFloat = 24 + 22 + 8 + summaryHeight + 16 + 16 + 30 + 24
-        let listHeight = min(list.naturalHeight, max(CleanList.itemHeight, bounds.height - 96 - chrome))
+        let listHeight = min(list.naturalHeight, max(CleanList.baseItemHeight, bounds.height - 96 - chrome))
         let height = chrome + listHeight
         card.frame = NSRect(x: (bounds.width - width) / 2, y: max(24, (bounds.height - height) / 2), width: width, height: height).integral
         title.frame = NSRect(x: 24, y: 24, width: inner, height: 22)

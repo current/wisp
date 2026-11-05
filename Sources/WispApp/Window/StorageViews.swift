@@ -4,24 +4,25 @@ import WispCore
 extension StorageCategory {
     var color: NSColor {
         switch self {
-        case .apps: return Theme.blue
-        case .developer: return Theme.indigo
-        case .documents: return Theme.orange
-        case .mail: return Theme.green
-        case .system: return Theme.gray
-        case .snapshots: return Theme.purple
+        case .apps: return A2.diskApps
+        case .developer: return A2.diskDeveloper
+        case .documents: return A2.diskDocuments
+        case .mail: return Theme.dynamic(0x34C759, 0x30D158)
+        case .system: return A2.diskSystem
+        case .snapshots: return Theme.dynamic(0xAF52DE, 0xBF5AF2)
         case .purgeable: return Theme.dynamic(0xD1D1D6, 0x48484A)
-        case .free: return Theme.track
+        case .free: return A2.track
         }
     }
 
+    /// The outline symbol on the kind's rows.
     var symbol: String {
         switch self {
-        case .apps: return "square.grid.2x2.fill"
+        case .apps: return "square.grid.2x2"
         case .developer: return "chevron.left.forwardslash.chevron.right"
-        case .documents: return "doc.fill"
-        case .mail: return "envelope.fill"
-        case .system: return "gearshape.2.fill"
+        case .documents: return "doc"
+        case .mail: return "envelope"
+        case .system: return "gearshape.2"
         case .snapshots: return "clock.arrow.circlepath"
         case .purgeable: return "arrow.3.trianglepath"
         case .free: return "circle.dashed"
@@ -29,8 +30,8 @@ extension StorageCategory {
     }
 }
 
-/// The whole disk as one bar, a slice per kind. Clicking a slice picks it; the
-/// rest fade so the picked one stands out. Hover shows the size and share.
+/// The whole disk as one 14 pt bar, a slice per kind with 2 pt gaps. Clicking a slice
+/// picks it; the rest fade so the picked one stands out. Hover shows the size and share.
 final class DiskBar: BitmapView {
     struct Slice: Equatable {
         var category: StorageCategory
@@ -61,23 +62,20 @@ final class DiskBar: BitmapView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5).addClip()
         let frames = frames()
         if frames.isEmpty {
-            Theme.track.setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5).fill()
-            return
+            A2.track.setFill()
+            bounds.fill()
         }
+        let focus = selected ?? hovered
         for (category, rect) in frames {
-            let faded = (selected != nil && selected != category) || (selected == nil && hovered != nil && hovered != category)
-            category.color.withAlphaComponent(faded ? 0.3 : 1).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
-            if category == .free {
-                Theme.cardBorder.setStroke()
-                let outline = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 5, yRadius: 5)
-                outline.lineWidth = 1
-                outline.stroke()
-            }
+            let faded = focus != nil && focus != category && category != .free
+            (faded ? category.color.withAlphaComponent(0.38) : category.color).setFill()
+            rect.fill()
         }
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     private func category(at point: NSPoint) -> (StorageCategory, NSRect)? {
@@ -117,7 +115,8 @@ final class DiskBar: BitmapView {
 }
 
 /// The bar's key: a dot, the kind and its size, four to a row. Clicking an item
-/// picks it like clicking its slice.
+/// picks it like clicking its slice; the picked one sits on a light wash. The view
+/// reaches 8 pt past the card's padding on each side so the wash lines up with it.
 final class DiskLegend: BitmapView {
     struct Item: Equatable {
         var category: StorageCategory
@@ -128,39 +127,65 @@ final class DiskLegend: BitmapView {
     var selected: StorageCategory? { didSet { if selected != oldValue { needsDisplay = true } } }
     var onPick: ((StorageCategory?) -> Void)?
     private var hovered: Int? { didSet { if hovered != oldValue { needsDisplay = true } } }
-    static let rowHeight: CGFloat = 40
+    static let itemHeight: CGFloat = 44
+    static let rowGap: CGFloat = 2
+    static let inset: CGFloat = 8
+    private static let columnGap: CGFloat = 12
+    private static let labelFont = Theme.sans(11.5)
+    private static let valueFont = Theme.digits(13, .semibold)
+    private static let wash = A2.dynamic(Theme.hex(0x007AFF, alpha: 0.07), NSColor(white: 1, alpha: 0.07))
 
-    private var columns: Int { bounds.width < 560 ? 2 : 4 }
-    var naturalHeight: CGFloat { CGFloat((items.count + 3) / 4) * Self.rowHeight }
+    /// The most columns, up to four, in which every label and value fits on one line.
+    private func columns(_ width: CGFloat) -> Int {
+        let widest = items.map { item in
+            max((item.category.title as NSString).size(withAttributes: [.font: Self.labelFont]).width,
+                (item.value as NSString).size(withAttributes: [.font: Self.valueFont]).width)
+        }.max() ?? 0
+        let needed = ceil(widest) + 14 + Self.inset * 2
+        return [4, 3].first { (width - Self.columnGap * CGFloat($0 - 1)) / CGFloat($0) >= needed } ?? 2
+    }
+    private var columns: Int { columns(bounds.width) }
+
+    /// The height for `width`, the width of the card's content.
     func naturalHeight(width: CGFloat) -> CGFloat {
-        let columns = width < 560 ? 2 : 4
-        return CGFloat((items.count + columns - 1) / columns) * Self.rowHeight
+        let columns = columns(width + Self.inset * 2)
+        let rows = (items.count + columns - 1) / columns
+        return rows == 0 ? 0 : CGFloat(rows) * Self.itemHeight + CGFloat(rows - 1) * Self.rowGap
     }
 
     private func frame(_ index: Int) -> NSRect {
-        let width = bounds.width / CGFloat(columns)
-        return NSRect(x: CGFloat(index % columns) * width, y: CGFloat(index / columns) * Self.rowHeight, width: width, height: Self.rowHeight)
+        let width = (bounds.width - Self.columnGap * CGFloat(columns - 1)) / CGFloat(columns)
+        return NSRect(x: CGFloat(index % columns) * (width + Self.columnGap), y: CGFloat(index / columns) * (Self.itemHeight + Self.rowGap),
+                      width: width, height: Self.itemHeight)
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let truncating = NSMutableParagraphStyle()
+        truncating.lineBreakMode = .byTruncatingTail
         for (index, item) in items.enumerated() {
             let rect = frame(index)
-            let faded = selected != nil && selected != item.category
-            if index == hovered {
-                Theme.hover.setFill()
-                NSBezierPath(roundedRect: rect.insetBy(dx: -6, dy: 2).offsetBy(dx: 2, dy: 0), xRadius: 6, yRadius: 6).fill()
+            let shape = NSBezierPath(roundedRect: rect.insetBy(dx: 0.25, dy: 0.25), xRadius: 9, yRadius: 9)
+            if item.category == selected {
+                Self.wash.setFill()
+                shape.fill()
+                A2.hairline.setStroke()
+                shape.lineWidth = 0.5
+                shape.stroke()
+            } else if index == hovered {
+                A2.rowHover.setFill()
+                shape.fill()
             }
-            let alpha: CGFloat = faded ? 0.4 : 1
-            (item.category == .free ? Theme.inkTertiary : item.category.color).withAlphaComponent(alpha).setFill()
-            NSBezierPath(ovalIn: NSRect(x: rect.minX, y: rect.minY + 9, width: 8, height: 8)).fill()
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineBreakMode = .byTruncatingTail
-            (item.category.title as NSString).draw(with: NSRect(x: rect.minX + 14, y: rect.minY + 5, width: rect.width - 22, height: 16),
+            let x = rect.minX + Self.inset
+            let labelLine = Self.labelFont.ascender - Self.labelFont.descender
+            let labelY = rect.minY + 5
+            (item.category == .free ? A2.tertiary : item.category.color).setFill()
+            NSBezierPath(ovalIn: NSRect(x: x, y: labelY + labelLine / 2 - 4, width: 8, height: 8)).fill()
+            (item.category.title as NSString).draw(with: NSRect(x: x + 14, y: labelY, width: rect.width - Self.inset * 2 - 14, height: ceil(labelLine)),
                                                    options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                                   attributes: [.font: Theme.sans(12), .foregroundColor: Theme.inkSecondary.withAlphaComponent(alpha),
-                                                                .paragraphStyle: paragraph])
-            (item.value as NSString).draw(at: NSPoint(x: rect.minX + 14, y: rect.minY + 21),
-                                          withAttributes: [.font: Theme.figure(13, .medium), .foregroundColor: Theme.ink.withAlphaComponent(alpha)])
+                                                   attributes: [.font: Self.labelFont, .foregroundColor: A2.secondary, .paragraphStyle: truncating])
+            (item.value as NSString).draw(with: NSRect(x: x + 14, y: labelY + labelLine + 3, width: rect.width - Self.inset * 2 - 14, height: 17),
+                                          options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                          attributes: [.font: Self.valueFont, .foregroundColor: A2.primary, .paragraphStyle: truncating])
         }
     }
 
@@ -191,15 +216,19 @@ final class Breadcrumb: BitmapView {
     var parts: [String] = [] { didSet { if parts != oldValue { needsDisplay = true } } }
     var onPick: ((Int) -> Void)?
     private var hovered: Int? { didSet { if hovered != oldValue { needsDisplay = true } } }
-    private static let font = Theme.sans(14, .semibold)
-    private static let separator = "  ›  "
+    private static let currentFont = Theme.sans(14, .semibold)
+    private static let font = Theme.sans(14, .medium)
+    private static let separator = "›"
+    private static let spacing: CGFloat = 8
+
+    private func font(_ index: Int) -> NSFont { index == parts.count - 1 ? Self.currentFont : Self.font }
 
     private func frames() -> [NSRect] {
         var x: CGFloat = 0
         var result: [NSRect] = []
-        let separatorWidth = (Self.separator as NSString).size(withAttributes: [.font: Self.font]).width
+        let separatorWidth = ceil((Self.separator as NSString).size(withAttributes: [.font: Self.font]).width) + Self.spacing * 2
         // Long paths keep their last parts; the first ones shrink to an ellipsis.
-        let widths = parts.map { min(220, ceil(($0 as NSString).size(withAttributes: [.font: Self.font]).width)) }
+        let widths = parts.indices.map { min(220, ceil((parts[$0] as NSString).size(withAttributes: [.font: font($0)]).width)) }
         for width in widths {
             result.append(NSRect(x: x, y: 0, width: width, height: bounds.height))
             x += width + separatorWidth
@@ -209,20 +238,20 @@ final class Breadcrumb: BitmapView {
         return result
     }
 
-    var naturalWidth: CGFloat { frames().last.map { $0.maxX - (frames().first?.minX ?? 0) } ?? 0 }
-
     override func draw(_ dirtyRect: NSRect) {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         for (index, rect) in frames().enumerated() where rect.maxX > 0 {
             let last = index == parts.count - 1
-            let color = last ? Theme.ink : (index == hovered ? Theme.accent : Theme.inkSecondary)
-            (parts[index] as NSString).draw(with: NSRect(x: rect.minX, y: (bounds.height - 18) / 2, width: rect.width, height: 18),
+            let color = last ? A2.primary : (index == hovered ? A2.pillText : A2.secondary)
+            let font = font(index)
+            let y = (bounds.height - (font.ascender - font.descender)) / 2
+            (parts[index] as NSString).draw(with: NSRect(x: rect.minX, y: y, width: rect.width, height: 18),
                                             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                            attributes: [.font: Self.font, .foregroundColor: color, .paragraphStyle: paragraph])
+                                            attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
             if !last {
-                (Self.separator as NSString).draw(at: NSPoint(x: rect.maxX, y: (bounds.height - 18) / 2),
-                                                  withAttributes: [.font: Self.font, .foregroundColor: Theme.inkTertiary])
+                (Self.separator as NSString).draw(at: NSPoint(x: rect.maxX + Self.spacing, y: y),
+                                                  withAttributes: [.font: Self.font, .foregroundColor: A2.tertiary])
             }
         }
     }
@@ -248,134 +277,8 @@ final class Breadcrumb: BitmapView {
     override func accessibilityValue() -> Any? { parts.joined(separator: ", ") }
 }
 
-/// A list of places with a size bar, drawn in one view: an icon, the name, a quiet
-/// line under it, the bar and the size. Rows that lead somewhere answer the pointer.
-final class StorageList: BitmapView {
-    struct Row: Equatable {
-        var id: String
-        var name: String
-        var note: String
-        var value: String
-        var fraction: Double
-        var symbol: String
-        var tint: NSColor
-        var opens: Bool
-        var faint = false
-        var bar = true
-        /// A folder Finder can show.
-        var path: String?
-    }
-
-    var rows: [Row] = [] { didSet { if rows != oldValue { invalidateIntrinsicContentSize(); needsDisplay = true } } }
-    var onOpen: ((Row) -> Void)?
-    static let rowHeight: CGFloat = 46
-    private var hovered: Int? {
-        didSet {
-            guard hovered != oldValue else { return }
-            for row in [hovered, oldValue].compactMap({ $0 }) { setNeedsDisplay(rect(row)) }
-        }
-    }
-
-    var naturalHeight: CGFloat { CGFloat(rows.count) * Self.rowHeight }
-
-    private func rect(_ index: Int) -> NSRect { NSRect(x: 0, y: CGFloat(index) * Self.rowHeight, width: bounds.width, height: Self.rowHeight) }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let first = max(0, Int(dirtyRect.minY / Self.rowHeight))
-        let last = min(rows.count, Int(dirtyRect.maxY / Self.rowHeight) + 1)
-        guard first < last else { return }
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingTail
-        let valueWidth: CGFloat = 76
-        for index in first..<last {
-            let row = rows[index]
-            let barWidth: CGFloat = row.bar ? min(160, bounds.width * 0.18) : -12
-            let frame = rect(index)
-            if index == hovered, row.opens || row.path != nil {
-                Theme.hover.setFill()
-                NSBezierPath(roundedRect: frame.insetBy(dx: -8, dy: 2), xRadius: 8, yRadius: 8).fill()
-            }
-            IconTile.glyph(row.symbol, tint: row.faint ? Theme.inkTertiary : row.tint, size: 16, appearance: effectiveAppearance)
-                .draw(in: NSRect(x: frame.minX + 2, y: frame.minY + 15, width: 16, height: 16), from: .zero, operation: .sourceOver,
-                      fraction: 1, respectFlipped: true, hints: nil)
-            let textX = frame.minX + 30
-            let textWidth = bounds.width - textX - valueWidth - barWidth - 40
-            (row.name as NSString).draw(with: NSRect(x: textX, y: frame.minY + (row.note.isEmpty ? 14 : 6), width: textWidth, height: 18),
-                                        options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                        attributes: [.font: Theme.sans(13), .foregroundColor: row.faint ? Theme.inkSecondary : Theme.ink,
-                                                     .paragraphStyle: paragraph])
-            if !row.note.isEmpty {
-                (row.note as NSString).draw(with: NSRect(x: textX, y: frame.minY + 25, width: textWidth, height: 16),
-                                            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                            attributes: [.font: Theme.sans(11.5), .foregroundColor: Theme.inkSecondary, .paragraphStyle: paragraph])
-            }
-            // The chevron's room is kept on every row so sizes and bars line up.
-            let right = bounds.width - (rows.contains(where: \.opens) ? 20 : 0)
-            let barX = right - valueWidth - barWidth - 12
-            if row.bar {
-                let bar = NSRect(x: barX, y: frame.midY - 2, width: barWidth, height: 4)
-                Theme.track.setFill()
-                NSBezierPath(roundedRect: bar, xRadius: 2, yRadius: 2).fill()
-                if row.fraction > 0 {
-                    row.tint.setFill()
-                    var filled = bar
-                    filled.size.width = max(3, bar.width * CGFloat(min(1, row.fraction)))
-                    NSBezierPath(roundedRect: filled, xRadius: 2, yRadius: 2).fill()
-                }
-            }
-            let attributes: [NSAttributedString.Key: Any] = [.font: Theme.figure(13, .medium),
-                                                             .foregroundColor: row.faint || row.value == "–" ? Theme.inkSecondary : Theme.ink]
-            let size = (row.value as NSString).size(withAttributes: attributes)
-            (row.value as NSString).draw(at: NSPoint(x: right - size.width, y: frame.midY - size.height / 2), withAttributes: attributes)
-            if row.opens {
-                IconTile.glyph("chevron.right", tint: Theme.inkTertiary, size: 10, appearance: effectiveAppearance)
-                    .draw(in: NSRect(x: bounds.width - 10, y: frame.midY - 5, width: 10, height: 10), from: .zero, operation: .sourceOver,
-                          fraction: 1, respectFlipped: true, hints: nil)
-            }
-            if index < rows.count - 1 {
-                Theme.rule.setFill()
-                NSRect(x: textX, y: frame.maxY - 0.5, width: bounds.width - textX, height: 0.5).fill()
-            }
-        }
-    }
-
-    private func index(at point: NSPoint) -> Int? {
-        let index = Int(point.y / Self.rowHeight)
-        return rows.indices.contains(index) ? index : nil
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
-    }
-
-    override func mouseMoved(with event: NSEvent) { hovered = index(at: convert(event.locationInWindow, from: nil)) }
-    override func mouseExited(with event: NSEvent) { hovered = nil }
-
-    override func mouseUp(with event: NSEvent) {
-        guard let index = index(at: convert(event.locationInWindow, from: nil)), rows[index].opens else { return }
-        onOpen?(rows[index])
-    }
-
-    override func menu(for event: NSEvent) -> NSMenu? {
-        guard let index = index(at: convert(event.locationInWindow, from: nil)), let path = rows[index].path else { return nil }
-        let menu = NSMenu()
-        menu.addItem(ActionItem("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) })
-        menu.addItem(ActionItem("Copy Path") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(path, forType: .string)
-        })
-        return menu
-    }
-
-    override func isAccessibilityElement() -> Bool { true }
-    override func accessibilityRole() -> NSAccessibility.Role? { .list }
-    override func accessibilityValue() -> Any? { rows.prefix(12).map { "\($0.name) \($0.value)" }.joined(separator: "; ") }
-}
-
-/// Free space over the last 30 days, one reading an hour, with the biggest drops
-/// marked and named by what grew.
+/// Free space over the last 30 days, one reading an hour, edge to edge on the card's
+/// floor. The biggest drops are marked with a dotted line and what grew.
 final class SpaceChart: BitmapView {
     struct Mark: Equatable {
         var index: Int
@@ -386,95 +289,90 @@ final class SpaceChart: BitmapView {
     var values: [Double] = [] { didSet { needsDisplay = true } }
     var marks: [Mark] = [] { didSet { needsDisplay = true } }
     var capacity: Double = 1
-    var tint: NSColor = Theme.accent
-    private var hoverIndex: Int?
+    var tint: NSColor = A2.up
+    private var hoverIndex: Int? { didSet { if hoverIndex != oldValue { needsDisplay = true } } }
 
-    private var plot: NSRect { NSRect(x: 0, y: 8, width: bounds.width - 52, height: bounds.height - 34) }
+    private var dx: CGFloat { bounds.width / CGFloat(max(values.count - 1, 1)) }
+
+    private func scale(_ known: [Double]) -> (Double) -> CGFloat {
+        let low = known.min() ?? 0, high = known.max() ?? 1
+        let pad = max((high - low) * 0.15, capacity * 0.005)
+        let bottom = max(0, low - pad), top = high + pad
+        let height = bounds.height
+        return { value in height - CGFloat((value - bottom) / max(top - bottom, 1)) * height }
+    }
 
     override func draw(_ dirtyRect: NSRect) {
-        let known = values.enumerated().filter { !$0.element.isNaN }
+        let known = values.filter { !$0.isNaN }
         // A few hours of readings are a sliver at the right edge; wait for more.
-        guard known.count >= 6 else {
-            let text = Theme.caption("Wisp records free space once an hour; the chart fills in over the next days", size: 9.5)
+        guard known.count >= 6, let context = NSGraphicsContext.current?.cgContext else {
+            let text = A2.plain("Wisp records free space once an hour; the chart fills in over the next days")
             let size = text.size()
-            text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
+            text.draw(at: NSPoint(x: max(A2.padSide, (bounds.width - size.width) / 2), y: (bounds.height - size.height) / 2))
             return
         }
-        let rect = plot
-        let low = known.map(\.element).min() ?? 0, high = known.map(\.element).max() ?? 1
-        let pad = max((high - low) * 0.15, capacity * 0.01)
-        let bottom = max(0, low - pad), top = high + pad
-        func y(_ value: Double) -> CGFloat { rect.maxY - CGFloat((value - bottom) / max(top - bottom, 1)) * rect.height }
-        let dx = rect.width / CGFloat(max(values.count - 1, 1))
-        let axisFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        for fraction: CGFloat in [0, 0.5, 1] {
-            let lineY = rect.maxY - fraction * rect.height
-            let path = NSBezierPath()
-            path.move(to: NSPoint(x: rect.minX, y: lineY + 0.5))
-            path.line(to: NSPoint(x: rect.maxX, y: lineY + 0.5))
-            if fraction > 0 { path.setLineDash([2, 3], count: 2, phase: 0) }
-            Theme.rule.setStroke()
-            path.stroke()
-            (Format.bytes(bottom + (top - bottom) * Double(fraction)) as NSString)
-                .draw(at: NSPoint(x: rect.maxX + 6, y: lineY - 7), withAttributes: [.font: axisFont, .foregroundColor: Theme.inkSecondary])
+        let y = scale(known)
+        let dx = dx
+        let font = Theme.digits(10)
+        let axis: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: A2.gridLabel]
+        context.saveGState()
+        context.addPath(A2.bottomRounded(bounds))
+        context.clip()
+        // Drops first, under the line: a dotted rule from near the top to the floor.
+        context.setStrokeColor((A2.gridLabel.usingColorSpace(.sRGB) ?? A2.gridLabel).cgColor)
+        context.setLineWidth(1)
+        context.setLineDash(phase: 0, lengths: [2, 3])
+        for mark in marks where values.indices.contains(mark.index) {
+            let x = (CGFloat(mark.index) * dx).rounded() + 0.5
+            context.move(to: CGPoint(x: x, y: 8))
+            context.addLine(to: CGPoint(x: x, y: bounds.height))
+            context.strokePath()
         }
-        var segment: [NSPoint] = []
-        func flush() {
-            defer { segment.removeAll() }
-            guard segment.count > 1 else { return }
-            let line = NSBezierPath()
-            line.move(to: segment[0])
-            segment.dropFirst().forEach { line.line(to: $0) }
-            let area = line.copy() as! NSBezierPath
-            area.line(to: NSPoint(x: segment.last!.x, y: rect.maxY))
-            area.line(to: NSPoint(x: segment[0].x, y: rect.maxY))
-            area.close()
-            tint.withAlphaComponent(0.1).setFill()
-            area.fill()
-            tint.setStroke()
-            line.lineWidth = 1.5
-            line.lineJoinStyle = .round
-            line.stroke()
+        context.setLineDash(phase: 0, lengths: [])
+        let runs = A2.runs(values.map { Float($0) }, x: { CGFloat($0) * dx }, y: { y(Double($0)) })
+        let alpha: CGFloat = A2.drawingDark ? 0.32 : 0.2
+        for run in runs {
+            let area = CGMutablePath()
+            area.move(to: CGPoint(x: run[0].x, y: bounds.height))
+            run.forEach { area.addLine(to: $0) }
+            area.addLine(to: CGPoint(x: run[run.count - 1].x, y: bounds.height))
+            area.closeSubpath()
+            A2.fade(area, color: tint, alpha: alpha, from: run.map(\.y).min() ?? 0, to: bounds.height, in: context)
         }
-        for (index, value) in values.enumerated() {
-            if value.isNaN { flush(); continue }
-            segment.append(NSPoint(x: rect.minX + CGFloat(index) * dx, y: y(value)))
+        context.setStrokeColor((tint.usingColorSpace(.sRGB) ?? tint).cgColor)
+        context.setLineWidth(1.8)
+        context.setLineJoin(.round)
+        for run in runs {
+            context.addLines(between: run)
+            context.strokePath()
         }
-        flush()
-        // Drops: a dot on the line and what grew, above it.
-        var lastLabelEnd: CGFloat = -1000
-        for mark in marks where values.indices.contains(mark.index) && !values[mark.index].isNaN {
-            let point = NSPoint(x: rect.minX + CGFloat(mark.index) * dx, y: y(values[mark.index]))
-            Theme.card.setFill()
-            NSBezierPath(ovalIn: NSRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)).fill()
-            Theme.warn.setStroke()
-            let ring = NSBezierPath(ovalIn: NSRect(x: point.x - 3.5, y: point.y - 3.5, width: 7, height: 7))
-            ring.lineWidth = 2
-            ring.stroke()
-            let text = NSAttributedString(string: mark.label, attributes: [.font: Theme.sans(11, .medium), .foregroundColor: Theme.ink])
-            let size = text.size()
-            var x = min(max(rect.minX, point.x - size.width / 2), rect.maxX - size.width)
-            if x < lastLabelEnd + 8 { x = lastLabelEnd + 8 }
-            guard x + size.width <= rect.maxX + 40 else { continue }
-            text.draw(at: NSPoint(x: x, y: max(rect.minY - 6, point.y - 24)))
-            lastLabelEnd = x + size.width
+        context.restoreGState()
+        // What grew, to the left of each drop's rule, never over another label.
+        let rules = marks.filter { values.indices.contains($0.index) }.map { CGFloat($0.index) * dx }
+        var taken: [ClosedRange<CGFloat>] = []
+        for (mark, x) in zip(marks.filter { values.indices.contains($0.index) }, rules) {
+            let width = ceil((mark.label as NSString).size(withAttributes: axis).width)
+            // Left of its rule, else right of it; never across another rule or label.
+            let fits = { (span: ClosedRange<CGFloat>) in
+                span.lowerBound >= A2.padSide && span.upperBound <= self.bounds.width - 4
+                    && !rules.contains { $0 != x && span.contains($0) } && !taken.contains { $0.overlaps(span) }
+            }
+            guard let span = [(x - 6 - width)...(x - 6), (x + 6)...(x + 6 + width)].first(where: fits) else { continue }
+            taken.append(span)
+            (mark.label as NSString).draw(at: NSPoint(x: span.lowerBound, y: 16 - font.ascender), withAttributes: axis)
         }
-        let oldest = Theme.caption("30 days ago", size: 9)
-        oldest.draw(at: NSPoint(x: rect.minX, y: rect.maxY + 8))
-        let now = Theme.caption("Now", size: 9)
-        now.draw(at: NSPoint(x: rect.maxX - now.size().width, y: rect.maxY + 8))
 
         if let index = hoverIndex, values.indices.contains(index), !values[index].isNaN {
-            let x = rect.minX + CGFloat(index) * dx
-            Theme.inkTertiary.withAlphaComponent(0.5).setFill()
-            NSRect(x: x, y: rect.minY, width: 1, height: rect.height).fill()
+            let x = CGFloat(index) * dx
+            A2.tertiary.setFill()
+            NSRect(x: x.rounded() - 0.5, y: 0, width: 1, height: bounds.height).fill()
             let hours = values.count - 1 - index
             let when = hours < 24 ? "\(hours) h ago" : "\(hours / 24) d ago"
             let text = "\(when)   \(Format.bytes(values[index])) free" as NSString
             let attributes: [NSAttributedString.Key: Any] = [.font: Theme.figure(11, .medium), .foregroundColor: NSColor.white]
             let size = text.size(withAttributes: attributes)
-            var box = NSRect(x: x + 8, y: rect.minY, width: size.width + 16, height: 22)
-            if box.maxX > rect.maxX { box.origin.x = x - 8 - box.width }
+            var box = NSRect(x: x + 8, y: 4, width: ceil(size.width) + 16, height: 22)
+            if box.maxX > bounds.width - 4 { box.origin.x = x - 8 - box.width }
             Theme.tooltip.setFill()
             NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6).fill()
             text.draw(at: NSPoint(x: box.minX + 8, y: box.minY + (22 - size.height) / 2), withAttributes: attributes)
@@ -490,17 +388,10 @@ final class SpaceChart: BitmapView {
     override func mouseMoved(with event: NSEvent) {
         guard values.count > 1 else { return }
         let x = convert(event.locationInWindow, from: nil).x
-        let index = min(max(0, Int(((x - plot.minX) / plot.width * CGFloat(values.count - 1)).rounded())), values.count - 1)
-        if index != hoverIndex {
-            hoverIndex = index
-            needsDisplay = true
-        }
+        hoverIndex = min(max(0, Int((x / dx).rounded())), values.count - 1)
     }
 
-    override func mouseExited(with event: NSEvent) {
-        hoverIndex = nil
-        needsDisplay = true
-    }
+    override func mouseExited(with event: NSEvent) { hoverIndex = nil }
 
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .image }
