@@ -89,8 +89,8 @@ final class DiagnoseButton: DrawnView {
 
     override func draw(_ dirtyRect: NSRect) {
         let fade: CGFloat = busy ? 0.4 : (pressed ? 0.6 : 1)
-        let glyph = IconTile.glyph("wand.and.stars", tint: Self.iconTint.withAlphaComponent(fade), size: 14, appearance: effectiveAppearance)
-        glyph.draw(in: NSRect(x: 6, y: (bounds.height - 14) / 2, width: 14, height: 14), from: .zero, operation: .sourceOver, fraction: 1,
+        let glyph = IconTile.glyph("wand.and.stars", tint: Self.iconTint, size: 14, appearance: effectiveAppearance)
+        glyph.draw(in: NSRect(x: 6, y: (bounds.height - 14) / 2, width: 14, height: 14), from: .zero, operation: .sourceOver, fraction: fade,
                    respectFlipped: true, hints: nil)
         let size = (Self.label as NSString).size(withAttributes: [.font: Self.font])
         (Self.label as NSString).draw(at: NSPoint(x: 27, y: (bounds.height - size.height) / 2),

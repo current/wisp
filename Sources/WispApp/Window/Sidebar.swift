@@ -33,12 +33,29 @@ extension PageID {
 
 /// A small rounded square in a page's colour with its symbol on it.
 enum IconTile {
-    private static var cache: [String: NSImage] = [:]
+    private static var cache: [String: NSImage] = [:] {
+        didSet { if cache.count > 600 { cache.removeAll() } }
+    }
+
+    /// The colour as it draws in `appearance`. Its hash would not do: most tints are dynamic
+    /// colours made fresh on each call, and keying on those kept every bitmap forever.
+    private static func colorKey(_ color: NSColor, _ appearance: NSAppearance) -> String {
+        var key = ""
+        appearance.performAsCurrentDrawingAppearance {
+            guard let rgb = color.usingColorSpace(.sRGB) else {
+                key = color.description
+                return
+            }
+            key = [rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent]
+                .map { String(Int(($0 * 255).rounded())) }.joined(separator: ",")
+        }
+        return key
+    }
 
     /// A bare SF Symbol in a colour, rasterised once like the tiles.
     static func glyph(_ symbol: String, tint: NSColor, size: CGFloat = 16, appearance: NSAppearance) -> NSImage {
         let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let key = "glyph|\(symbol)|\(size)|\(dark)|\(tint.hash)"
+        let key = "glyph|\(symbol)|\(size)|\(dark)|\(colorKey(tint, appearance))"
         if let image = cache[key] { return image }
         let image = NSImage(size: NSSize(width: size, height: size))
         for scale in [2, 1] as [CGFloat] {
@@ -66,7 +83,7 @@ enum IconTile {
 
     static func image(_ symbol: String, tint: NSColor, size: CGFloat = 22, solid: Bool = false, appearance: NSAppearance) -> NSImage {
         let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let key = "\(symbol)|\(size)|\(solid)|\(dark)|\(tint.hash)"
+        let key = "\(symbol)|\(size)|\(solid)|\(dark)|\(colorKey(tint, appearance))"
         if let image = cache[key] { return image }
         // Rasterised once into a bitmap. An image that redraws from a block on every use
         // sends image views through Core Animation's in-process GPU drawing, which keeps

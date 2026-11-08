@@ -712,8 +712,8 @@ final class A2ToolbarButton: DrawnView {
 
     override func draw(_ dirtyRect: NSRect) {
         let fade: CGFloat = pressed ? 0.6 : 1
-        IconTile.glyph(symbol, tint: tint.withAlphaComponent(fade), size: 14, appearance: effectiveAppearance)
-            .draw(in: NSRect(x: 6, y: (bounds.height - 14) / 2, width: 14, height: 14), from: .zero, operation: .sourceOver, fraction: 1,
+        IconTile.glyph(symbol, tint: tint, size: 14, appearance: effectiveAppearance)
+            .draw(in: NSRect(x: 6, y: (bounds.height - 14) / 2, width: 14, height: 14), from: .zero, operation: .sourceOver, fraction: fade,
                   respectFlipped: true, hints: nil)
         A2.draw(label, at: 27, mid: bounds.height / 2, font: Self.font, color: A2.primary.withAlphaComponent(fade))
     }
