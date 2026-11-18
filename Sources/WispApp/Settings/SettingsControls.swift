@@ -205,7 +205,9 @@ final class SettingsSwitch: NSView {
         CATransaction.setAnimationDuration(0.2)
         CATransaction.setAnimationTimingFunction(Motion.ease)
         track.frame = bounds
-        track.backgroundColor = (isOn ? Self.onColor : Self.offColor).cgColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            track.backgroundColor = (isOn ? Self.onColor : Self.offColor).cgColor
+        }
         knob.frame = CGRect(x: isOn ? bounds.width - 20 : 2, y: (bounds.height - 18) / 2, width: 18, height: 18)
         knob.backgroundColor = NSColor.white.cgColor
         knob.borderColor = NSColor(white: 0, alpha: 0.06).cgColor

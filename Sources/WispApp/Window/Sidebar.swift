@@ -153,7 +153,7 @@ final class NavRow: DrawnView {
         paragraph.lineBreakMode = .byTruncatingTail
         (page.title as NSString).draw(with: NSRect(x: 36, y: (bounds.height - 16) / 2, width: bounds.width - 50 - valueWidth, height: 16),
                                       options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                      attributes: [.font: Theme.sans(13, selected ? .semibold : .regular), .foregroundColor: Theme.ink,
+                                      attributes: [.font: Theme.sans(13), .foregroundColor: Theme.ink,
                                                    .paragraphStyle: paragraph])
         if !value.isEmpty {
             (value as NSString).draw(at: NSPoint(x: bounds.width - 10 - valueWidth, y: (bounds.height - 15) / 2), withAttributes: valueAttributes)
@@ -182,15 +182,8 @@ final class NavRow: DrawnView {
 @MainActor
 final class Sidebar: NSView {
     var onSelect: ((PageID) -> Void)?
+    /// The Settings row opens the Settings window.
     var onSettings: (() -> Void)?
-    /// In settings: a section was picked, or the Settings row was clicked to go back.
-    var onSection: ((SettingsPage.Section) -> Void)?
-    var onBack: (() -> Void)?
-    private var sectionRows: [NavRowButton] = []
-    private var selectedSection: SettingsPage.Section = .general
-    /// Settings replaces the page list: its row rises to the top and the sections
-    /// fan out of it. Leaving folds them back in.
-    private(set) var inSettings = false
     private(set) var rows: [NavRow] = []
     private var headers: [SectionHeader] = []
     /// Sections folded shut from their header; kept between launches.
@@ -203,6 +196,9 @@ final class Sidebar: NSView {
     /// The window server's blur needs a real window behind it; snapshots draw a tint instead.
     static var usesGlass: Bool { !Theme.solidPanels }
     private let content = FlippedContent()
+    /// Dark mode lays a dark wash over the blur: the window server blurs whatever is
+    /// behind the window, which in dark mode is often a light window.
+    private let wash = SidebarWash()
     /// The hairline on the right edge, against the page, and the one over the Settings row.
     private let edge = CALayer()
     private let footRule = CALayer()
@@ -227,6 +223,7 @@ final class Sidebar: NSView {
         }
         super.init(frame: frame)
         addSubview(surface)
+        if Self.usesGlass { addSubview(wash) }
         addSubview(content)
         content.wantsLayer = true
         content.layer?.masksToBounds = true
@@ -255,19 +252,7 @@ final class Sidebar: NSView {
                 content.addSubview(row)
             }
         }
-        settingsRow.onClick = { [weak self] in
-            guard let self else { return }
-            if self.inSettings { self.onBack?() } else { self.onSettings?() }
-        }
-        for section in SettingsPage.Section.allCases {
-            let row = NavRowButton(title: section.title, symbol: section.sidebarSymbol)
-            row.onClick = { [weak self] in self?.onSection?(section) }
-            row.alphaValue = 0
-            row.isHidden = true
-            sectionRows.append(row)
-            content.addSubview(row)
-        }
-        settingsRow.showsLive = true
+        settingsRow.onClick = { [weak self] in self?.onSettings?() }
         content.addSubview(settingsRow)
     }
 
@@ -288,9 +273,9 @@ final class Sidebar: NSView {
     override func layout() {
         super.layout()
         surface.frame = bounds
+        wash.frame = bounds
         content.frame = bounds
         placeRules()
-        guard !moving else { return }
         apply(frames())
         placeHighlight(animated: false)
     }
@@ -300,7 +285,6 @@ final class Sidebar: NSView {
         CATransaction.setDisableActions(true)
         edge.frame = CGRect(x: bounds.width - 0.5, y: 0, width: 0.5, height: bounds.height)
         footRule.frame = CGRect(x: 12, y: bounds.height - 50, width: bounds.width - 24, height: 0.5)
-        footRule.opacity = inSettings ? 0 : 1
         effectiveAppearance.performAsCurrentDrawingAppearance {
             edge.backgroundColor = Theme.sidebarEdge.cgColor
             footRule.backgroundColor = Theme.sidebarEdge.cgColor
@@ -308,15 +292,15 @@ final class Sidebar: NSView {
         CATransaction.commit()
     }
 
-    /// Where every row goes in the current mode, and how visible it is.
+    /// Where every row goes, and how visible it is.
     private func frames() -> [(NSView, NSRect, CGFloat)] {
         let width = bounds.width
         var result: [(NSView, NSRect, CGFloat)] = []
         // The first row sits under the window buttons, which live on the sidebar.
         var y: CGFloat = 43
         var rowIndex = 0
-        let pagesAlpha: CGFloat = inSettings ? 0 : 1
-        let lift: CGFloat = inSettings ? -10 : 0
+        let pagesAlpha: CGFloat = 1
+        let lift: CGFloat = 0
         // A short window closes the rows up rather than run them past the Settings row.
         let headerCount = CGFloat(PageID.sections.filter { $0.0 != nil }.count)
         let roomPerRow = (bounds.height - 43 - 58 - headerCount * 33) / CGFloat(rows.count)
@@ -335,19 +319,9 @@ final class Sidebar: NSView {
                 rowIndex += 1
             }
         }
-        let bottom = NSRect(x: 10, y: bounds.height - 42, width: width - 20, height: 30)
-        let top = NSRect(x: 10, y: 43, width: width - 20, height: 30)
-        let settingsFrame = inSettings ? top : bottom
-        // A short window hides the settings row rather than draw it over the pages.
-        result.append((settingsRow, settingsFrame, 1))
-        for (index, row) in sectionRows.enumerated() {
-            let open = NSRect(x: 10, y: 43 + 38 + CGFloat(index) * 30, width: width - 20, height: 30)
-            result.append((row, inSettings ? open : settingsFrame, inSettings ? 1 : 0))
-        }
+        result.append((settingsRow, NSRect(x: 10, y: bounds.height - 42, width: width - 20, height: 30), 1))
         return result
     }
-
-    private var moving = false
 
     private func toggle(section title: String) {
         if collapsed.contains(title) { collapsed.remove(title) } else { collapsed.insert(title) }
@@ -384,78 +358,15 @@ final class Sidebar: NSView {
         }
     }
 
-    /// Opens or closes settings in the sidebar.
-    func showSettings(_ open: Bool) {
-        guard open != inSettings else { return }
-        inSettings = open
-        settingsRow.showsLive = !open
-        placeRules()
-        settingsRow.symbol = open ? "chevron.left" : PageID.settings.symbol
-        settingsRow.setAccessibilityLabel(open ? "Back" : "Settings")
-        let targets = frames()
-        guard window != nil, !Theme.reduceMotion else {
-            apply(targets)
-            placeHighlight(animated: false)
-            return
-        }
-        moving = true
-        highlight.opacity = 0
-        for (view, _, alpha) in targets where alpha > 0 { view.isHidden = false }
-        let curve = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
-        for (index, (view, frame, alpha)) in targets.enumerated() {
-            // Sections leave the Settings row one after another on the way out and
-            // fold back in together; the page list fades as a block.
-            let order = sectionRows.firstIndex { $0 === view }
-            let delay = open ? Double(order ?? 0) * 0.03 + (order == nil ? 0 : 0.08) : 0
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = open ? 0.42 : 0.3
-                    context.timingFunction = curve
-                    context.allowsImplicitAnimation = true
-                    view.animator().frame = frame
-                    view.animator().alphaValue = alpha
-                } completionHandler: {
-                    if alpha == 0 { view.isHidden = true }
-                    guard index == targets.count - 1 else { return }
-                    MainActor.assumeIsolated {
-                        guard let self else { return }
-                        self.moving = false
-                        self.placeHighlight(animated: false)
-                        self.revealHighlight()
-                    }
-                }
-            }
-        }
-    }
-
-    private func revealHighlight() {
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 0
-        fade.toValue = 1
-        fade.duration = 0.18
-        highlight.add(fade, forKey: "reveal")
-    }
-
-    func select(section: SettingsPage.Section) {
-        selectedSection = section
-        for (row, candidate) in zip(sectionRows, SettingsPage.Section.allCases) { row.selected = candidate == section }
-        if !moving { placeHighlight(animated: highlight.opacity > 0) }
-    }
-
     func select(_ page: PageID) {
         selectedPage = page
         for row in rows { row.selected = row.page == page }
-        let wasInSettings = inSettings
-        showSettings(page == .settings)
-        if !moving { placeHighlight(animated: highlight.opacity > 0 && wasInSettings == inSettings) }
+        placeHighlight(animated: highlight.opacity > 0)
     }
 
     private func placeHighlight(animated: Bool) {
         guard let page = selectedPage else { return }
-        let target: NSView? = page == .settings
-            ? sectionRows[SettingsPage.Section.allCases.firstIndex(of: selectedSection) ?? 0]
-            : rows.first(where: { $0.page == page })
-        guard let target, !target.isHidden else { highlight.opacity = 0; return }
+        guard let target = rows.first(where: { $0.page == page }), !target.isHidden else { highlight.opacity = 0; return }
         let from = highlight.presentation()?.frame ?? highlight.frame
         let to = target.frame
         CATransaction.begin()
@@ -635,14 +546,32 @@ final class SidebarSurface: NSView {
     }
 }
 
+final class SidebarWash: NSView {
+    private static let color = A2.dynamic(.clear, NSColor(white: 0.11, alpha: 0.72))
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var wantsUpdateLayer: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func updateLayer() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = Self.color.cgColor
+        }
+    }
+}
+
 /// The settings row at the foot of the sidebar.
 final class NavRowButton: DrawnView {
     let title: String
-    var symbol: String { didSet { if symbol != oldValue { needsDisplay = true } } }
-    /// A green dot and "Live" on the right, while the window's figures update.
-    var showsLive = false { didSet { if showsLive != oldValue { needsDisplay = true } } }
+    let symbol: String
     var onClick: (() -> Void)?
-    var selected = false { didSet { if selected != oldValue { needsDisplay = true } } }
     private var hovering = false { didSet { needsDisplay = true } }
 
     init(title: String, symbol: String) {
@@ -657,7 +586,7 @@ final class NavRowButton: DrawnView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        if hovering && !selected {
+        if hovering {
             Theme.ink.withAlphaComponent(0.05).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
         }
@@ -665,18 +594,7 @@ final class NavRowButton: DrawnView {
             .draw(in: NSRect(x: 10.5, y: (bounds.height - 16) / 2, width: 16, height: 16), from: .zero, operation: .sourceOver,
                   fraction: 1, respectFlipped: true, hints: nil)
         (title as NSString).draw(at: NSPoint(x: 36, y: (bounds.height - 16) / 2),
-                                 withAttributes: [.font: Theme.sans(13, selected ? .semibold : .regular), .foregroundColor: Theme.ink])
-        if showsLive {
-            let attributes: [NSAttributedString.Key: Any] = [.font: Theme.sans(11), .foregroundColor: Theme.inkSecondary]
-            let width = ceil(("Live" as NSString).size(withAttributes: attributes).width)
-            let x = bounds.width - 10 - width
-            ("Live" as NSString).draw(at: NSPoint(x: x, y: (bounds.height - 14) / 2), withAttributes: attributes)
-            let dot = NSRect(x: x - 12, y: bounds.height / 2 - 3, width: 6, height: 6)
-            Theme.green.withAlphaComponent(0.18).setFill()
-            NSBezierPath(ovalIn: dot.insetBy(dx: -3, dy: -3)).fill()
-            Theme.green.setFill()
-            NSBezierPath(ovalIn: dot).fill()
-        }
+                                 withAttributes: [.font: Theme.sans(13), .foregroundColor: Theme.ink])
     }
 
     override func updateTrackingAreas() {

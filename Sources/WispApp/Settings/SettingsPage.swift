@@ -2,11 +2,11 @@ import AppKit
 import ServiceManagement
 import WispCore
 
-/// Settings, as a page of the main window: the sections are a segmented control in
-/// the toolbar and each section is grouped cards with one setting per row. Every
+/// Settings, shown in the Settings window: one section at a time, picked from the
+/// window's toolbar, as grouped cards with one setting per row. Every
 /// control writes through AppDelegate.change, which saves and re-plans sampling at once.
 @MainActor
-final class SettingsPage: NSViewController, Page {
+final class SettingsPage: NSViewController {
     enum Section: String, CaseIterable {
         /// The outline symbol the sidebar shows, as for pages.
         var sidebarSymbol: String {
@@ -64,8 +64,6 @@ final class SettingsPage: NSViewController, Page {
     private let scroll = NSScrollView()
     private let page = SettingsPageView()
     private(set) var section: Section = .general
-    private let headingTitle = TextLine()
-    private let headingSubtitle = TextLine(Toolbar.subtitle("Settings"))
     private lazy var builder: DashboardBuilder = {
         let builder = DashboardBuilder(delegate: delegate)
         builder.onHeightChange = { [weak self] in self?.rebuild() }
@@ -87,8 +85,6 @@ final class SettingsPage: NSViewController, Page {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.automaticallyAdjustsContentInsets = false
-        scroll.contentInsets = NSEdgeInsets(top: Toolbar.height, left: 0, bottom: 0, right: 0)
-        scroll.scrollerInsets = NSEdgeInsets(top: Toolbar.height - 8, left: 0, bottom: 0, right: 0)
         scroll.autoresizingMask = [.width, .height]
         root.addSubview(scroll)
         view = root
@@ -97,18 +93,13 @@ final class SettingsPage: NSViewController, Page {
         show(start ?? .general, animated: false)
     }
 
-    /// The sections are listed in the sidebar; the toolbar names the one shown.
-    var toolbarHeading: (NSView, NSView)? { (headingTitle, headingSubtitle) }
-    var pageScroll: NSScrollView? { scroll }
-
-    /// The builder's live preview needs what its blocks show; the core map is the one
-    /// reading a window does not take anyway.
+    /// The Menu Bar section's dashboard preview reads what its blocks show.
     var demand: Demand {
-        section == .menuBar ? DashboardBlock.demand(of: delegate.settings.dashboard).intersection(.cpuCores) : []
+        section == .menuBar ? DashboardBlock.demand(of: delegate.settings.dashboard) : []
     }
 
     private func updateDemand() {
-        if view.window != nil { delegate.windowDemand = demand }
+        if view.window?.isVisible == true { delegate.settingsDemand = demand }
     }
 
     func update(system: SystemSnapshot) {
@@ -133,12 +124,11 @@ final class SettingsPage: NSViewController, Page {
 
     func show(_ section: Section, animated: Bool = true) {
         self.section = section
-        headingTitle.text = Toolbar.title(section.title)
         rebuild()
         updateDemand()
         // WISP_SCROLL=<points> scrolls part of the way, for screenshots.
         let offset = ProcessInfo.processInfo.environment["WISP_SCROLL"].flatMap(Double.init) ?? 0
-        scroll.contentView.scroll(to: NSPoint(x: 0, y: offset - Toolbar.height))
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: offset))
         scroll.reflectScrolledClipView(scroll.contentView)
         if animated { Motion.enter(page, from: CGPoint(x: 0, y: 6), duration: 0.2) }
     }
@@ -449,7 +439,7 @@ final class SettingsPageView: NSView {
         built = []
         let inner = min(620, width - 44)
         let left = ((width - inner) / 2).rounded()
-        var y: CGFloat = 8
+        var y: CGFloat = 20
         for group in groups {
             if let groupTitle = group.title {
                 let caption = TextLine(NSAttributedString(string: groupTitle, attributes: [.font: Self.captionFont, .foregroundColor: A2.secondary]))

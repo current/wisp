@@ -208,7 +208,7 @@ struct AppSettings: Codable, Equatable {
     var allowMCP = true
     /// Read each AI plan's limits with the sign-in its own tool keeps. Off until asked for.
     var planUsage = false
-    var look = Look.light
+    var look = Look.automatic
     var fahrenheit = false
     var bits = false
     var showInDock = false

@@ -158,13 +158,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         drawer.isHidden = true
         drawer.onClose = { [weak self] in self?.select(nil) }
         sidebar.onSelect = { [weak self] id in self?.show(id) }
-        sidebar.onSettings = { [weak self] in self?.show(.settings) }
-        sidebar.onBack = { [weak self] in self?.show(self?.lastPage ?? .overview) }
-        sidebar.onSection = { [weak self] section in
-            guard let self, let settings = self.pages[.settings] as? SettingsPage else { return }
-            settings.show(section)
-            self.sidebar.select(section: section)
-        }
+        sidebar.onSettings = { [weak delegate] in delegate?.showSettings() }
         window.contentView = root
         root.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(rootResized), name: NSView.frameDidChangeNotification, object: root)
@@ -174,6 +168,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         appearanceObservation = window.observe(\.effectiveAppearance) { [weak self] _, _ in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.placeWindowButtons() } }
         }
+        watchWindowButtons()
         if !window.setFrameUsingName("WispMain") { window.center() }
         // For screenshots while other apps are in use.
         if ProcessInfo.processInfo.environment["WISP_FLOAT"] != nil { window.level = .floating }
@@ -393,6 +388,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// than where AppKit puts them.
     private var buttonSpacing: CGFloat?
     private var appearanceObservation: NSKeyValueObservation?
+    private var buttonObservers: [NSObjectProtocol] = []
+    private var buttonsPending = false
+
+    /// AppKit lays the title bar out again at times no delegate call reports (a new
+    /// screen, the title bar's own layout pass), which puts the buttons back in its
+    /// corner. Any move of a button or its container puts them back in ours.
+    private func watchWindowButtons() {
+        guard buttonObservers.isEmpty, let window, let close = window.standardWindowButton(.closeButton),
+              let titlebar = close.superview, let container = titlebar.superview else { return }
+        let views = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap { window.standardWindowButton($0) } + [titlebar, container]
+        for view in views {
+            view.postsFrameChangedNotifications = true
+            buttonObservers.append(NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: view, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, !self.buttonsPending else { return }
+                    self.buttonsPending = true
+                    DispatchQueue.main.async { MainActor.assumeIsolated {
+                        self.buttonsPending = false
+                        self.placeWindowButtons()
+                    } }
+                }
+            })
+        }
+    }
 
     private func placeWindowButtons() {
         guard let window, !window.styleMask.contains(.fullScreen),
@@ -417,6 +436,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) { placeWindowButtons() }
     func windowDidResignKey(_ notification: Notification) { placeWindowButtons() }
     func windowDidExitFullScreen(_ notification: Notification) { placeWindowButtons() }
+    func windowDidChangeScreen(_ notification: Notification) { placeWindowButtons() }
 
     /// 0 when the drawer is shut, 1 when it is open; in between while it moves.
     private var drawerProgress: CGFloat = 0
@@ -545,19 +565,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         report()
     }
 
-    /// The page to return to from Settings.
-    private var lastPage: PageID = .overview
-
     func show(_ id: PageID) {
-        if id != .settings { lastPage = id }
+        // Settings have their own window.
+        guard id != .settings else { return delegate.showSettings() }
         currentID = id
         sidebar.select(id)
         let page = pages[id] ?? makePage(id)
         pages[id] = page
-        if let settings = page as? SettingsPage {
-            settings.loadViewIfNeeded()
-            sidebar.select(section: settings.section)
-        }
         guard page !== current else { return }
         if current != nil { select(nil) }
         current?.view.removeFromSuperview()
@@ -603,7 +617,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case .agents: return AgentsPage(delegate: delegate, onSelect: select)
         case .startup: return StartupPage(delegate: delegate, onSelect: select)
         case .cleanup: return CleanUpPage(delegate: delegate)
-        case .settings: return SettingsPage(delegate: delegate)
+        case .settings: preconditionFailure("Settings open in their own window")
         }
     }
 
@@ -639,10 +653,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func page(_ id: PageID) -> Page? { pages[id] }
-
-    func showSettings(_ section: SettingsPage.Section) {
-        (pages[.settings] as? SettingsPage)?.show(section)
-    }
 
     func reveal(appID: String) {
         show(.apps)
