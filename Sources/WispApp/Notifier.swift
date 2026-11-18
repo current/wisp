@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import UserNotifications
 import WispCore
 
@@ -49,7 +49,13 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo as? [String: String] ?? [:]
         DispatchQueue.main.async {
-            if info["clean"] != nil { self.onClean?(info) } else if let app = info["app"] { self.onOpen?(app) }
+            if info["clean"] != nil {
+                self.onClean?(info)
+            } else if let page = info["update"].flatMap(URL.init(string:)) {
+                NSWorkspace.shared.open(page)
+            } else if let app = info["app"] {
+                self.onOpen?(app)
+            }
             completionHandler()
         }
     }

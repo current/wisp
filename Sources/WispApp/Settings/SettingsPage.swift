@@ -297,10 +297,23 @@ final class SettingsPage: NSViewController {
         case .cleanUp:
             return CleanUpSettings.groups(delegate.cleanUp, rebuild: { [unowned self] in rebuild() })
         case .about:
+            var updates: [SettingsRow] = []
+            if let release = delegate.availableRelease {
+                let how = delegate.installedWithBrew ? "Run brew upgrade --cask wisp in Terminal, or download it." : "Download it from GitHub and replace this copy."
+                updates.append(.control("Wisp \(release.version) is out", how, SettingsControls.pill("Show Release") {
+                    NSWorkspace.shared.open(release.page)
+                }))
+            }
+            updates.append(.control("Check for new versions", "Once a day Wisp asks GitHub for the latest version number. Nothing about you or this Mac is sent.",
+                                    SettingsControls.toggle(s.checkForUpdates) { [unowned self] on in
+                                        delegate.change { $0.checkForUpdates = on }
+                                        if on { delegate.checkForUpdates(force: true) }
+                                    }))
             return [
                 SettingsGroup(nil, [.custom(AboutCard(), AboutCard.height)]),
+                SettingsGroup("Updates", updates),
                 SettingsGroup("Privacy", [
-                    .control("Nothing leaves this Mac", "No analytics, no updater, no network requests beyond looking up host names. History lives in ~/Library/Application Support/Wisp.", nil),
+                    .control("Nothing about you leaves this Mac", "No analytics and no account. The only requests are host name lookups and the daily version check. History lives in ~/Library/Application Support/Wisp.", nil),
                 ]),
             ]
         }

@@ -242,6 +242,8 @@ struct AppSettings: Codable, Equatable {
     var dashboard = DashboardBlock.defaultLayout
     /// A click on a menu bar item opens a dropdown about that reading instead of the dashboard.
     var itemDropdowns = false
+    /// Once a day, ask GitHub for the latest release's number.
+    var checkForUpdates = true
 
     static let key = "settings"
 
@@ -281,6 +283,7 @@ struct AppSettings: Codable, Equatable {
         // Read as names so a block this build does not know drops out instead of losing the whole layout.
         dashboard = DashboardBlock.layout(from: try? c.decode([String].self, forKey: .dashboard))
         itemDropdowns = (try? c.decode(Bool.self, forKey: .itemDropdowns)) ?? fallback.itemDropdowns
+        checkForUpdates = (try? c.decode(Bool.self, forKey: .checkForUpdates)) ?? fallback.checkForUpdates
     }
 
     static func load() -> AppSettings {

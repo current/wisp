@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let plans = PlanUsageFeed()
     private var displayAsleep = false
     private var flushTimer: Timer?
+    private var updateTimer: Timer?
+    /// A newer release than this build, once the daily check has seen one.
+    private(set) var availableRelease: Release?
     private let launchDate = Date()
 
     private(set) var system = SystemSnapshot()
@@ -84,6 +87,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self?.cleanUp.checkSchedule() }
         }
         flushTimer?.tolerance = 120
+
+        restoreRelease()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in self?.checkForUpdates() }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkForUpdates() }
+        }
+        updateTimer?.tolerance = 1800
 
         dashboard.snapshotIfAsked()
         switch ProcessInfo.processInfo.environment["WISP_OPEN"] {
@@ -217,6 +227,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let regular = settings.showInDock || ProcessInfo.processInfo.environment["WISP_REGULAR"] != nil
         let policy: NSApplication.ActivationPolicy = regular ? .regular : .accessory
         if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+    }
+
+    // MARK: New versions
+
+    /// Homebrew installs keep the cask in its Caskroom; they update with brew.
+    var installedWithBrew: Bool {
+        ["/opt/homebrew/Caskroom/wisp", "/usr/local/Caskroom/wisp"].contains { FileManager.default.fileExists(atPath: $0) }
+    }
+
+    private func restoreRelease() {
+        let defaults = UserDefaults.standard
+        guard let version = defaults.string(forKey: "WispUpdateVersion"), Release.isNewer(version, than: Wisp.version),
+              let page = defaults.string(forKey: "WispUpdatePage").flatMap(URL.init(string:)) else { return }
+        availableRelease = Release(version: version, page: page)
+    }
+
+    /// Asks GitHub for the latest version at most once every 20 hours, and says once
+    /// per version that it is out.
+    func checkForUpdates(force: Bool = false) {
+        let defaults = UserDefaults.standard
+        guard settings.checkForUpdates, !MainWindowController.background,
+              force || Date().timeIntervalSince1970 - defaults.double(forKey: "WispUpdateCheckedAt") > 20 * 3600 else { return }
+        defaults.set(Date().timeIntervalSince1970, forKey: "WispUpdateCheckedAt")
+        Task { @MainActor [weak self] in
+            guard let self, let release = await Release.fetchLatest(), Release.isNewer(release.version, than: Wisp.version) else { return }
+            self.availableRelease = release
+            defaults.set(release.version, forKey: "WispUpdateVersion")
+            defaults.set(release.page.absoluteString, forKey: "WispUpdatePage")
+            guard defaults.string(forKey: "WispUpdateNoticed") != release.version else { return }
+            defaults.set(release.version, forKey: "WispUpdateNoticed")
+            let how = self.installedWithBrew ? "Run brew upgrade --cask wisp in Terminal." : "Click to download it from GitHub."
+            self.notifier.post(id: "update-" + release.version, title: "Wisp \(release.version) is out", body: how,
+                               info: ["update": release.page.absoluteString], thread: "update")
+        }
     }
 
     // MARK: Windows
