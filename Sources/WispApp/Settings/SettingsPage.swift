@@ -176,7 +176,13 @@ final class SettingsPage: NSViewController {
                 ]),
             ]
         case .menuBar:
-            var rows: [SettingsRow] = [.custom(menuPreview, MenuBarPreview.height)]
+            var rows: [SettingsRow] = [
+                .custom(menuPreview, MenuBarPreview.height),
+                .control("Clicking an item opens", "With details, Memory opens memory and the apps using the most of it, Network the apps moving data, and so on.",
+                         SettingsControls.popup(["The dashboard", "Details about that item"], s.itemDropdowns ? 1 : 0) { [unowned self] i in
+                             delegate.change { $0.itemDropdowns = i == 1 }
+                         }),
+            ]
             for (index, item) in s.menuItems.enumerated() {
                 let style = SettingsControls.popup(MenuStyle.allCases.map(\.title), MenuStyle.allCases.firstIndex(of: item.style) ?? 0) { [unowned self] i in
                     changeItem(index) { $0.style = MenuStyle.allCases[i] }
@@ -197,7 +203,7 @@ final class SettingsPage: NSViewController {
                     .control("Reset the dashboard", "Back to the CPU, meters, cores and apps.", SettingsControls.pill("Reset to Default") { [unowned self] in builder.reset() }),
                 ], footer: "The dashboard opens from the menu bar. It reads only what its blocks show, and nothing while it is closed."),
                 SettingsGroup("Shown in the menu bar", rows,
-                              footer: "Edit gives an item its own label, size, weight and colour. A reading turns red when the Mac is under strain, unless its colour is Menu bar only."),
+                              footer: "Edit gives an item its own label, size, weight and colour. A reading turns red when the Mac is under strain, unless its colour is Menu bar only. AI usage opens each account's limits and turns red at 90%."),
             ]
         case .display:
             let looks = Look.allCases
@@ -322,9 +328,19 @@ final class SettingsPage: NSViewController {
                 changeItem(index, rebuilds: rebuilds) { apply(&$0, all[i]) }
             }
         }
-        var rows: [SettingsRow] = [
-            .nested("Label", nil, popup(item.label, \.title, rebuilds: true) { $0.label = $1 }),
-        ]
+        var rows: [SettingsRow] = []
+        if item.metric == .usage {
+            // Accounts as they were last read; the item follows the most used until one is picked.
+            let plans = delegate.plans.plans.filter { $0.problem == nil }
+            let ids = [""] + plans.map(\.id)
+            let names = ["Closest to its limit"] + plans.map(PlanUsageFeed.name)
+            rows.append(.nested("Shows", nil, popup(item.usageWindow, \.title) { $0.usageWindow = $1 }))
+            rows.append(.nested("Account", plans.isEmpty ? "Accounts appear once Wisp has read their limits." : nil,
+                                SettingsControls.popup(names, ids.firstIndex(of: item.usageAccount) ?? 0) { [unowned self] i in
+                                    changeItem(index) { $0.usageAccount = ids[i] }
+                                }))
+        }
+        rows.append(.nested("Label", nil, popup(item.label, \.title, rebuilds: true) { $0.label = $1 }))
         if item.label == .above || item.label == .before {
             let field = SettingsControls.field(item.caption, placeholder: item.metric.caption, limit: 6) { [unowned self] text in
                 changeItem(index) { $0.caption = text }

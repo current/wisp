@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: MainWindowController?
     private let notifier = Notifier()
     let cleanUp = CleanUpCenter()
+    let plans = PlanUsageFeed()
     private var displayAsleep = false
     private var flushTimer: Timer?
     private let launchDate = Date()
@@ -38,6 +39,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainMenu.install(delegate: self)
         statusBar = StatusBar(delegate: self)
         dashboard = DashboardPopover(delegate: self)
+        plans.observe { [weak self] _ in
+            guard let self else { return }
+            self.statusBar.update(self.system, history: self.monitor.history)
+        }
 
         monitor.onSystem = { [weak self] snapshot in self?.received(snapshot) }
         monitor.onProcesses = { [weak self] table in self?.received(table) }
@@ -125,6 +130,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: What is on screen
 
     var dashboardOpen = false { didSet { replan() } }
+    /// The blocks the open dropdown shows: the dashboard's, or those for the item clicked.
+    var dashboardLayout: [DashboardBlock] = []
     var windowVisible = false { didSet { replan() } }
     /// Readings the visible window page needs beyond the basics.
     var windowDemand: Demand = [] { didSet { if windowVisible { replan() } } }
@@ -132,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var settingsDemand: Demand? { didSet { if settingsDemand != oldValue { replan() } } }
 
     func replan() {
+        plans.running = settings.menuItems.contains { $0.metric == .usage && $0.enabled }
         var demand: Demand = []
         for item in settings.menuItems where item.enabled { demand.insert(item.metric.demand) }
 
@@ -150,9 +158,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if dashboardOpen {
             activity = .popover
             // Only what the dashboard's blocks show.
-            demand.formUnion(DashboardBlock.demand(of: settings.dashboard))
+            demand.formUnion(DashboardBlock.demand(of: dashboardLayout))
             // Per-app network when it is tracked in the background anyway, for the apps block's Net tab.
-            if settings.trackAppNetwork, settings.dashboard.contains(.apps) { demand.insert(.appNetwork) }
+            if settings.trackAppNetwork, dashboardLayout.contains(.apps) { demand.insert(.appNetwork) }
         } else {
             activity = demand.isEmpty ? .hidden : .menuBar
         }
@@ -263,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func closeDashboard() { dashboard.close() }
 
-    func toggleDashboard(from button: NSStatusBarButton) {
-        dashboard.toggle(relativeTo: button)
+    func toggleDashboard(from button: NSStatusBarButton, focus: MenuMetric? = nil) {
+        dashboard.toggle(relativeTo: button, focus: focus)
     }
 }

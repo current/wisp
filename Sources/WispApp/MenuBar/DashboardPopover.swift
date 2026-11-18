@@ -12,6 +12,9 @@ final class DashboardPopover: NSObject {
     private var content: DashboardView?
     private var monitors: [Any] = []
     private var closedByClickAt: TimeInterval = 0
+    /// The status item the dropdown hangs from, and the reading it is about (nil: the dashboard).
+    private weak var anchorButton: NSStatusBarButton?
+    private var focus: MenuMetric?
     /// WISP_PIN keeps it open; WISP_BACKGROUND also keeps it behind other windows, for screenshots.
     private let pinned = ProcessInfo.processInfo.environment["WISP_PIN"] != nil || MainWindowController.background
 
@@ -33,7 +36,7 @@ final class DashboardPopover: NSObject {
     /// The saved layout changed: rebuild the blocks. A closed dashboard does it now
     /// too, so it opens at the right size.
     func layoutChanged() {
-        guard let content else { return }
+        guard let content, focus == nil else { return }
         content.apply(delegate.settings.dashboard, animated: false)
         if isShown {
             content.update(delegate.system, history: delegate.monitor.history)
@@ -42,17 +45,27 @@ final class DashboardPopover: NSObject {
         panel?.fit()
     }
 
-    func toggle(relativeTo button: NSStatusBarButton) {
-        if isShown { return close() }
+    func toggle(relativeTo button: NSStatusBarButton, focus: MenuMetric? = nil) {
+        let sameItem = button === anchorButton && focus == self.focus
+        if isShown {
+            if sameItem { return close() }
+            // Another item while open: move the dropdown to it.
+            close()
+        }
         // A click on the status item while open reaches the outside-click monitor on
         // mouse down and closes the panel; the button's action then arrives on mouse up.
         // That click meant "close", so do not open again.
-        if ProcessInfo.processInfo.systemUptime - closedByClickAt < 0.5 { return }
+        if sameItem, ProcessInfo.processInfo.systemUptime - closedByClickAt < 0.5 { return }
+        anchorButton = button
+        self.focus = focus
         let view = content ?? DashboardView(delegate: delegate)
         content = view
         let panel = self.panel ?? DashboardPanel(content: view)
         self.panel = panel
         view.onHeightChange = { [weak panel] in panel?.fit() }
+        view.show(focus: focus)
+        delegate.dashboardLayout = view.layout
+        if view.layout.contains(.usage) { delegate.plans.refresh(maxAge: 20) }
         view.update(delegate.system, history: delegate.monitor.history)
         view.update(delegate.table)
         let screen = button.window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
@@ -249,7 +262,7 @@ final class DashboardView: DrawnView {
         footerRule.stroke = .clear
         footerRule.radius = 0
 
-        title.frame = NSRect(x: 20, y: 16, width: 60, height: 20)
+        title.frame = NSRect(x: 20, y: 16, width: 160, height: 20)
         closeButton.frame = NSRect(x: Self.width - 14 - 26, y: 13, width: 26, height: 26)
         settingsButton.frame = NSRect(x: closeButton.frame.minX - 30, y: 13, width: 26, height: 26)
         placeChip()
@@ -264,6 +277,18 @@ final class DashboardView: DrawnView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func hitTest(_ point: NSPoint) -> NSView? { preview ? nil : super.hitTest(point) }
+
+    /// The whole dashboard (nil), or the blocks about one menu bar reading under its name,
+    /// with the apps sorted by that reading.
+    func show(focus: MenuMetric?) {
+        title.text = Toolbar.title(focus?.title ?? "Wisp")
+        title.frame.size.width = max(60, chip.frame.minX - 8 - title.frame.minX)
+        chip.isHidden = focus == .usage
+        guard let focus else { return apply(delegate.settings.dashboard, animated: false) }
+        let dropdown = focus.dropdown
+        apply(dropdown.blocks, animated: false)
+        (views[.apps] as? AppsBlock)?.tabs.select(dropdown.appsTab, animated: false)
+    }
 
     private func placeChip() {
         chip.frame = NSRect(x: settingsButton.frame.minX - 8 - chip.naturalWidth, y: 12, width: chip.naturalWidth, height: 28)
@@ -548,5 +573,22 @@ final class MachineChip: DrawnView {
         }
         (text as NSString).draw(at: NSPoint(x: 28, y: (bounds.height - 15) / 2),
                                 withAttributes: [.font: Theme.sans(12), .foregroundColor: Theme.ink])
+    }
+}
+
+extension MenuMetric {
+    /// What the dropdown for this item shows, and the apps tab it opens on
+    /// (CPU, Memory, Power, Net).
+    var dropdown: (blocks: [DashboardBlock], appsTab: Int) {
+        switch self {
+        case .cpu: return ([.cpu, .cores, .apps], 0)
+        case .memory: return ([.memory, .apps], 1)
+        case .network: return ([.network, .apps], 3)
+        case .gpu: return ([.gpu, .apps], 0)
+        case .temperature: return ([.sensors, .cpu, .apps], 0)
+        case .battery, .power: return ([.power, .apps], 2)
+        case .disk: return ([.disk, .apps], 0)
+        case .usage: return ([.usage], 0)
+        }
     }
 }

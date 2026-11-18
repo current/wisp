@@ -58,6 +58,8 @@ final class PlanCard: CardView {
     /// The provider with its mark, the plan on the right and the account under them.
     final class Header: BitmapView {
         var provider = ""
+        /// Shown in place of the provider's name, as T3 Code labels its accounts.
+        var title: String?
         var account = ""
         var plan: String?
         var problem: String?
@@ -80,7 +82,7 @@ final class PlanCard: CardView {
                 A2Dev.text(plan, x: pill.minX + 8, mid: pill.midY, width: width, font: font, color: A2.secondary)
                 right = pill.minX - 8
             }
-            A2Dev.text(provider, x: 30, mid: 10, width: right - 30, font: Theme.sans(14, .semibold), color: A2.primary)
+            A2Dev.text(title ?? provider, x: 30, mid: 10, width: right - 30, font: Theme.sans(14, .semibold), color: A2.primary)
             A2Dev.text(problem ?? account, x: 30, mid: 31, width: bounds.width - 30, font: A2Dev.detailFont,
                        color: problem == nil ? A2.tertiary : A2.warn)
         }

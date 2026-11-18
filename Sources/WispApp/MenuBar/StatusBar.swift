@@ -82,7 +82,10 @@ final class StatusBar {
         if NSApp.currentEvent?.type == .rightMouseUp {
             showMenu(sender)
         } else {
-            delegate.toggleDashboard(from: sender)
+            // The AI usage item always opens its own dropdown; the others do when asked to.
+            let metric = items.first { $0.statusItem.button === sender }?.setting.metric
+            let focus = metric == .usage || delegate.settings.itemDropdowns ? metric : nil
+            delegate.toggleDashboard(from: sender, focus: focus)
         }
     }
 
@@ -114,8 +117,8 @@ final class StatusBar {
         for item in items {
             guard let button = item.statusItem.button else { continue }
             let setting = item.setting
-            let reading = Self.reading(setting.metric, snapshot)
-            let graph = setting.style != .number ? Array(history.recent(setting.metric.historyMetric).suffix(14)) : []
+            let reading = Self.reading(setting, snapshot, plans: delegate.plans.plans)
+            let graph = setting.style != .number ? setting.metric.historyMetric.map { Array(history.recent($0).suffix(14)) } ?? [] : []
             let text = setting.style != .graph ? reading.text : ""
             // Only a coloured item depends on the menu bar's appearance; a template one is recoloured by it.
             let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
@@ -144,7 +147,9 @@ final class StatusBar {
         content.size = setting.size
         content.weight = setting.weight
         content.captionWeight = setting.captionWeight
-        if wantsGraph {
+        if wantsGraph, let fraction = reading.fraction {
+            content.meter = fraction
+        } else if wantsGraph {
             let ceiling = reading.ceiling > 0 ? reading.ceiling : max(graph.filter { !$0.isNaN }.max() ?? 1, 1)
             content.graph = (graph, ceiling)
         }
@@ -159,7 +164,7 @@ final class StatusBar {
             break
         }
         if wantsText {
-            if metric == .network, !wantsGraph, !content.captionAbove, let lines = reading.lines {
+            if metric == .network || metric == .usage, !wantsGraph, !content.captionAbove, let lines = reading.lines {
                 content.lines = lines
             } else {
                 content.text = reading.text
@@ -194,10 +199,27 @@ final class StatusBar {
         var strained: Bool
         var ceiling: Float
         var lines: (String, String)?
+        /// Set for a share with no history (plan usage); its graph is a bar.
+        var fraction: Double?
     }
 
-    static func reading(_ metric: MenuMetric, _ s: SystemSnapshot) -> Reading {
-        switch metric {
+    static func reading(_ setting: MenuItemSetting, _ s: SystemSnapshot, plans: [PlanUsage]) -> Reading {
+        switch setting.metric {
+        case .usage:
+            guard let usage = PlanUsageFeed.pick(plans, account: setting.usageAccount, window: setting.usageWindow) else {
+                return Reading(text: "–", strained: false, ceiling: 1)
+            }
+            let session = PlanUsageFeed.session(usage)?.used ?? 0
+            let week = PlanUsageFeed.week(usage)?.used ?? 0
+            switch setting.usageWindow {
+            case .session:
+                return Reading(text: Format.percent(session), strained: session >= 0.9, ceiling: 1, fraction: session)
+            case .week:
+                return Reading(text: Format.percent(week), strained: week >= 0.9, ceiling: 1, fraction: week)
+            case .both:
+                return Reading(text: Format.percent(session) + " " + Format.percent(week), strained: max(session, week) >= 0.9, ceiling: 1,
+                               lines: ("5h " + Format.percent(session), "wk " + Format.percent(week)), fraction: max(session, week))
+            }
         case .cpu:
             return Reading(text: s.cpu.map { Format.percent($0.total) } ?? "–", strained: Strain.cpu(s.cpu), ceiling: 1)
         case .memory:
@@ -248,13 +270,16 @@ extension MenuMetric {
         case .network: return "↓" + Format.compactRate(888_000) + " ↑" + Format.compactRate(888_000)
         case .disk: return Format.compactRate(888_000)
         case .power: return "88.8W"
+        case .usage: return "100% 100%"
         }
     }
 
-    var widestLine: String { "↑" + Format.compactRate(888_000) }
+    var widestLine: String { self == .usage ? "wk 100%" : "↑" + Format.compactRate(888_000) }
 
-    var historyMetric: SystemMetric {
+    /// Nil for a reading the history does not keep.
+    var historyMetric: SystemMetric? {
         switch self {
+        case .usage: return nil
         case .cpu: return .cpu
         case .memory: return .memory
         case .network: return .networkIn

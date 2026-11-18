@@ -2,7 +2,7 @@ import Foundation
 import WispCore
 
 enum MenuMetric: String, Codable, CaseIterable {
-    case cpu, memory, network, gpu, temperature, battery, disk, power
+    case cpu, memory, network, gpu, temperature, battery, disk, power, usage
 
     var title: String {
         switch self {
@@ -14,6 +14,7 @@ enum MenuMetric: String, Codable, CaseIterable {
         case .battery: return "Battery"
         case .disk: return "Disk"
         case .power: return "Power"
+        case .usage: return "AI usage"
         }
     }
 
@@ -28,6 +29,7 @@ enum MenuMetric: String, Codable, CaseIterable {
         case .battery: return "BAT"
         case .disk: return "DISK"
         case .power: return "PWR"
+        case .usage: return "AI"
         }
     }
 
@@ -41,6 +43,7 @@ enum MenuMetric: String, Codable, CaseIterable {
         case .battery: return "battery.75percent"
         case .disk: return "internaldrive"
         case .power: return "bolt"
+        case .usage: return "sparkles"
         }
     }
 
@@ -54,6 +57,21 @@ enum MenuMetric: String, Codable, CaseIterable {
         case .battery: return .battery
         case .disk: return .disk
         case .power: return .power
+        // Plan limits come from files read once a minute, not from sampling.
+        case .usage: return []
+        }
+    }
+}
+
+/// Which plan limit the AI usage item shows.
+enum UsageWindowChoice: String, Codable, CaseIterable {
+    case session, week, both
+
+    var title: String {
+        switch self {
+        case .session: return "5-hour session"
+        case .week: return "This week"
+        case .both: return "Both, one over the other"
         }
     }
 }
@@ -141,6 +159,9 @@ struct MenuItemSetting: Codable, Equatable {
     var colorPart: MenuColorPart = .all
     /// Reserve room for the widest reading, so the items to the left do not shift.
     var steady = false
+    /// AI usage only: the limit shown, and the account (a PlanUsage id; empty for the most used).
+    var usageWindow: UsageWindowChoice = .session
+    var usageAccount = ""
 
     init(metric: MenuMetric, enabled: Bool, style: MenuStyle) {
         self.metric = metric
@@ -174,6 +195,8 @@ struct MenuItemSetting: Codable, Equatable {
         color = (try? c.decode(MenuColor.self, forKey: .color)) ?? .standard
         colorPart = (try? c.decode(MenuColorPart.self, forKey: .colorPart)) ?? .all
         steady = (try? c.decode(Bool.self, forKey: .steady)) ?? false
+        usageWindow = (try? c.decode(UsageWindowChoice.self, forKey: .usageWindow)) ?? .session
+        usageAccount = (try? c.decode(String.self, forKey: .usageAccount)) ?? ""
     }
 }
 
@@ -217,6 +240,8 @@ struct AppSettings: Codable, Equatable {
     var startPage = "overview"
     /// The blocks of the menu bar dashboard, top to bottom.
     var dashboard = DashboardBlock.defaultLayout
+    /// A click on a menu bar item opens a dropdown about that reading instead of the dashboard.
+    var itemDropdowns = false
 
     static let key = "settings"
 
@@ -255,6 +280,7 @@ struct AppSettings: Codable, Equatable {
         startPage = (try? c.decode(String.self, forKey: .startPage)) ?? fallback.startPage
         // Read as names so a block this build does not know drops out instead of losing the whole layout.
         dashboard = DashboardBlock.layout(from: try? c.decode([String].self, forKey: .dashboard))
+        itemDropdowns = (try? c.decode(Bool.self, forKey: .itemDropdowns)) ?? fallback.itemDropdowns
     }
 
     static func load() -> AppSettings {
@@ -283,12 +309,14 @@ struct AppSettings: Codable, Equatable {
                     if let color = MenuColor(rawValue: word) { item.color = color }
                     if let part = MenuColorPart(rawValue: word) { item.colorPart = part }
                     if word == "steady" { item.steady = true }
+                    if let window = UsageWindowChoice(rawValue: word) { item.usageWindow = window }
                     if word.hasPrefix("label-"), let weight = MenuWeight(rawValue: String(word.dropFirst(6))) { item.captionWeight = weight }
                 }
                 settings.menuItems.remove(at: index)
                 settings.menuItems.insert(item, at: 0)
             }
         }
+        if ProcessInfo.processInfo.environment["WISP_DROPDOWNS"] != nil { settings.itemDropdowns = true }
         // WISP_DASHBOARD=cpu,gpu,... shows a given layout, for screenshots.
         if let names = ProcessInfo.processInfo.environment["WISP_DASHBOARD"] {
             settings.dashboard = DashboardBlock.layout(from: names.split(separator: ",").map(String.init))

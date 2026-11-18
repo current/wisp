@@ -8,6 +8,8 @@ enum StatusImage {
     struct Content {
         var symbol: NSImage?
         var graph: ([Float], Float)?
+        /// A share from 0 to 1 drawn as a bar in the graph's place (plan usage).
+        var meter: Double?
         var caption: String?
         var captionAbove = false
         var text = ""
@@ -39,8 +41,9 @@ enum StatusImage {
             text.isEmpty ? 0 : ceil((text as NSString).size(withAttributes: attributes).width)
         }
 
+        let hasGraph = content.graph != nil || content.meter != nil
         // The graph sits under the caption only when it is all there is to show.
-        let graphInColumn = content.captionAbove && content.graph != nil && content.text.isEmpty && content.lines == nil
+        let graphInColumn = content.captionAbove && hasGraph && content.text.isEmpty && content.lines == nil
         let caption = content.caption ?? ""
         var valueWidth: CGFloat
         if let lines = content.lines {
@@ -57,9 +60,9 @@ enum StatusImage {
 
         var leadWidth: CGFloat = 0
         if let symbol = content.symbol { leadWidth = max(16, ceil(symbol.size.width)) }
-        if content.graph != nil, !graphInColumn { leadWidth += (leadWidth > 0 ? 4 : 0) + 28 }
+        if hasGraph, !graphInColumn { leadWidth += (leadWidth > 0 ? 4 : 0) + 28 }
         if !content.captionAbove, captionWidth > 0 { leadWidth += (leadWidth > 0 ? 4 : 0) + captionWidth }
-        let gap: CGFloat = leadWidth > 0 && columnWidth > 0 ? (content.captionAbove || content.symbol != nil || content.graph != nil ? 4 : 3) : 0
+        let gap: CGFloat = leadWidth > 0 && columnWidth > 0 ? (content.captionAbove || content.symbol != nil || hasGraph ? 4 : 3) : 0
         let total = max(1, leadWidth + gap + columnWidth)
 
         let scale = NSScreen.main?.backingScaleFactor ?? 2
@@ -84,9 +87,13 @@ enum StatusImage {
             }.draw(in: rect)
             x += max(16, ceil(size.width))
         }
-        if let graph = content.graph, !graphInColumn {
+        if hasGraph, !graphInColumn {
             if x > 0 { x += 4 }
-            drawGraph(graph, in: NSRect(x: x, y: 1, width: 28, height: height - 2), color: leadColor)
+            if let meter = content.meter {
+                drawMeter(meter, in: NSRect(x: x, y: (height - 6) / 2, width: 28, height: 6), color: leadColor)
+            } else if let graph = content.graph {
+                drawGraph(graph, in: NSRect(x: x, y: 1, width: 28, height: height - 2), color: leadColor)
+            }
             x += 28
         }
         if !content.captionAbove, captionWidth > 0 {
@@ -106,7 +113,9 @@ enum StatusImage {
             let bottom = ((height - below - spacing - fonts.caption.capHeight) / 2).rounded()
             let captionBaseline = bottom + below + spacing
             (caption as NSString).draw(at: NSPoint(x: x, y: captionBaseline + fonts.caption.descender), withAttributes: captionAttributes)
-            if let graph = content.graph, graphInColumn {
+            if let meter = content.meter, graphInColumn {
+                drawMeter(meter, in: NSRect(x: x, y: bottom + 1, width: 28, height: 5), color: valueColor)
+            } else if let graph = content.graph, graphInColumn {
                 drawGraph(graph, in: NSRect(x: x, y: bottom - 1, width: 28, height: below + 1), color: valueColor, framed: false)
             } else if !content.text.isEmpty {
                 (content.text as NSString).draw(at: NSPoint(x: x, y: bottom + fonts.value.descender), withAttributes: valueAttributes)
@@ -129,6 +138,16 @@ enum StatusImage {
         image.addRepresentation(rep)
         image.isTemplate = template
         return image
+    }
+
+    private static func drawMeter(_ fraction: Double, in frame: NSRect, color: NSColor) {
+        let radius = frame.height / 2
+        color.withAlphaComponent(0.25).setFill()
+        NSBezierPath(roundedRect: frame, xRadius: radius, yRadius: radius).fill()
+        let filled = max(frame.height, frame.width * CGFloat(min(1, max(0, fraction))))
+        guard fraction > 0 else { return }
+        color.setFill()
+        NSBezierPath(roundedRect: NSRect(x: frame.minX, y: frame.minY, width: filled, height: frame.height), xRadius: radius, yRadius: radius).fill()
     }
 
     private static func drawGraph(_ graph: ([Float], Float), in frame: NSRect, color: NSColor, framed: Bool = true) {
@@ -230,8 +249,8 @@ final class MenuBarPreview: DrawnView {
         let snapshot = delegate.system
         let history = delegate.monitor.history
         let images = shown.map { setting -> NSImage in
-            let reading = StatusBar.reading(setting.metric, snapshot)
-            let graph = setting.style != .number ? Array(history.recent(setting.metric.historyMetric).suffix(14)) : []
+            let reading = StatusBar.reading(setting, snapshot, plans: delegate.plans.plans)
+            let graph = setting.style != .number ? setting.metric.historyMetric.map { Array(history.recent($0).suffix(14)) } ?? [] : []
             return StatusBar.image(setting, reading: reading, graph: graph, appearance: effectiveAppearance, template: false)
         }
         // About the spacing the menu bar leaves between status items.
