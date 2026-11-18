@@ -106,6 +106,7 @@ final class DashboardBuilder: DrawnView {
     }
 
     private var committedPreviewHeight: CGFloat = 0
+    private var heightChangePending = false
 
     override func layout() {
         super.layout()
@@ -142,6 +143,19 @@ final class DashboardBuilder: DrawnView {
     /// The preview grew or shrank: the panel behind it follows, sliding like the blocks.
     private func previewResized() {
         placeHolder()
+        // A block that grows with its data (plan limits, agents) changes the builder's
+        // height too, not only adding or removing one.
+        if drag == nil, committedPreviewHeight != preview.frame.height {
+            let before = preferredHeight
+            committedPreviewHeight = preview.frame.height
+            if preferredHeight != before, !heightChangePending {
+                heightChangePending = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                    self?.heightChangePending = false
+                    self?.onHeightChange?()
+                }
+            }
+        }
         let target = scaled(NSRect(origin: .zero, size: preview.frame.size))
         guard drag != nil || !Theme.reduceMotion, let layer = stage.layer, stage.frame != target, window != nil else {
             stage.frame = target
