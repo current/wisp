@@ -96,7 +96,9 @@ deleted apps are in Settings, both off by default.
   with the apps behind the numbers.
 
 Wisp keeps a day of history by the minute and a year by the hour in
-`~/Library/Application Support/Wisp`. It has no analytics, updater or account.
+`~/Library/Application Support/Wisp`. It has no analytics or account. Once a
+day it asks GitHub for the latest version number, which you can turn off in
+Settings, About.
 
 The menu bar item opens a dashboard you can rearrange in Settings.
 
@@ -134,7 +136,7 @@ signed ad hoc and not notarized. The cask removes macOS's quarantine flag from
 `Wisp.app` after installing, so the first launch doesn't stop at Open Anyway. It
 also links the `wisp` command.
 
-Without Homebrew, download `Wisp-0.2.0.zip` from the
+Without Homebrew, download `Wisp-0.3.0.zip` from the
 [latest release](https://github.com/current/wisp/releases/latest), check its
 SHA-256 against the release notes, unzip it and drag Wisp to Applications. On the
 first launch, open System Settings > Privacy & Security and click Open Anyway,

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0, 18 November 2026
 
 Added:
 
@@ -12,10 +12,36 @@ Added:
   `--apply`. MCP tools `list_cleanable` and `uninstall_plan`, which only list.
 - Uninstall button in the app drawer.
 - Scheduled clean and a deleted-app watcher in Settings, both off by default.
+- A menu bar item for AI plan usage. It shows a Claude or Codex limit (5-hour,
+  weekly or both) for one account or the one closest to its limit. It turns red at 90% and opens
+  every account's limits and reset times. Accounts used through T3 Code are
+  read from T3 Code's logs.
+- Clicking a menu bar item opens a dropdown about its reading. The Memory item
+  shows memory and the apps using the most of it; Network shows the apps moving
+  data. Settings, Menu Bar can switch back to the whole dashboard.
+- Menu bar items can each have their own label (icon, text above, text before
+  or none), label text and weight, text size, number weight, colour and a
+  steady width. A preview in Settings shows them as the menu bar will.
+- Plan limits as a dashboard block.
+- Wisp checks GitHub once a day for a new version and says so once. Turn it off
+  in Settings, About.
 
 Changed:
 
+- New window layout, with the sidebar on a blur of the desktop and charts to the
+  cards' edges. Settings is a page with its sections in the toolbar.
+- Wisp follows the system's light or dark appearance on a new install.
 - The Storage page only reads the disk and links to Clean Up.
+- Plan limit cards put each account on one line with its plan. Codex accounts
+  take T3 Code's names, and long accounts scroll on hover.
+
+Fixed:
+
+- Memory grew by about 200 MB a day from cached icons that were never freed.
+- In dark mode the sidebar showed the light windows behind it, and switches
+  could draw in light colours.
+- The window buttons sometimes moved out of place.
+- Changing a menu bar item's style rebuilt every item and could reorder them.
 
 ## 0.2.0, 4 November 2026
 
