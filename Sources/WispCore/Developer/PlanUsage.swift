@@ -53,21 +53,31 @@ public enum PlanUsageReader {
             guard let data = FileManager.default.contents(atPath: path),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let account = json["oauthAccount"] as? [String: Any], let email = account["emailAddress"] as? String else { continue }
-            return (email, account["planDisplayName"] as? String)
+            return (email, account["planDisplayName"] as? String ?? planName(organizationType: account["organizationType"] as? String))
         }
         return (nil, nil)
+    }
+
+    /// Older sign-ins keep only the organization type ("claude_pro"); name the plan from it.
+    static func planName(organizationType: String?) -> String? {
+        guard let type = organizationType, type.hasPrefix("claude_") else { return nil }
+        let name = type.dropFirst("claude_".count)
+        return name.isEmpty ? nil : name.prefix(1).uppercased() + name.dropFirst()
     }
 
     /// Every account with figures, plus connected Claude folders still waiting for their first.
     public static func readAll(home: String = NSHomeDirectory(), store: URL = ClaudeStatusLine.store, now: Date = Date()) -> [PlanUsage] {
         var byAccount: [String: PlanUsage] = [:]
         var t3: [String: T3CodeLimits.Account] = [:]
-        for account in T3CodeLimits.read(home: home, now: now) { t3[account.record.folder] = account }
+        for account in T3CodeLimits.read(home: home, now: now, cacheFile: store.appendingPathComponent("t3-logs.json")) {
+            t3[account.record.folder] = account
+        }
+        let labels = T3CodeLimits.labels(home: home)
         for folder in Set(claudeFolders(home: home)).union(t3.keys).sorted() {
             let (email, plan) = claudeAccount(folder: folder, home: home)
             let account = email ?? (folder as NSString).lastPathComponent
             var usage = PlanUsage(provider: "Claude", account: account, plan: plan, windows: [])
-            usage.label = t3[folder]?.label
+            usage.label = t3[folder]?.label ?? labels[folder]
             // The status line and T3 Code can both report one folder; the newer figures win.
             let records = [ClaudeStatusLine.read(folder: folder, store: store), t3[folder]?.record].compactMap { $0 }
             if let record = records.max(by: { $0.updated < $1.updated }) {
@@ -86,6 +96,7 @@ public enum PlanUsageReader {
         for folder in codexFolders(home: home) {
             guard var usage = codex(folder: folder, now: now) else { continue }
             usage.account = folder.replacingOccurrences(of: home, with: "~")
+            usage.label = labels[folder]
             byAccount["codex:" + folder] = usage
         }
         // Accounts with figures first, then by provider and name.

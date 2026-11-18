@@ -6,6 +6,7 @@ import WispCore
 final class UsageBlock: DashboardBlockView {
     private final class Account {
         let header = PlanCard.Header()
+        let note = TextLine()
         var rows: [PlanCard.WindowRow] = []
         let rule = CardView()
     }
@@ -14,9 +15,10 @@ final class UsageBlock: DashboardBlockView {
     private var shownPlans: [PlanUsage] = []
     private let empty = TextLine()
     private let settingsButton = CapsuleButton()
-    private static let headerHeight: CGFloat = 46
+    private static let headerHeight: CGFloat = PlanCard.Header.height + 10
     private static let rowHeight: CGFloat = 29
     private static let rowGap: CGFloat = 8
+    private static let noteHeight: CGFloat = 16
     private static let accountGap: CGFloat = 16
     private static let limit = 4
 
@@ -40,6 +42,7 @@ final class UsageBlock: DashboardBlockView {
         var total: CGFloat = 44
         for plan in shownPlans {
             total += Self.headerHeight + CGFloat(plan.windows.count) * (Self.rowHeight + Self.rowGap) + Self.accountGap
+            if plan.problem != nil { total += Self.noteHeight + Self.rowGap }
         }
         return total - Self.accountGap + 12
     }
@@ -51,8 +54,12 @@ final class UsageBlock: DashboardBlockView {
         settingsButton.frame = NSRect(x: (bounds.width - buttonWidth) / 2, y: 78, width: buttonWidth, height: 26)
         var y: CGFloat = 44
         for (index, account) in accounts.enumerated() where index < shownPlans.count {
-            account.header.frame = NSRect(x: 16, y: y, width: content, height: 40)
+            account.header.frame = NSRect(x: 16, y: y, width: content, height: PlanCard.Header.height)
             y += Self.headerHeight
+            if !account.note.isHidden {
+                account.note.frame = NSRect(x: 16, y: y, width: content, height: Self.noteHeight)
+                y += Self.noteHeight + Self.rowGap
+            }
             for row in account.rows where !row.isHidden {
                 row.frame = NSRect(x: 16, y: y, width: content, height: Self.rowHeight)
                 y += Self.rowHeight + Self.rowGap
@@ -72,28 +79,30 @@ final class UsageBlock: DashboardBlockView {
     private func show(_ plans: [PlanUsage]) {
         let now = Date()
         let shown = Array(plans.prefix(Self.limit))
-        let resized = shown.map(\.windows.count) != shownPlans.map(\.windows.count)
+        let resized = shown.map { $0.windows.count * 2 + ($0.problem == nil ? 0 : 1) } != shownPlans.map { $0.windows.count * 2 + ($0.problem == nil ? 0 : 1) }
         shownPlans = shown
         while accounts.count < shown.count {
             let account = Account()
             account.rule.fill = Theme.cardBorder
             account.rule.stroke = .clear
             account.rule.radius = 0
-            for view in [account.header, account.rule] as [NSView] { addSubview(view) }
+            for view in [account.header, account.note, account.rule] as [NSView] { addSubview(view) }
             accounts.append(account)
         }
         for (index, account) in accounts.enumerated() {
             let visible = index < shown.count
             account.header.isHidden = !visible
+            if !visible { account.note.isHidden = true }
             account.rule.isHidden = !visible
             account.rows.forEach { $0.isHidden = !visible }
             guard visible else { continue }
             let usage = shown[index]
             account.header.provider = usage.provider
             account.header.title = usage.label
-            account.header.account = usage.account + PlanCard.age(usage.updated, now: now)
+            account.header.account = PlanCard.detail(usage, now: now)
             account.header.plan = usage.plan
-            account.header.problem = usage.problem
+            account.note.text = PlanCard.problemText(usage.problem ?? "")
+            account.note.isHidden = usage.problem == nil
             account.header.needsDisplay = true
             while account.rows.count < usage.windows.count {
                 let row = PlanCard.WindowRow()

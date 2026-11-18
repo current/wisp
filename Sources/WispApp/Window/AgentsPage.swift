@@ -55,41 +55,61 @@ final class PlanCard: CardView {
         override func accessibilityValue() -> Any? { "\(name) \(Format.percent(used)), \(detail)" }
     }
 
-    /// The provider with its mark, the plan on the right and the account under them.
+    /// One line: the provider's mark and name, then the account and the plan on the
+    /// right. A long account ends in "…" and scrolls through while hovered.
     final class Header: BitmapView {
         var provider = ""
         /// Shown in place of the provider's name, as T3 Code labels its accounts.
         var title: String?
-        var account = ""
-        var plan: String?
-        var problem: String?
+        var account = "" { didSet { detail.text = account } }
+        var plan: String? { didSet { needsLayout = true } }
+        private let detail = MarqueeLabel()
+        static let height: CGFloat = 24
+        private static let titleFont = Theme.sans(14, .semibold)
+        private static let planFont = Theme.sans(11, .semibold)
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            detail.font = A2Dev.detailFont
+            addSubview(detail)
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        private var planWidth: CGFloat { plan.map { A2Dev.width($0, Self.planFont) + 16 } ?? 0 }
+        private var titleWidth: CGFloat { A2Dev.width(title ?? provider, Self.titleFont) }
+
+        override func layout() {
+            super.layout()
+            // The name keeps its room; the account takes what is left before the plan.
+            let left = 30 + min(titleWidth, bounds.width * 0.55) + 12
+            let right = bounds.width - (plan == nil ? 0 : planWidth + 8)
+            detail.frame = NSRect(x: left, y: 0, width: max(0, right - left), height: Self.height)
+            needsDisplay = true
+        }
 
         override func draw(_ dirtyRect: NSRect) {
-            let markRect = NSRect(x: 0, y: -1, width: 22, height: 22)
+            let mid = Self.height / 2
+            let markRect = NSRect(x: 0, y: mid - 11, width: 22, height: 22)
             let look = AgentLook.mark(provider, size: 22, appearance: effectiveAppearance)
             if let icon = look.icon {
                 icon.draw(in: markRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             } else {
                 A2Dev.drawGlyphTile(look.glyph, tint: look.tint, in: markRect, appearance: effectiveAppearance)
             }
-            var right = bounds.width
             if let plan {
-                let font = Theme.sans(11, .semibold)
-                let width = A2Dev.width(plan, font) + 16
-                let pill = NSRect(x: right - width, y: 0.5, width: width, height: 19)
+                let width = planWidth
+                let pill = NSRect(x: bounds.width - width, y: mid - 9.5, width: width, height: 19)
                 A2Dev.tile.setFill()
                 NSBezierPath(roundedRect: pill, xRadius: 9.5, yRadius: 9.5).fill()
-                A2Dev.text(plan, x: pill.minX + 8, mid: pill.midY, width: width, font: font, color: A2.secondary)
-                right = pill.minX - 8
+                A2Dev.text(plan, x: pill.minX + 8, mid: pill.midY, width: width, font: Self.planFont, color: A2.secondary)
             }
-            A2Dev.text(title ?? provider, x: 30, mid: 10, width: right - 30, font: Theme.sans(14, .semibold), color: A2.primary)
-            A2Dev.text(problem ?? account, x: 30, mid: 31, width: bounds.width - 30, font: A2Dev.detailFont,
-                       color: problem == nil ? A2.tertiary : A2.warn)
+            A2Dev.text(title ?? provider, x: 30, mid: mid, width: min(titleWidth, bounds.width * 0.55) + 1, font: Self.titleFont, color: A2.primary)
         }
 
         override func isAccessibilityElement() -> Bool { true }
         override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
-        override func accessibilityValue() -> Any? { [provider, plan ?? "", problem ?? account].joined(separator: ", ") }
+        override func accessibilityValue() -> Any? { [title ?? provider, plan ?? "", account].joined(separator: ", ") }
     }
 
     let header = Header()
@@ -97,18 +117,28 @@ final class PlanCard: CardView {
     /// The mockup's card, with two windows.
     static let height: CGFloat = 170
 
+    /// Why an account has no figures yet, under its header.
+    private let note = TextLine()
+
     override init() {
         super.init()
         addSubview(header)
+        addSubview(note)
+    }
+
+    static func problemText(_ problem: String) -> NSAttributedString {
+        NSAttributedString(string: problem, attributes: [.font: A2Dev.detailFont, .foregroundColor: A2.warn])
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     func show(_ usage: PlanUsage, now: Date) {
         header.provider = usage.provider
-        header.account = usage.account + Self.age(usage.updated, now: now)
+        header.title = usage.label
+        header.account = Self.detail(usage, now: now)
         header.plan = usage.plan
-        header.problem = usage.problem
+        note.text = Self.problemText(usage.problem ?? "")
+        note.isHidden = usage.problem == nil
         header.needsDisplay = true
         while rows.count < usage.windows.count {
             let row = WindowRow()
@@ -131,12 +161,13 @@ final class PlanCard: CardView {
         needsLayout = true
     }
 
-    /// Figures are as fresh as the tool's last reply; say so once they are a while old.
-    static func age(_ updated: Date?, now: Date) -> String {
-        guard let updated, now.timeIntervalSince(updated) > 900 else { return "" }
+    /// The account, after how old the figures are once they are a while old, so the
+    /// age stays in view when a long account is cut short.
+    static func detail(_ usage: PlanUsage, now: Date) -> String {
+        guard let updated = usage.updated, now.timeIntervalSince(updated) > 900 else { return usage.account }
         let minutes = Int(now.timeIntervalSince(updated) / 60)
-        let text = minutes < 60 ? "\(minutes)m" : (minutes < 1440 ? "\(minutes / 60)h" : "\(minutes / 1440)d")
-        return " · as of " + text + " ago"
+        let age = minutes < 60 ? "\(minutes)m" : (minutes < 1440 ? "\(minutes / 60)h" : "\(minutes / 1440)d")
+        return age + " ago · " + usage.account
     }
 
     /// When the window resets and, if the current pace would use it up first, when that happens.
@@ -157,10 +188,11 @@ final class PlanCard: CardView {
     override func layout() {
         super.layout()
         let inner = bounds.width - A2.padSide * 2
-        header.frame = NSRect(x: A2.padSide, y: A2.padTop, width: inner, height: 40)
+        header.frame = NSRect(x: A2.padSide, y: A2.padTop, width: inner, height: Header.height)
+        note.frame = NSRect(x: A2.padSide, y: A2.padTop + Header.height + 14, width: inner, height: 16)
         let shown = rows.filter { !$0.isHidden }
         // Spread evenly over what is left, as the mockup's windows are.
-        let top = A2.padTop + 46, bottom = bounds.height - A2.padTop - 4
+        let top = A2.padTop + Header.height + 8, bottom = bounds.height - A2.padTop - 4
         let rowHeight: CGFloat = 29
         let space = (bottom - top - rowHeight * CGFloat(shown.count)) / CGFloat(shown.count + 1)
         for (index, row) in shown.enumerated() {

@@ -11,22 +11,29 @@ public enum T3CodeLimits {
     }
 
     /// One instance's figures as of one log line.
-    struct Hit: Equatable {
+    struct Hit: Equatable, Codable {
         var updated: Date
         var windows: [ClaudeStatusLine.Record.Window]
     }
 
-    static let maxFiles = 32
-    static let tailBytes: UInt64 = 524_288
+    /// A file seen for the first time is read this far back from its end; after that,
+    /// only what it gained since.
+    static let tailBytes: UInt64 = 2_097_152
     static let maxAge: TimeInterval = 8 * 86_400
     static let marker = Data(#""payload":{"type":"rate_limit_event""#.utf8)
 
     /// The newest figures for each Claude instance T3 Code has logged in the last 8 days.
-    public static func read(home: String = NSHomeDirectory(), now: Date = Date()) -> [Account] {
+    /// T3 Code writes a log per thread, often well over a hundred a day, so every recent
+    /// log is read once and what it held is kept in `cacheFile`; after that only what a
+    /// log gained is read.
+    public static func read(home: String = NSHomeDirectory(), now: Date = Date(), cacheFile: URL? = nil) -> [Account] {
         let root = home + "/.t3/userdata"
         let instances = claudeInstances(settings: root + "/settings.json", home: home)
+        let logs = recentLogs(root + "/logs/provider", now: now)
+        if let cacheFile { loadCache(cacheFile) }
+        defer { if let cacheFile { saveCache(cacheFile, keeping: Set(logs.map(\.path))) } }
         var best: [String: Hit] = [:]
-        for log in recentLogs(root + "/logs/provider", now: now) {
+        for log in logs {
             // A log last written before every instance's best line cannot hold a newer one.
             if instances.keys.allSatisfy({ (best[$0]?.updated ?? .distantPast) >= log.modified }) { break }
             for (instance, hit) in hits(in: log) where instances[instance] != nil {
@@ -40,17 +47,34 @@ public enum T3CodeLimits {
         }.sorted { $0.record.folder < $1.record.folder }
     }
 
+    /// The names T3 Code gives its Claude and Codex accounts ("Claude (alt)"), by config folder.
+    public static func labels(home: String = NSHomeDirectory()) -> [String: String] {
+        let path = home + "/.t3/userdata/settings.json"
+        var found: [String: String] = [:]
+        for driver in ["claudeAgent", "codex"] {
+            for (_, instance) in instances(settings: path, home: home, driver: driver) {
+                if let label = instance.label { found[instance.folder] = label }
+            }
+        }
+        return found
+    }
+
     /// Claude instances in T3 Code's settings, by id, with the config folder each one uses.
     /// The built-in "claudeAgent" instance uses ~/.claude even when settings never mention it.
     static func claudeInstances(settings path: String, home: String) -> [String: (folder: String, label: String?)] {
-        var found: [String: (folder: String, label: String?)] = ["claudeAgent": (home + "/.claude", nil)]
+        instances(settings: path, home: home, driver: "claudeAgent")
+    }
+
+    static func instances(settings path: String, home: String, driver: String) -> [String: (folder: String, label: String?)] {
+        let fallback = home + (driver == "codex" ? "/.codex" : "/.claude")
+        var found: [String: (folder: String, label: String?)] = driver == "claudeAgent" ? ["claudeAgent": (fallback, nil)] : [:]
         guard let data = FileManager.default.contents(atPath: path),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let instances = json["providerInstances"] as? [String: Any] else { return found }
         for (id, value) in instances {
-            guard let instance = value as? [String: Any], instance["driver"] as? String == "claudeAgent" else { continue }
+            guard let instance = value as? [String: Any], instance["driver"] as? String == driver else { continue }
             let config = instance["config"] as? [String: Any]
-            var folder = (config?["homePath"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? home + "/.claude"
+            var folder = (config?["homePath"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? fallback
             if folder.hasPrefix("~/") { folder = home + folder.dropFirst() }
             while folder.count > 1, folder.hasSuffix("/") { folder.removeLast() }
             found[id] = (folder, instance["displayName"] as? String)
@@ -75,37 +99,97 @@ public enum T3CodeLimits {
                   let modified = attributes[.modificationDate] as? Date, now.timeIntervalSince(modified) < maxAge else { return nil }
             return Log(path: path, modified: modified, size: (attributes[.size] as? NSNumber)?.uint64Value ?? 0)
         }
-        return Array(logs.sorted { $0.modified > $1.modified }.prefix(maxFiles))
+        return logs.sorted { $0.modified > $1.modified }
     }
 
     private static let lock = NSLock()
     private static var cache: [String: (log: Log, hits: [String: Hit])] = [:]
+    private static var cacheLoaded = false
+    private static var cacheDirty = false
 
-    /// The newest hit per instance in the log's tail, remembered until the file changes.
+    private struct SavedLog: Codable {
+        var path: String
+        var modified: Date
+        var size: UInt64
+        var hits: [String: Hit]
+    }
+
+    static func loadCache(_ url: URL) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !cacheLoaded else { return }
+        cacheLoaded = true
+        guard let data = try? Data(contentsOf: url), let saved = try? JSONDecoder().decode([SavedLog].self, from: data) else { return }
+        for entry in saved where cache[entry.path] == nil {
+            cache[entry.path] = (Log(path: entry.path, modified: entry.modified, size: entry.size), entry.hits)
+        }
+    }
+
+    /// Writes what the logs held, for the logs still recent, when anything was read.
+    static func saveCache(_ url: URL, keeping paths: Set<String>) {
+        lock.lock()
+        guard cacheDirty else { return lock.unlock() }
+        cacheDirty = false
+        cache = cache.filter { paths.contains($0.key) }
+        let saved = cache.values.map { SavedLog(path: $0.log.path, modified: $0.log.modified, size: $0.log.size, hits: $0.hits) }
+        lock.unlock()
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(saved) { try? data.write(to: url, options: .atomic) }
+    }
+
+    /// The newest hit per instance in the log. A file that grew is read from where the
+    /// last read stopped and its earlier hits kept, so an instance's last event does not
+    /// drop out of view as the file grows past it.
     static func hits(in log: Log) -> [String: Hit] {
         lock.lock()
-        if let cached = cache[log.path], cached.log == log {
-            lock.unlock()
-            return cached.hits
-        }
+        let cached = cache[log.path]
         lock.unlock()
-        let found = scan(log.path)
+        if let cached, cached.log == log { return cached.hits }
+        var found: [String: Hit]
+        if let cached, log.size >= cached.log.size {
+            found = cached.hits
+            // A little before the old end, in case the last line was still being written.
+            let start = cached.log.size > 4096 ? cached.log.size - 4096 : 0
+            for (instance, hit) in scan(log.path, from: start) where (found[instance]?.updated ?? .distantPast) < hit.updated {
+                found[instance] = hit
+            }
+        } else {
+            found = scan(log.path, from: log.size > tailBytes ? log.size - tailBytes : 0)
+        }
         lock.lock()
         cache[log.path] = (log, found)
+        cacheDirty = true
         lock.unlock()
         return found
     }
 
-    static func scan(_ path: String) -> [String: Hit] {
+    static func scan(_ path: String, from offset: UInt64 = 0) -> [String: Hit] {
         guard let handle = FileHandle(forReadingAtPath: path) else { return [:] }
         defer { try? handle.close() }
-        let size = (try? handle.seekToEnd()) ?? 0
-        try? handle.seek(toOffset: size > tailBytes ? size - tailBytes : 0)
+        try? handle.seek(toOffset: offset)
         guard let data = try? handle.readToEnd() else { return [:] }
         var found: [String: Hit] = [:]
-        for line in data.split(separator: 10).reversed() where line.range(of: marker) != nil {
-            guard let (instance, hit) = parse(line: line), found[instance] == nil else { continue }
-            found[instance] = hit
+        // memmem finds the few event lines in megabytes of log without splitting it into lines.
+        data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+            guard let base = buffer.baseAddress else { return }
+            let bytes = base.assumingMemoryBound(to: UInt8.self)
+            let count = buffer.count
+            marker.withUnsafeBytes { needle in
+                var position = 0
+                while position < count,
+                      let match = memmem(bytes + position, count - position, needle.baseAddress, needle.count) {
+                    let at = bytes.distance(to: match.assumingMemoryBound(to: UInt8.self))
+                    var lineStart = at
+                    while lineStart > 0, bytes[lineStart - 1] != 10 { lineStart -= 1 }
+                    var lineEnd = at
+                    while lineEnd < count, bytes[lineEnd] != 10 { lineEnd += 1 }
+                    if let (instance, hit) = parse(line: data[lineStart..<lineEnd]),
+                       (found[instance]?.updated ?? .distantPast) < hit.updated {
+                        found[instance] = hit
+                    }
+                    position = lineEnd + 1
+                }
+            }
         }
         return found
     }

@@ -191,3 +191,29 @@ private func touch(_ path: String, _ date: Date) {
     let usage = try JSONDecoder().decode(PlanUsage.self, from: Data(#"{"provider":"Claude","account":"a","windows":[]}"#.utf8))
     #expect(usage.label == nil && usage.account == "a")
 }
+
+@Test func planNameFromOrganizationType() {
+    #expect(PlanUsageReader.planName(organizationType: "claude_pro") == "Pro")
+    #expect(PlanUsageReader.planName(organizationType: "claude_max") == "Max")
+    #expect(PlanUsageReader.planName(organizationType: "team") == nil)
+    #expect(PlanUsageReader.planName(organizationType: nil) == nil)
+}
+
+@Test func t3HitSurvivesTheLogGrowingPastIt() throws {
+    let home = scratchHome()
+    let path = home + "/events.grow.log"
+    write(t3Line("2026-11-18T15:00:00.000Z", instance: "claudeAgent", five: 0.4, week: 0.1) + "\n", to: path)
+    func log() -> T3CodeLimits.Log {
+        let attributes = try! FileManager.default.attributesOfItem(atPath: path)
+        return .init(path: path, modified: attributes[.modificationDate] as! Date, size: (attributes[.size] as! NSNumber).uint64Value)
+    }
+    #expect(T3CodeLimits.hits(in: log())["claudeAgent"] != nil)
+    // Grow the file by more than a first read takes from its end.
+    let filler = String(repeating: "[2026-11-18T15:01:00.000Z] NTIVE: {\"provider\":\"claudeAgent\",\"note\":\"filler\"}\n", count: 40_000)
+    let handle = try #require(FileHandle(forWritingAtPath: path))
+    handle.seekToEndOfFile()
+    handle.write(Data(filler.utf8))
+    try handle.close()
+    #expect(log().size > T3CodeLimits.tailBytes)
+    #expect(T3CodeLimits.hits(in: log())["claudeAgent"]?.windows.first?.used == 0.4)
+}
