@@ -239,8 +239,6 @@ final class DashboardView: DrawnView {
     // Footer, one view so it moves as one when blocks come and go.
     private let footer = DrawnView()
     private lazy var moreButton = SymbolButton(symbol: "ellipsis", label: "More", target: self, action: #selector(showMore(_:)))
-    private let footerRule = CardView()
-    private let status = TextLine()
     private lazy var openButton = ActionButton(title: "Open Wisp", target: self, action: #selector(openWindow))
 
     private let tooltip = Tooltip()
@@ -254,23 +252,18 @@ final class DashboardView: DrawnView {
         super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: 400))
         wantsLayer = true
         for view in [title, chip, settingsButton, closeButton, emptyNote, footer] as [NSView] { addSubview(view) }
-        for view in [moreButton, footerRule, status, openButton] as [NSView] { footer.addSubview(view) }
+        for view in [moreButton, openButton] as [NSView] { footer.addSubview(view) }
         footer.wantsLayer = true
         tooltip.isHidden = true
         addSubview(tooltip)
-        footerRule.fill = Theme.cardBorder
-        footerRule.stroke = .clear
-        footerRule.radius = 0
 
         title.frame = NSRect(x: 20, y: 16, width: 160, height: 20)
         closeButton.frame = NSRect(x: Self.width - 14 - 26, y: 13, width: 26, height: 26)
         settingsButton.frame = NSRect(x: closeButton.frame.minX - 30, y: 13, width: 26, height: 26)
         placeChip()
         moreButton.frame = NSRect(x: 12, y: 14, width: 26, height: 26)
-        footerRule.frame = NSRect(x: 44, y: 18, width: 1, height: 18)
         let openSize = openButton.intrinsicContentSize
         openButton.frame = NSRect(x: Self.width - Self.outer - 4 - openSize.width, y: 12, width: openSize.width, height: openSize.height)
-        status.frame = NSRect(x: 56, y: 20, width: openButton.frame.minX - 64, height: 14)
         apply(delegate.settings.dashboard, animated: false)
     }
 
@@ -426,10 +419,6 @@ final class DashboardView: DrawnView {
     func update(_ s: SystemSnapshot, history: HistoryStore) {
         lastSystem = s
         for block in layout { views[block]?.update(s, history: history) }
-        let interval = delegate.settings.interval
-        let live = NSMutableAttributedString(string: "● ", attributes: [.font: Theme.mono(9), .foregroundColor: Theme.good])
-        live.append(Theme.caption("Live · every \(interval.formatted()) s"))
-        status.text = live
     }
 
     func update(_ table: ProcessTable) {
