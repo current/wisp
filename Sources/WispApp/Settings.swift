@@ -241,7 +241,7 @@ struct AppSettings: Codable, Equatable {
     /// The blocks of the menu bar dashboard, top to bottom.
     var dashboard = DashboardBlock.defaultLayout
     /// A click on a menu bar item opens a dropdown about that reading instead of the dashboard.
-    var itemDropdowns = false
+    var itemDropdowns = true
     /// Once a day, ask GitHub for the latest release's number.
     var checkForUpdates = true
 

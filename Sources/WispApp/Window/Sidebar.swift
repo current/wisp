@@ -361,12 +361,14 @@ final class Sidebar: NSView {
     func select(_ page: PageID) {
         selectedPage = page
         for row in rows { row.selected = row.page == page }
+        settingsRow.selected = page == .settings
         placeHighlight(animated: highlight.opacity > 0)
     }
 
     private func placeHighlight(animated: Bool) {
         guard let page = selectedPage else { return }
-        guard let target = rows.first(where: { $0.page == page }), !target.isHidden else { highlight.opacity = 0; return }
+        let target: NSView? = page == .settings ? settingsRow : rows.first { $0.page == page }
+        guard let target, !target.isHidden else { highlight.opacity = 0; return }
         let from = highlight.presentation()?.frame ?? highlight.frame
         let to = target.frame
         CATransaction.begin()
@@ -572,6 +574,7 @@ final class NavRowButton: DrawnView {
     let title: String
     let symbol: String
     var onClick: (() -> Void)?
+    var selected = false { didSet { if selected != oldValue { needsDisplay = true } } }
     private var hovering = false { didSet { needsDisplay = true } }
 
     init(title: String, symbol: String) {
@@ -586,7 +589,7 @@ final class NavRowButton: DrawnView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        if hovering {
+        if hovering, !selected {
             Theme.ink.withAlphaComponent(0.05).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
         }

@@ -2,11 +2,11 @@ import AppKit
 import ServiceManagement
 import WispCore
 
-/// Settings, shown in the Settings window: one section at a time, picked from the
-/// window's toolbar, as grouped cards with one setting per row. Every
+/// Settings, a page of the main window like the others: the sections are tabs in the
+/// toolbar and each section is grouped cards with one setting per row. Every
 /// control writes through AppDelegate.change, which saves and re-plans sampling at once.
 @MainActor
-final class SettingsPage: NSViewController {
+final class SettingsPage: NSViewController, Page {
     enum Section: String, CaseIterable {
         /// The outline symbol the sidebar shows, as for pages.
         var sidebarSymbol: String {
@@ -64,6 +64,7 @@ final class SettingsPage: NSViewController {
     private let scroll = NSScrollView()
     private let page = SettingsPageView()
     private(set) var section: Section = .general
+    private let tabs = Segmented(Section.allCases.map(\.title))
     private lazy var builder: DashboardBuilder = {
         let builder = DashboardBuilder(delegate: delegate)
         builder.onHeightChange = { [weak self] in self?.rebuild() }
@@ -85,13 +86,19 @@ final class SettingsPage: NSViewController {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsets(top: Toolbar.height, left: 0, bottom: 0, right: 0)
+        scroll.scrollerInsets = NSEdgeInsets(top: Toolbar.height - 8, left: 0, bottom: 0, right: 0)
         scroll.autoresizingMask = [.width, .height]
         root.addSubview(scroll)
         view = root
+        tabs.onChange = { [weak self] index in self?.show(Section.allCases[index]) }
         // WISP_TAB=<0-6> opens on a given section, for screenshots.
         let start = ProcessInfo.processInfo.environment["WISP_TAB"].flatMap(Int.init).flatMap { Section.allCases.indices.contains($0) ? Section.allCases[$0] : nil }
         show(start ?? .general, animated: false)
     }
+
+    var toolbarItems: [NSView] { [tabs] }
+    var pageScroll: NSScrollView? { scroll }
 
     /// The Menu Bar section's dashboard preview reads what its blocks show.
     var demand: Demand {
@@ -99,7 +106,7 @@ final class SettingsPage: NSViewController {
     }
 
     private func updateDemand() {
-        if view.window?.isVisible == true { delegate.settingsDemand = demand }
+        if view.window != nil { delegate.windowDemand = demand }
     }
 
     func update(system: SystemSnapshot) {
@@ -124,11 +131,12 @@ final class SettingsPage: NSViewController {
 
     func show(_ section: Section, animated: Bool = true) {
         self.section = section
+        tabs.select(Section.allCases.firstIndex(of: section) ?? 0, animated: animated)
         rebuild()
         updateDemand()
         // WISP_SCROLL=<points> scrolls part of the way, for screenshots.
         let offset = ProcessInfo.processInfo.environment["WISP_SCROLL"].flatMap(Double.init) ?? 0
-        scroll.contentView.scroll(to: NSPoint(x: 0, y: offset))
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: offset - Toolbar.height))
         scroll.reflectScrolledClipView(scroll.contentView)
         if animated { Motion.enter(page, from: CGPoint(x: 0, y: 6), duration: 0.2) }
     }

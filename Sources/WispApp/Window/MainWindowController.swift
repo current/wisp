@@ -158,7 +158,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         drawer.isHidden = true
         drawer.onClose = { [weak self] in self?.select(nil) }
         sidebar.onSelect = { [weak self] id in self?.show(id) }
-        sidebar.onSettings = { [weak delegate] in delegate?.showSettings() }
+        sidebar.onSettings = { [weak self] in self?.show(.settings) }
         window.contentView = root
         root.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(rootResized), name: NSView.frameDidChangeNotification, object: root)
@@ -566,8 +566,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func show(_ id: PageID) {
-        // Settings have their own window.
-        guard id != .settings else { return delegate.showSettings() }
         currentID = id
         sidebar.select(id)
         let page = pages[id] ?? makePage(id)
@@ -617,7 +615,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case .agents: return AgentsPage(delegate: delegate, onSelect: select)
         case .startup: return StartupPage(delegate: delegate, onSelect: select)
         case .cleanup: return CleanUpPage(delegate: delegate)
-        case .settings: preconditionFailure("Settings open in their own window")
+        case .settings: return SettingsPage(delegate: delegate)
         }
     }
 
@@ -653,6 +651,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func page(_ id: PageID) -> Page? { pages[id] }
+
+    func showSettings(_ section: SettingsPage.Section) {
+        (pages[.settings] as? SettingsPage)?.show(section)
+    }
 
     func reveal(appID: String) {
         show(.apps)

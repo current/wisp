@@ -145,8 +145,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var windowVisible = false { didSet { replan() } }
     /// Readings the visible window page needs beyond the basics.
     var windowDemand: Demand = [] { didSet { if windowVisible { replan() } } }
-    /// Readings the open Settings window needs (its menu bar previews); nil while it is closed.
-    var settingsDemand: Demand? { didSet { if settingsDemand != oldValue { replan() } } }
 
     func replan() {
         plans.running = settings.menuItems.contains { $0.metric == .usage && $0.enabled }
@@ -160,11 +158,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             activity = .window
             demand.formUnion([.system, .processes])
             demand.formUnion(windowDemand)
-            demand.formUnion(settingsDemand ?? [])
-        } else if let settingsDemand, !settingsDemand.isEmpty {
-            // Only the Menu Bar section reads anything: its dashboard preview.
-            activity = .window
-            demand.formUnion(settingsDemand.union([.system, .processes]))
         } else if dashboardOpen {
             activity = .popover
             // Only what the dashboard's blocks show.
@@ -305,12 +298,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let page = mainWindow?.page(.cleanup) as? CleanUpPage { body(page) }
     }
 
-    private var settingsWindow: SettingsWindowController?
-
+    /// Settings are a page of the main window, after the others.
     func showSettings(section: SettingsPage.Section? = nil) {
-        dashboard.close()
-        if settingsWindow == nil { settingsWindow = SettingsWindowController(delegate: self) }
-        settingsWindow?.show(section)
+        showWindow()
+        mainWindow?.show(.settings)
+        if let section { mainWindow?.showSettings(section) }
     }
 
     func closeDashboard() { dashboard.close() }
