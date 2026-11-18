@@ -18,11 +18,14 @@ public struct PlanUsage: Codable, Sendable, Equatable, Identifiable {
     public var updated: Date?
     /// Set when the limits could not be read, in words a person can act on.
     public var problem: String?
+    /// What another app calls the account, such as T3 Code's "Claude (alt)".
+    public var label: String?
     public var id: String { provider + ":" + account }
 }
 
 /// Reads plan limits from what Claude Code and Codex already report on this Mac:
 /// Claude Code hands them to its status line, which Wisp joins (see `ClaudeStatusLine`),
+/// T3 Code logs them for the Claude accounts it runs (see `T3CodeLimits`),
 /// and Codex writes them into its session logs. No sign-in is read and nothing is sent.
 public enum PlanUsageReader {
     /// Claude Code config folders: ~/.claude and any ~/.claude-* with a .claude.json.
@@ -58,11 +61,16 @@ public enum PlanUsageReader {
     /// Every account with figures, plus connected Claude folders still waiting for their first.
     public static func readAll(home: String = NSHomeDirectory(), store: URL = ClaudeStatusLine.store, now: Date = Date()) -> [PlanUsage] {
         var byAccount: [String: PlanUsage] = [:]
-        for folder in claudeFolders(home: home) {
+        var t3: [String: T3CodeLimits.Account] = [:]
+        for account in T3CodeLimits.read(home: home, now: now) { t3[account.record.folder] = account }
+        for folder in Set(claudeFolders(home: home)).union(t3.keys).sorted() {
             let (email, plan) = claudeAccount(folder: folder, home: home)
             let account = email ?? (folder as NSString).lastPathComponent
             var usage = PlanUsage(provider: "Claude", account: account, plan: plan, windows: [])
-            if let record = ClaudeStatusLine.read(folder: folder, store: store) {
+            usage.label = t3[folder]?.label
+            // The status line and T3 Code can both report one folder; the newer figures win.
+            let records = [ClaudeStatusLine.read(folder: folder, store: store), t3[folder]?.record].compactMap { $0 }
+            if let record = records.max(by: { $0.updated < $1.updated }) {
                 usage.windows = record.windows.map { window($0.name, used: $0.used, resets: $0.resets, now: now) }
                 usage.updated = record.updated
             } else if ClaudeStatusLine.state(folder: folder) == .connected {

@@ -122,3 +122,72 @@ private func settings(_ path: String) -> [String: Any] {
     #expect(Format.count(611_000_000) == "611M")
     #expect(Format.count(2_400_000_000) == "2.4B")
 }
+
+private func t3Line(_ stamp: String, instance: String, five: Double, week: Double) -> String {
+    #"[\#(stamp)] NTIVE: {"provider":"claudeAgent","protocol":"claude-agent-sdk.query","kind":"protocol","providerSessionId":"provider-session:provider-instance:\#(instance):thread:t1:abc","event":{"direction":"incoming","stage":"decoded","payload":{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1795031400,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":\#(five),"resetsAt":1795031400,"status":"allowed"},"seven_day":{"utilization":\#(week),"resetsAt":1795550400,"status":"allowed"}}},"session_id":"s"}}}"#
+}
+
+private func touch(_ path: String, _ date: Date) {
+    try! FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: path)
+}
+
+@Test func t3CodeLimitsPerInstance() {
+    let home = scratchHome()
+    let logs = home + "/.t3/userdata/logs/provider"
+    let now = T3CodeLimits.date("2026-11-18T15:20:00.000Z")!
+    write(#"{"providerInstances":{"claude-alt":{"driver":"claudeAgent","displayName":"Claude (alt)","config":{"homePath":"\#(home)/.claude-alt/"}},"codex":{"driver":"codex","config":{"homePath":"\#(home)/.codex-t3"}}}}"#,
+          to: home + "/.t3/userdata/settings.json")
+    // A tool result that quotes the event name, escaped inside a JSON string, is not an event.
+    let quoted = #"[2026-11-18T15:30:00.000Z] NTIVE: {"provider":"claudeAgent","providerSessionId":"provider-session:provider-instance:claudeAgent:thread:x","event":{"payload":{"type":"user","content":"\"payload\":{\"type\":\"rate_limit_event\""}}}"#
+    write([t3Line("2026-11-18T15:00:00.000Z", instance: "claudeAgent", five: 0.04, week: 0.01),
+           t3Line("2026-11-18T15:10:00.000Z", instance: "claude-alt", five: 0.5, week: 0.2),
+           quoted, "{partial"].joined(separator: "\n"), to: logs + "/events.a.log")
+    touch(logs + "/events.a.log", now)
+    // An older rotation: an older line for the main instance, and one for an instance T3 Code does not list.
+    write([t3Line("2026-11-18T14:00:00.000Z", instance: "claudeAgent", five: 0.9, week: 0.9),
+           t3Line("2026-11-18T14:05:00.000Z", instance: "claude-gone", five: 0.9, week: 0.9)].joined(separator: "\n"),
+          to: logs + "/events.a.log.1")
+    touch(logs + "/events.a.log.1", now.addingTimeInterval(-3600))
+    write(t3Line("2026-11-01T00:00:00.000Z", instance: "claude-alt", five: 1, week: 1), to: logs + "/events.old.log")
+    touch(logs + "/events.old.log", now.addingTimeInterval(-9 * 86_400))
+
+    let accounts = T3CodeLimits.read(home: home, now: now)
+    #expect(accounts.map(\.record.folder) == [home + "/.claude", home + "/.claude-alt"])
+    #expect(accounts.first?.label == nil && accounts.last?.label == "Claude (alt)")
+    let alt = accounts.last?.record
+    #expect(alt?.updated == T3CodeLimits.date("2026-11-18T15:10:00.000Z"))
+    #expect(alt?.windows == [.init(name: "5-hour session", used: 0.5, resets: Date(timeIntervalSince1970: 1_795_031_400)),
+                             .init(name: "This week", used: 0.2, resets: Date(timeIntervalSince1970: 1_795_550_400))])
+    #expect(accounts.first?.record.windows.first?.used == 0.04)
+}
+
+@Test func t3CodeLimitsJoinStatusLineFigures() {
+    let home = scratchHome()
+    let store = URL(fileURLWithPath: home + "/store")
+    let logs = home + "/.t3/userdata/logs/provider"
+    let now = T3CodeLimits.date("2026-11-18T15:20:00.000Z")!
+    write(#"{"oauthAccount":{"emailAddress":"me@example.com","planDisplayName":"Max"}}"#, to: home + "/.claude.json")
+    write(#"{"oauthAccount":{"emailAddress":"alt@example.com"}}"#, to: home + "/.claude-alt/.claude.json")
+    write(#"{"providerInstances":{"claude-alt":{"driver":"claudeAgent","displayName":"Claude (alt)","config":{"homePath":"\#(home)/.claude-alt"}}}}"#,
+          to: home + "/.t3/userdata/settings.json")
+    write([t3Line("2026-11-18T15:00:00.000Z", instance: "claudeAgent", five: 0.04, week: 0.01),
+           t3Line("2026-11-18T15:10:00.000Z", instance: "claude-alt", five: 0.5, week: 0.2)].joined(separator: "\n"),
+          to: logs + "/events.a.log")
+    touch(logs + "/events.a.log", now)
+    // The status line reported ~/.claude after T3 Code did, so its figures win there.
+    let input = #"{"rate_limits":{"five_hour":{"used_percentage":30,"resets_at":1795031400}}}"#
+    ClaudeStatusLine.record(input: Data(input.utf8), folder: home + "/.claude", store: store, now: now)
+
+    let usage = PlanUsageReader.readAll(home: home, store: store, now: now)
+    #expect(usage.map(\.account) == ["alt@example.com", "me@example.com"])
+    let alt = usage.first
+    #expect(alt?.label == "Claude (alt)" && alt?.problem == nil)
+    #expect(alt?.windows.map(\.used) == [0.5, 0.2])
+    let main = usage.last
+    #expect(main?.updated == now && main?.windows.map(\.used) == [0.3])
+}
+
+@Test func planUsageDecodesWithoutALabel() throws {
+    let usage = try JSONDecoder().decode(PlanUsage.self, from: Data(#"{"provider":"Claude","account":"a","windows":[]}"#.utf8))
+    #expect(usage.label == nil && usage.account == "a")
+}
