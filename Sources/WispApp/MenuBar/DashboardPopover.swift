@@ -65,7 +65,7 @@ final class DashboardPopover: NSObject {
         view.onHeightChange = { [weak panel] in panel?.fit() }
         view.show(focus: focus)
         delegate.dashboardLayout = view.layout
-        if view.layout.contains(.usage) { delegate.plans.refresh(maxAge: 20) }
+        if view.layout.contains(.usage) { delegate.plans.refresh(maxAge: 20, liveAge: 60) }
         view.update(delegate.system, history: delegate.monitor.history)
         view.update(delegate.table)
         let screen = button.window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero

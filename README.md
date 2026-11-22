@@ -57,7 +57,8 @@ The Clean Up page lists what can go, in tabs:
 - Junk: app caches, logs, old macOS installers and .dmg or .pkg files in
   Downloads, Desktop and Documents.
 - Developer: Xcode device support, simulators, npm, pnpm, Cargo and uv caches,
-  build folders in projects untouched for 30 days, and orphaned git worktrees.
+  build folders in projects untouched for 30 days, and git worktrees that are
+  orphaned or untouched for 30 days.
 - Large Files: files over 10 MB by kind, exact duplicates, VM disks and AI
   models from Ollama, Hugging Face, LM Studio and apps that download their own.
 - Leftovers: files in `~/Library` from apps you deleted.
@@ -192,8 +193,8 @@ remove, but it can't remove anything.
 ### Plan limits
 
 Plan limits on the Coding Agents page are off until you turn them on. Wisp reads
-the figures Claude Code and Codex already write on your Mac. It never reads
-their sign-in or sends the figures anywhere.
+the figures Claude Code, Codex and Antigravity already keep on your Mac. It never
+reads their sign-in or sends the figures anywhere.
 
 Claude Code passes its 5-hour and weekly limits to its status line. Turning plan
 limits on adds `wisp statusline` to the status line command in each Claude Code
@@ -203,10 +204,27 @@ command back. A copy of each settings file is kept in
 `~/Library/Application Support/Wisp/claude-settings-backup`. Claude Code only
 reports limits on Pro, Max and Ultra plans.
 
-Codex writes its limits to its session logs in `~/.codex/sessions`, and Wisp
-reads the latest entry.
+Codex writes its limits to its session logs in `~/.codex/sessions`, but only
+for work done on this Mac. So every 5 minutes, and when you open the dropdown,
+Wisp also runs `codex app-server` and asks it for each account's current
+limits. Codex makes that request to OpenAI with its own sign-in. Folders that
+share one sign-in are asked once, and the newer of the two figures is shown.
 
-The figures are as recent as your last reply in each tool.
+T3 Code logs the limits of the Claude accounts it runs. A thread in a linked
+environment, such as a devbox, logs them on that machine instead. To see those
+too, add the machine's SSH host under Settings, Assistants, Limits from other
+machines. Every 5 minutes Wisp runs `ssh -o BatchMode=yes <host>` with a short
+script that prints the newest limit lines from `~/.t3/userdata/logs/provider`
+there. It uses your own SSH setup, never asks for a password, and reads nothing
+else. The newest figures for an account win, wherever they came from.
+
+While Antigravity runs, its language server writes its port and a per-run token
+to `~/.gemini/antigravity/daemon/hub_<port>.json` and answers on 127.0.0.1.
+Once a minute Wisp requests each model's remaining quota from it. Models that share
+a pool, such as every Gemini model, are one limit. The last answer stays on
+screen after Antigravity quits.
+
+Claude's figures are as recent as your last reply in Claude Code or T3 Code.
 
 ## License
 

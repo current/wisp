@@ -16,7 +16,7 @@ enum AgentMark {
         switch kind {
         case let k where k.contains("Claude"): return ("asterisk", Theme.hex(0xD97757))
         case let k where k.contains("Codex"): return ("circle.hexagongrid.fill", Theme.ink)
-        case let k where k.contains("Gemini"): return ("sparkle", Theme.blue)
+        case let k where k.contains("Gemini") || k.contains("Antigravity"): return ("sparkle", Theme.blue)
         case let k where k.contains("Cursor"): return ("cursorarrow.rays", Theme.ink)
         default: return ("terminal.fill", Theme.ink)
         }

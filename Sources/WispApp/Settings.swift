@@ -231,6 +231,10 @@ struct AppSettings: Codable, Equatable {
     var allowMCP = true
     /// Read each AI plan's limits with the sign-in its own tool keeps. Off until asked for.
     var planUsage = false
+    /// SSH hosts, as typed, whose T3 Code limits Wisp reads too. Empty until the owner adds one.
+    var remoteLimitHosts = ""
+    /// Accounts (PlanUsage ids) the AI usage block leaves out.
+    var hiddenUsageAccounts: [String] = []
     var look = Look.automatic
     var fahrenheit = false
     var bits = false
@@ -274,6 +278,8 @@ struct AppSettings: Codable, Equatable {
         alerts = (try? c.decode(AlertRules.self, forKey: .alerts)) ?? fallback.alerts
         allowMCP = (try? c.decode(Bool.self, forKey: .allowMCP)) ?? fallback.allowMCP
         planUsage = (try? c.decode(Bool.self, forKey: .planUsage)) ?? fallback.planUsage
+        remoteLimitHosts = (try? c.decode(String.self, forKey: .remoteLimitHosts)) ?? fallback.remoteLimitHosts
+        hiddenUsageAccounts = (try? c.decode([String].self, forKey: .hiddenUsageAccounts)) ?? fallback.hiddenUsageAccounts
         look = (try? c.decode(Look.self, forKey: .look)) ?? fallback.look
         fahrenheit = (try? c.decode(Bool.self, forKey: .fahrenheit)) ?? fallback.fahrenheit
         bits = (try? c.decode(Bool.self, forKey: .bits)) ?? fallback.bits

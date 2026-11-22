@@ -147,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var windowDemand: Demand = [] { didSet { if windowVisible { replan() } } }
 
     func replan() {
+        plans.remoteHosts = settings.planUsage ? T3RemoteLimits.hosts(settings.remoteLimitHosts) : []
         plans.running = settings.menuItems.contains { $0.metric == .usage && $0.enabled }
         var demand: Demand = []
         for item in settings.menuItems where item.enabled { demand.insert(item.metric.demand) }

@@ -295,11 +295,21 @@ final class SettingsPage: NSViewController, Page {
                     }),
                 ]),
                 SettingsGroup("Plan limits", [
-                    .control("Show AI plan limits and tokens used today", "Adds Wisp to Claude Code's status line (yours keeps working) and reads Codex's session logs. No sign-ins are read and nothing is sent.",
+                    .control("Show AI plan limits and tokens used today", "Adds Wisp to Claude Code's status line (yours keeps working) reads Codex's session logs and asks Antigravity on this Mac. No sign-ins are read and nothing is sent.",
                              SettingsControls.toggle(s.planUsage) { [unowned self] on in
                                  delegate.change { $0.planUsage = on }
                                  PlanLimitsSetup.apply(on: on)
                              }),
+                    .control("Limits from other machines",
+                             (["SSH hosts where T3 Code runs threads for you, like a devbox. Every 5 minutes Wisp runs ssh to read the newest limit lines from T3 Code's logs there. Nothing else is read or sent."]
+                              + T3RemoteLimits.status(hosts: T3RemoteLimits.hosts(s.remoteLimitHosts))).joined(separator: "\n"),
+                             {
+                                 let field = SettingsControls.field(s.remoteLimitHosts, placeholder: "devbox", limit: 200) { [unowned self] text in
+                                     delegate.change { $0.remoteLimitHosts = text }
+                                 }
+                                 field.frame.size.width = 180
+                                 return field
+                             }()),
                 ]),
             ]
         case .cleanUp:

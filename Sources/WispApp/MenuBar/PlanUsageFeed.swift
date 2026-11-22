@@ -11,15 +11,23 @@ final class PlanUsageFeed {
     private var busy = false
     private var timer: Timer?
     private var observers: [([PlanUsage]) -> Void] = []
+    /// SSH hosts whose T3 Code limits are read too, from the settings.
+    var remoteHosts: [String] = []
 
     func observe(_ body: @escaping ([PlanUsage]) -> Void) { observers.append(body) }
 
-    /// Reads again when the figures are older than `maxAge` seconds.
-    func refresh(maxAge: TimeInterval = 60) {
+    /// Reads again when the figures are older than `maxAge` seconds, and asks Codex
+    /// for its live limits when its last answer is older than `liveAge`. Antigravity
+    /// answers on this Mac, so it is asked on every read.
+    func refresh(maxAge: TimeInterval = 60, liveAge: TimeInterval = 300) {
         guard !busy, Date().timeIntervalSince(readAt) >= maxAge else { return }
         busy = true
+        let hosts = remoteHosts
         DispatchQueue.global(qos: .utility).async {
-            let result = PlanUsageReader.readAll()
+            CodexLive.refresh(maxAge: liveAge)
+            AntigravityLive.refresh(maxAge: 60)
+            T3RemoteLimits.refresh(hosts: hosts, maxAge: max(liveAge, 120))
+            let result = PlanUsageReader.readAll(remoteHosts: hosts)
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }

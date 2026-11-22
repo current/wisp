@@ -115,6 +115,74 @@ private func settings(_ path: String) -> [String: Any] {
                                .init(name: "This week", used: 0.03, resets: Date(timeIntervalSince1970: 1_794_427_928))])
 }
 
+@Test func codexFoldersOnOneAccountAreOneRow() {
+    let home = scratchHome()
+    let now = Date(timeIntervalSince1970: 1_793_800_000)
+    write(#"{"providerInstances":{"codex":{"driver":"codex","displayName":"Codex (main)","config":{"homePath":"\#(home)/.codex-t3"}},"codex-alt":{"driver":"codex","displayName":"Codex (alt)","config":{"homePath":"\#(home)/.codex-alt"}}}}"#,
+          to: home + "/.t3/userdata/settings.json")
+    func session(account: String, stamp: String, five: Double) -> String {
+        #"{"timestamp":"\#(stamp)","type":"session_meta","payload":{"account_scoped":true,"creator_account_id":"\#(account)"}}"# + "\n" +
+        #"{"timestamp":"\#(stamp)","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":\#(five),"window_minutes":300,"resets_at":1793841114},"plan_type":"plus"}}}"# + "\n"
+    }
+    // The Codex CLI and T3 Code's main instance share a sign-in; the CLI ran last.
+    write(session(account: "acct-main", stamp: "2026-11-04T20:11:00.000Z", five: 35), to: home + "/.codex/sessions/2026/11/04/rollout-a.jsonl")
+    write(session(account: "acct-main", stamp: "2026-11-04T18:00:00.000Z", five: 99), to: home + "/.codex-t3/sessions/2026/11/04/rollout-b.jsonl")
+    write(session(account: "acct-alt", stamp: "2026-11-04T19:00:00.000Z", five: 50), to: home + "/.codex-alt/sessions/2026/11/04/rollout-c.jsonl")
+    let usage = PlanUsageReader.readAll(home: home, store: URL(fileURLWithPath: home + "/store"), now: now)
+    #expect(usage.map(\.label) == ["Codex (alt)", "Codex (main)"])
+    let main = usage.last
+    #expect(main?.account == "~/.codex-t3" && main?.windows.first?.used == 0.35)
+    #expect(usage.first?.windows.first?.used == 0.5)
+}
+
+@Test func codexLiveAnswerBeatsAnOlderLog() {
+    let home = scratchHome()
+    let store = URL(fileURLWithPath: home + "/store")
+    let now = Date(timeIntervalSince1970: 1_793_800_000)
+    write(#"{"providerInstances":{"codex-alt":{"driver":"codex","displayName":"Codex (alt)","config":{"homePath":"\#(home)/.codex-alt"}}}}"#,
+          to: home + "/.t3/userdata/settings.json")
+    write(#"{"timestamp":"2026-11-03T20:00:00.000Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":5.0,"window_minutes":300,"resets_at":1793841114},"plan_type":"plus"}}}"# + "\n",
+          to: home + "/.codex-alt/sessions/2026/11/03/rollout-a.jsonl")
+    let answer: [String: Any] = ["accountId": "acct-alt", "rateLimits": [
+        "primary": ["usedPercent": 47, "windowDurationMins": 300, "resetsAt": 1_793_810_000],
+        "secondary": ["usedPercent": 10, "windowDurationMins": 10080, "resetsAt": 1_794_300_000],
+        "planType": "plus"]]
+    CodexLive.save(CodexLive.record(answer, folder: home + "/.codex-alt", now: now.addingTimeInterval(-30)), store: store)
+    let usage = PlanUsageReader.readAll(home: home, store: store, now: now)
+    #expect(usage.count == 1 && usage.first?.label == "Codex (alt)" && usage.first?.plan == "Plus")
+    #expect(usage.first?.windows == [.init(name: "5-hour session", used: 0.47, resets: Date(timeIntervalSince1970: 1_793_810_000)),
+                                     .init(name: "This week", used: 0.10, resets: Date(timeIntervalSince1970: 1_794_300_000))])
+    #expect(usage.first?.updated == now.addingTimeInterval(-30))
+}
+
+@Test func antigravityQuotaPoolsBecomeWindows() {
+    let home = scratchHome()
+    let store = URL(fileURLWithPath: home + "/store")
+    let now = Date(timeIntervalSince1970: 1_795_000_000)
+    let status: [String: Any] = ["userStatus": [
+        "email": "me@example.com",
+        "userTier": ["name": "Google AI Ultra"],
+        "planStatus": ["planInfo": ["planName": "Pro"]],
+        "cascadeModelConfigData": ["clientModelConfigs": [
+            ["label": "Gemini 4 Neon (High)", "modelId": "gemini-4-neon-high",
+             "quotaInfo": ["remainingFraction": 0.75, "resetTime": "2026-11-18T14:00:00Z"]],
+            ["label": "Orchestrator (Neon)", "modelId": "gemini-pro-orchestrator-neon",
+             "quotaInfo": ["remainingFraction": 0.75, "resetTime": "2026-11-18T14:00:00Z"]],
+            ["label": "Claude Opus 4.6 (Thinking)", "modelId": "claude-opus-4-6-thinking",
+             "quotaInfo": ["resetTime": "2026-11-18T15:00:00Z"]],
+            ["label": "GPT-OSS 120B (Medium)", "modelId": "gpt-oss-120b-medium",
+             "quotaInfo": ["resetTime": "2026-11-18T15:00:00Z"]],
+            ["label": "No quota", "modelId": "x"],
+        ]],
+    ]]
+    AntigravityLive.save(AntigravityLive.record(status, now: now)!, store: store)
+    let usage = PlanUsageReader.readAll(home: home, store: store, now: now)
+    #expect(usage.count == 1)
+    #expect(usage.first?.provider == "Antigravity" && usage.first?.account == "me@example.com" && usage.first?.plan == "Google AI Ultra")
+    #expect(usage.first?.windows.map(\.name) == ["5-hour Gemini", "5-hour Claude and GPT-OSS"])
+    #expect(usage.first?.windows.map(\.used) == [0.25, 1])
+}
+
 @Test func shortCounts() {
     #expect(Format.count(950) == "950")
     #expect(Format.count(1_240) == "1.2K")
@@ -216,4 +284,69 @@ private func touch(_ path: String, _ date: Date) {
     try handle.close()
     #expect(log().size > T3CodeLimits.tailBytes)
     #expect(T3CodeLimits.hits(in: log())["claudeAgent"]?.windows.first?.used == 0.4)
+}
+
+// MARK: T3 Code on other machines
+
+@Test func remoteHostsAreSplitAndKeptOnce() {
+    #expect(T3RemoteLimits.hosts(" devbox, mac-mini devbox,,") == ["devbox", "mac-mini"])
+    #expect(T3RemoteLimits.hosts("") == [])
+}
+
+@Test func remoteLimitsReadOverSSHAndWinWhenNewer() {
+    let home = scratchHome()
+    let store = URL(fileURLWithPath: home + "/store")
+    let logs = home + "/.t3/userdata/logs/provider"
+    let now = T3CodeLimits.date("2026-11-20T09:00:00.000Z")!
+    write(#"{"providerInstances":{"claude-alt":{"driver":"claudeAgent","displayName":"Claude (alt)","config":{"homePath":"\#(home)/.claude-alt"}}}}"#,
+          to: home + "/.t3/userdata/settings.json")
+    // This Mac last saw Claude main at 1 AM; the devbox ran it until 8:53.
+    write(t3Line("2026-11-20T07:09:00.000Z", instance: "claudeAgent", five: 0.2, week: 1) + "\n", to: logs + "/events.local.log")
+    touch(logs + "/events.local.log", now.addingTimeInterval(-3600))
+    var scripts: [String] = []
+    let remote = [t3Line("2026-11-20T08:50:00.000Z", instance: "claudeAgent", five: 0.1, week: 0.6),
+                  t3Line("2026-11-20T08:53:00.000Z", instance: "claudeAgent", five: 0.1, week: 0.68),
+                  t3Line("2026-11-20T08:40:00.000Z", instance: "unknown-here", five: 0.5, week: 0.5),
+                  "not a limit line"].joined(separator: "\n")
+    T3RemoteLimits.refresh(hosts: ["devbox"], store: store, maxAge: 300, now: now) { host, script in
+        scripts.append(script)
+        #expect(host == "devbox")
+        return (Data(remote.utf8), 0)
+    }
+    // The first check looks back as far as local logs are kept.
+    #expect(scripts.first?.contains("-mmin -11520") == true)
+    let main = PlanUsageReader.readAll(home: home, store: store, now: now, remoteHosts: ["devbox"])
+        .first { $0.account == ".claude" }
+    #expect(main?.windows.map(\.used) == [0, 0.68])
+    #expect(main?.updated == T3CodeLimits.date("2026-11-20T08:53:00.000Z"))
+    // Without the host, this Mac's own older figures show.
+    let localOnly = PlanUsageReader.readAll(home: home, store: store, now: now).first { $0.account == ".claude" }
+    #expect(localOnly?.windows.map(\.used) == [0, 1])
+    #expect(T3RemoteLimits.status(hosts: ["devbox"], store: store, now: now.addingTimeInterval(120)) == ["devbox: read 2 min ago"])
+
+    // Within maxAge nothing runs; after it, only logs changed since the last check are read,
+    // and figures already found are kept when the new check has none.
+    T3RemoteLimits.refresh(hosts: ["devbox"], store: store, maxAge: 300, now: now.addingTimeInterval(60)) { _, script in
+        scripts.append(script)
+        return (Data(), 0)
+    }
+    #expect(scripts.count == 1)
+    T3RemoteLimits.refresh(hosts: ["devbox"], store: store, maxAge: 300, now: now.addingTimeInterval(600)) { _, script in
+        scripts.append(script)
+        return (Data(), 0)
+    }
+    #expect(scripts.last?.contains("-mmin -15") == true)
+    let still = PlanUsageReader.readAll(home: home, store: store, now: now, remoteHosts: ["devbox"]).first { $0.account == ".claude" }
+    #expect(still?.windows.map(\.used) == [0, 0.68])
+}
+
+@Test func remoteLimitsSayWhyAHostFailed() {
+    let home = scratchHome()
+    let store = URL(fileURLWithPath: home + "/store")
+    let now = Date()
+    T3RemoteLimits.refresh(hosts: ["gone"], store: store, maxAge: 0, now: now) { _, _ in (Data(), 255) }
+    T3RemoteLimits.refresh(hosts: ["slow"], store: store, maxAge: 0, now: now) { _, _ in nil }
+    T3RemoteLimits.refresh(hosts: ["bare"], store: store, maxAge: 0, now: now) { _, _ in (Data((T3RemoteLimits.noT3 + "\n").utf8), 0) }
+    #expect(T3RemoteLimits.status(hosts: ["gone", "slow", "bare", "new"], store: store, now: now)
+            == ["gone: could not connect with ssh", "slow: ssh did not answer in time", "bare: T3 Code has no logs there", "new: not checked yet"])
 }

@@ -4,6 +4,11 @@ import AppKit
 /// rest while the pointer is over it. It costs nothing until hovered.
 final class MarqueeLabel: NSView {
     var text = "" { didSet { if text != oldValue { reset() } } }
+    /// Shown in place of `text` while the pointer is over the label, such as the account
+    /// behind an "updated 4m ago".
+    var hoverText: String? { didSet { if hoverText != oldValue, hovering { reset() } } }
+    private var hovering = false
+    private var shown: String { hovering ? (hoverText ?? text) : text }
     var font = Theme.sans(12) { didSet { reset() } }
     var color: NSColor = A2.tertiary { didSet { needsDisplay = true } }
     /// Short text sits against the right edge, as a value beside a title does.
@@ -25,9 +30,9 @@ final class MarqueeLabel: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override func accessibilityValue() -> Any? { text }
+    override func accessibilityValue() -> Any? { hoverText.map { text + ", " + $0 } ?? text }
 
-    private var textWidth: CGFloat { ceil((text as NSString).size(withAttributes: [.font: font]).width) }
+    private var textWidth: CGFloat { ceil((shown as NSString).size(withAttributes: [.font: font]).width) }
     private var overflow: CGFloat { max(0, textWidth - bounds.width) }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -36,7 +41,7 @@ final class MarqueeLabel: NSView {
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
         guard overflow > 0 else {
             let x = alignRight ? bounds.width - textWidth : 0
-            (text as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attributes)
+            (shown as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attributes)
             return
         }
         if timer == nil {
@@ -44,11 +49,11 @@ final class MarqueeLabel: NSView {
             paragraph.lineBreakMode = .byTruncatingTail
             var truncated = attributes
             truncated[.paragraphStyle] = paragraph
-            (text as NSString).draw(with: NSRect(x: 0, y: y, width: bounds.width, height: line + 2),
+            (shown as NSString).draw(with: NSRect(x: 0, y: y, width: bounds.width, height: line + 2),
                                     options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: truncated)
         } else {
             NSBezierPath(rect: bounds).addClip()
-            (text as NSString).draw(at: NSPoint(x: -offset, y: y), withAttributes: attributes)
+            (shown as NSString).draw(at: NSPoint(x: -offset, y: y), withAttributes: attributes)
         }
     }
 
@@ -59,6 +64,12 @@ final class MarqueeLabel: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        if hoverText != nil { needsDisplay = true }
+        startScrolling()
+    }
+
+    private func startScrolling() {
         guard overflow > 0, timer == nil, !Theme.reduceMotion else { return }
         offset = 0
         pauseUntil = CACurrentMediaTime() + Self.pause / 2
@@ -85,11 +96,17 @@ final class MarqueeLabel: NSView {
         needsDisplay = true
     }
 
-    override func mouseExited(with event: NSEvent) { reset() }
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        reset()
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil { reset() }
+        if window == nil {
+            hovering = false
+            reset()
+        }
     }
 
     private func reset() {

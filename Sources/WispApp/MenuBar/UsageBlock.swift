@@ -13,24 +13,30 @@ final class UsageBlock: DashboardBlockView {
 
     private var accounts: [Account] = []
     private var shownPlans: [PlanUsage] = []
+    /// Every account with figures is hidden by choice, so the empty state offers Show All.
+    private var allHidden = false
     private let empty = TextLine()
     private let settingsButton = CapsuleButton()
+    private lazy var accountsButton = SymbolButton(symbol: "line.3.horizontal.decrease", label: "Choose Accounts",
+                                                   target: self, action: #selector(chooseAccounts(_:)))
     private static let headerHeight: CGFloat = PlanCard.Header.height + 10
     private static let rowHeight: CGFloat = 29
     private static let rowGap: CGFloat = 8
     private static let noteHeight: CGFloat = 16
     private static let accountGap: CGFloat = 16
-    private static let limit = 4
+    /// Room for three Claude and two Codex accounts with one to spare.
+    private static let limit = 6
 
     override init(_ block: DashboardBlock, delegate: AppDelegate) {
         super.init(block, delegate: delegate)
         empty.alignment = .center
-        empty.text = NSAttributedString(string: "No plan figures yet. Turn on plan limits in Settings to read Claude Code's.",
-                                        attributes: [.font: Theme.sans(12), .foregroundColor: Theme.inkSecondary])
-        settingsButton.title = "Open Settings"
-        settingsButton.onPress = { [weak self] in self?.delegate.showSettings(section: .assistants) }
+        settingsButton.onPress = { [weak self] in
+            guard let self else { return }
+            if self.allHidden { self.showAll() } else { self.delegate.showSettings(section: .assistants) }
+        }
         addSubview(empty)
         addSubview(settingsButton)
+        addSubview(accountsButton)
         delegate.plans.observe { [weak self] plans in self?.show(plans) }
         show(delegate.plans.plans)
     }
@@ -49,6 +55,7 @@ final class UsageBlock: DashboardBlockView {
 
     override func layout() {
         super.layout()
+        placeRight(accountsButton, width: 26, height: 26)
         empty.frame = NSRect(x: 16, y: 54, width: content, height: 16)
         let buttonWidth = settingsButton.naturalWidth
         settingsButton.frame = NSRect(x: (bounds.width - buttonWidth) / 2, y: 78, width: buttonWidth, height: 26)
@@ -78,7 +85,13 @@ final class UsageBlock: DashboardBlockView {
 
     private func show(_ plans: [PlanUsage]) {
         let now = Date()
-        let shown = Array(plans.prefix(Self.limit))
+        let hidden = Set(delegate.settings.hiddenUsageAccounts)
+        allHidden = !plans.isEmpty && plans.allSatisfy { hidden.contains($0.id) }
+        let plans = plans.filter { !hidden.contains($0.id) }
+        // Folders still waiting for their first figures only show when nothing has any;
+        // they would otherwise push real accounts past the limit.
+        let withFigures = plans.filter { $0.problem == nil }
+        let shown = Array((withFigures.isEmpty ? plans : withFigures).prefix(Self.limit))
         let resized = shown.map { $0.windows.count * 2 + ($0.problem == nil ? 0 : 1) } != shownPlans.map { $0.windows.count * 2 + ($0.problem == nil ? 0 : 1) }
         shownPlans = shown
         while accounts.count < shown.count {
@@ -99,7 +112,8 @@ final class UsageBlock: DashboardBlockView {
             let usage = shown[index]
             account.header.provider = usage.provider
             account.header.title = usage.label
-            account.header.account = PlanCard.detail(usage, now: now)
+            account.header.updated = PlanCard.updated(usage, now: now)
+            account.header.account = usage.account
             account.header.plan = usage.plan
             account.note.text = PlanCard.problemText(usage.problem ?? "")
             account.note.isHidden = usage.problem == nil
@@ -118,14 +132,56 @@ final class UsageBlock: DashboardBlockView {
                 row.used = window.used
                 row.detail = pace.text
                 row.short = pace.short
+                row.resets = pace.resets
                 row.meter.fraction = window.used
-                row.meter.color = window.used >= 0.9 ? A2.bad : (pace.short ? A2.power : A2.cpu)
+                row.meter.color = PlanCard.meterColor(window, short: pace.short)
                 row.needsDisplay = true
             }
         }
+        empty.text = NSAttributedString(string: allHidden ? "Every account is hidden."
+                                            : "No plan figures yet. Turn on plan limits in Settings to read Claude Code's.",
+                                        attributes: [.font: Theme.sans(12), .foregroundColor: Theme.inkSecondary])
+        settingsButton.title = allHidden ? "Show All" : "Open Settings"
         empty.isHidden = !shown.isEmpty
         settingsButton.isHidden = !shown.isEmpty
+        accountsButton.isHidden = delegate.plans.plans.isEmpty
         needsLayout = true
         if resized { onResize?() }
+    }
+
+    // MARK: Choosing accounts
+
+    @objc private func chooseAccounts(_ sender: NSButton) {
+        let menu = NSMenu()
+        let hidden = Set(delegate.settings.hiddenUsageAccounts)
+        for usage in delegate.plans.plans {
+            let item = NSMenuItem(title: PlanUsageFeed.name(usage), action: #selector(toggleAccount(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = usage.id
+            item.state = hidden.contains(usage.id) ? .off : .on
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let all = menu.addItem(withTitle: "Show All", action: #selector(showAll), keyEquivalent: "")
+        all.target = self
+        all.isEnabled = !hidden.isEmpty
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    }
+
+    @objc private func toggleAccount(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String else { return }
+        delegate.change { settings in
+            if let index = settings.hiddenUsageAccounts.firstIndex(of: id) {
+                settings.hiddenUsageAccounts.remove(at: index)
+            } else {
+                settings.hiddenUsageAccounts.append(id)
+            }
+        }
+        show(delegate.plans.plans)
+    }
+
+    @objc private func showAll() {
+        delegate.change { $0.hiddenUsageAccounts = [] }
+        show(delegate.plans.plans)
     }
 }

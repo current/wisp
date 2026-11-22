@@ -31,7 +31,7 @@ public enum T3CodeLimits {
         let instances = claudeInstances(settings: root + "/settings.json", home: home)
         let logs = recentLogs(root + "/logs/provider", now: now)
         if let cacheFile { loadCache(cacheFile) }
-        defer { if let cacheFile { saveCache(cacheFile, keeping: Set(logs.map(\.path))) } }
+        defer { if let cacheFile { saveCache(cacheFile, now: now) } }
         var best: [String: Hit] = [:]
         for log in logs {
             // A log last written before every instance's best line cannot hold a newer one.
@@ -126,11 +126,13 @@ public enum T3CodeLimits {
     }
 
     /// Writes what the logs held, for the logs still recent, when anything was read.
-    static func saveCache(_ url: URL, keeping paths: Set<String>) {
+    /// A log is dropped once it ages out, not when one read missed it: two reads can run
+    /// at once, and one must not drop what the other just cached.
+    static func saveCache(_ url: URL, now: Date) {
         lock.lock()
         guard cacheDirty else { return lock.unlock() }
         cacheDirty = false
-        cache = cache.filter { paths.contains($0.key) }
+        cache = cache.filter { now.timeIntervalSince($0.value.log.modified) <= maxAge }
         let saved = cache.values.map { SavedLog(path: $0.log.path, modified: $0.log.modified, size: $0.log.size, hits: $0.hits) }
         lock.unlock()
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

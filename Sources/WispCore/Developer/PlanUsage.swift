@@ -26,7 +26,8 @@ public struct PlanUsage: Codable, Sendable, Equatable, Identifiable {
 /// Reads plan limits from what Claude Code and Codex already report on this Mac:
 /// Claude Code hands them to its status line, which Wisp joins (see `ClaudeStatusLine`),
 /// T3 Code logs them for the Claude accounts it runs (see `T3CodeLimits`),
-/// and Codex writes them into its session logs. No sign-in is read and nothing is sent.
+/// Codex writes them into its session logs, and Antigravity answers on 127.0.0.1 while
+/// it runs (see `AntigravityLive`). No sign-in is read and nothing is sent.
 public enum PlanUsageReader {
     /// Claude Code config folders: ~/.claude and any ~/.claude-* with a .claude.json.
     public static func claudeFolders(home: String = NSHomeDirectory()) -> [String] {
@@ -38,7 +39,7 @@ public enum PlanUsageReader {
     }
 
     /// Codex home folders: ~/.codex and any ~/.codex-* that keeps sessions.
-    static func codexFolders(home: String) -> [String] {
+    public static func codexFolders(home: String = NSHomeDirectory()) -> [String] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: home)) ?? []
         return names.filter { $0 == ".codex" || $0.hasPrefix(".codex-") }
             .map { home + "/" + $0 }
@@ -66,10 +67,15 @@ public enum PlanUsageReader {
     }
 
     /// Every account with figures, plus connected Claude folders still waiting for their first.
-    public static func readAll(home: String = NSHomeDirectory(), store: URL = ClaudeStatusLine.store, now: Date = Date()) -> [PlanUsage] {
+    /// `remoteHosts` are SSH hosts whose T3 Code limits were checked (see `T3RemoteLimits`).
+    public static func readAll(home: String = NSHomeDirectory(), store: URL = ClaudeStatusLine.store, now: Date = Date(),
+                               remoteHosts: [String] = []) -> [PlanUsage] {
         var byAccount: [String: PlanUsage] = [:]
         var t3: [String: T3CodeLimits.Account] = [:]
-        for account in T3CodeLimits.read(home: home, now: now, cacheFile: store.appendingPathComponent("t3-logs.json")) {
+        // This Mac's T3 Code and the linked machines' report the same accounts; the newer figures win.
+        let local = T3CodeLimits.read(home: home, now: now, cacheFile: store.appendingPathComponent("t3-logs.json"))
+        for account in local + T3RemoteLimits.accounts(hosts: remoteHosts, home: home, store: store) {
+            if let known = t3[account.record.folder], known.record.updated >= account.record.updated { continue }
             t3[account.record.folder] = account
         }
         let labels = T3CodeLimits.labels(home: home)
@@ -93,11 +99,38 @@ public enum PlanUsageReader {
             if let existing = byAccount[key], (existing.updated ?? .distantPast) >= (usage.updated ?? .distantPast) { continue }
             byAccount[key] = usage
         }
+        // Codex folders can share one sign-in (T3 Code's ~/.codex-t3 links to ~/.codex's),
+        // so folders whose sessions name the same account are one account: the newest
+        // figures win, and the name stays on the folder T3 Code labels, so a menu bar
+        // item that picked it keeps it.
+        var codexByAccount: [String: [(folder: String, usage: PlanUsage)]] = [:]
         for folder in codexFolders(home: home) {
-            guard var usage = codex(folder: folder, now: now) else { continue }
-            usage.account = folder.replacingOccurrences(of: home, with: "~")
-            usage.label = labels[folder]
-            byAccount["codex:" + folder] = usage
+            // What Codex logged while it worked here, or what it last answered when asked
+            // (see `CodexLive`): the newer one.
+            var found = codex(folder: folder, now: now).map { [$0] } ?? []
+            if let live = CodexLive.saved(folder: folder, store: store), !live.windows.isEmpty {
+                var usage = PlanUsage(provider: "Codex", account: "", plan: live.plan,
+                                      windows: live.windows.map { window($0.name, used: $0.used, resets: $0.resets, now: now) })
+                usage.updated = live.updated
+                found.append((usage, live.accountID))
+            }
+            guard let (usage, accountID) = found.max(by: { ($0.0.updated ?? .distantPast) < ($1.0.updated ?? .distantPast) }) else { continue }
+            // A log may lack the account id (older Codex); the live answer always has it.
+            let account = accountID ?? found.compactMap(\.1).first
+            codexByAccount[account ?? folder, default: []].append((folder, usage))
+        }
+        for (key, group) in codexByAccount {
+            guard var usage = group.max(by: { ($0.usage.updated ?? .distantPast) < ($1.usage.updated ?? .distantPast) })?.usage else { continue }
+            let named = group.first { labels[$0.folder] != nil }?.folder ?? group.map(\.folder).sorted().first!
+            usage.account = named.replacingOccurrences(of: home, with: "~")
+            usage.label = labels[named]
+            byAccount["codex:" + key] = usage
+        }
+        if let live = AntigravityLive.saved(store: store) {
+            var usage = PlanUsage(provider: "Antigravity", account: live.account ?? "Antigravity", plan: live.plan,
+                                  windows: live.windows.map { window($0.name, used: $0.used, resets: $0.resets, now: now) })
+            usage.updated = live.updated
+            byAccount["antigravity"] = usage
         }
         // Accounts with figures first, then by provider and name.
         return byAccount.values.sorted {
@@ -111,15 +144,19 @@ public enum PlanUsageReader {
         return .init(name: name, used: used, resets: resets)
     }
 
-    static func windowName(minutes: Double?) -> String? {
+    public static func windowName(minutes: Double?) -> String? {
         guard let minutes else { return nil }
         if minutes <= 300 { return "5-hour session" }
         if minutes >= 6 * 1440 { return "This week" }
         return nil
     }
 
-    /// The last limits Codex wrote into its newest session logs.
-    static func codex(folder: String, now: Date) -> PlanUsage? {
+    /// The latest limits Codex wrote into its newest session logs, and the account that
+    /// session ran under (Codex names it in the session's first line). A long session can
+    /// keep its file the newest while a shorter one reported later, so each file's last
+    /// figures are compared by when they were written.
+    static func codex(folder: String, now: Date) -> (PlanUsage, accountID: String?)? {
+        var best: (usage: PlanUsage, file: String)?
         for file in newestSessions(folder + "/sessions", count: 4) {
             guard let line = lastLine(containing: "\"rate_limits\":{", in: file),
                   let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
@@ -137,9 +174,22 @@ public enum PlanUsageReader {
             iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             usage.updated = (json["timestamp"] as? String).flatMap(iso.date(from:))
                 ?? (try? FileManager.default.attributesOfItem(atPath: file)[.modificationDate] as? Date)
-            return usage
+            if let best, (best.usage.updated ?? .distantPast) >= (usage.updated ?? .distantPast) { continue }
+            best = (usage, file)
         }
-        return nil
+        return best.map { ($0.usage, accountID(sessionFile: $0.file)) }
+    }
+
+    /// The account id from a session's opening `session_meta` line, which comes first.
+    static func accountID(sessionFile path: String) -> String? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 4096) else { return nil }
+        // The cut can split a character; decoding repairs it rather than failing.
+        let head = String(decoding: data, as: UTF8.self)
+        guard let range = head.range(of: #""creator_account_id":"([^"]+)""#, options: .regularExpression) else { return nil }
+        let match = head[range].dropFirst(#""creator_account_id":""#.count).dropLast()
+        return match.isEmpty ? nil : String(match)
     }
 
     /// Session logs live in sessions/YYYY/MM/DD. A session keeps writing to the day it

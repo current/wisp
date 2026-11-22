@@ -1,5 +1,52 @@
 # Changelog
 
+## Unreleased
+
+Fixed:
+
+- Clean Up trashed the pnpm store, which pnpm 10 and later run global installs
+  from, pnpm itself included. A clean now skips any folder that a command, a
+  link beside it or a running program still uses, and says what uses it. A
+  check that cannot finish counts as in use.
+- AI usage showed the Codex CLI and T3 Code's Codex instance as two accounts
+  when they share a sign-in. The T3 Code row then stopped updating while an
+  unnamed "Codex" row held the real figures. Codex folders that name the same
+  account are now one row, under T3 Code's name, with the newest figures.
+- The usage dropdown showed at most four accounts and left out a fifth.
+  It now shows up to six, and folders still waiting for figures no longer
+  take a place.
+
+Changed:
+
+- AI usage shows Antigravity's limits: one 5-hour meter for the Gemini models
+  and one for Claude and GPT-OSS. Wisp asks Antigravity's own language server on
+  127.0.0.1 while it runs, once a minute.
+- Each account in AI usage shows when its figures were last reported, such
+  as "Updated 4m ago". Hover it to see the account instead.
+- Hovering a limit that says "Runs out in" or "Used up" shows when it
+  resets, with the clock time.
+- Limit meters change colour as they fill, from blue to amber to red. The
+  5-hour session uses a lighter shade than the week, so the two bars are easy
+  to tell apart.
+- Plan limits can come from other machines. Add an SSH host, such as a devbox
+  where T3 Code runs threads for you, under Settings, Assistants. Wisp reads the
+  newest limit lines from T3 Code's logs there every 5 minutes, and the newest
+  figures for each account win.
+- Clean Up scans every tab at once when you open it, so each tab is ready
+  when you get to it. Switching tabs no longer stops a scan.
+- Codex limits come from Codex itself as well as its session logs. Wisp asks
+  `codex app-server` for each account's current figures every 5 minutes and
+  when the dropdown opens, so work done in the cloud or on another machine
+  shows up too.
+
+Added:
+
+- Developer tab lists every git worktree a coding agent made (T3 Code, Claude
+  Code, Codex, Cursor, Conductor) with its size and when it was last used,
+  unticked, so you can see what they take up. Worktrees you made yourself show
+  once nothing has touched them for the stale-project period. Trashing one runs
+  `git worktree prune` so its branch can be checked out again.
+
 ## 0.3.0, 18 November 2026
 
 Added:

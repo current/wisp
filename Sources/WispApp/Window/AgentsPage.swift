@@ -24,6 +24,10 @@ final class PlanCard: CardView {
         var used: Double = 0
         var detail = ""
         var short = false
+        /// Shown in place of `detail` while hovered: when the window resets, which a
+        /// "Runs out in…" or "Used up" warning would otherwise hide.
+        var resets: String?
+        private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
         let meter = TickMeter()
 
         override init(frame: NSRect) {
@@ -41,18 +45,35 @@ final class PlanCard: CardView {
             meter.frame = NSRect(x: 0, y: bounds.height - 8, width: bounds.width - 64, height: 8)
         }
 
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        }
+
+        override func mouseEntered(with event: NSEvent) { hovering = resets != nil }
+        override func mouseExited(with event: NSEvent) { hovering = false }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { hovering = false }
+        }
+
         override func draw(_ dirtyRect: NSRect) {
             let right = bounds.width - 64
             let used = A2Dev.text(name, x: 0, mid: 7, width: right, font: Theme.sans(12), color: A2.secondary)
-            A2Dev.text(detail, x: used + 12, mid: 7, width: right - used - 12, font: Theme.sans(11),
-                       color: short ? A2.warn : A2.tertiary, right: true)
+            let showReset = hovering && resets != nil
+            A2Dev.text(showReset ? resets ?? "" : detail, x: used + 12, mid: 7, width: right - used - 12, font: Theme.sans(11),
+                       color: short && !showReset ? A2.warn : A2.tertiary, right: true)
             let font = Theme.digits(15, .semibold)
             A2Dev.text(Format.percent(self.used), x: right, mid: bounds.height - 6, width: 64, font: font, color: A2.primary, right: true)
         }
 
         override func isAccessibilityElement() -> Bool { true }
         override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
-        override func accessibilityValue() -> Any? { "\(name) \(Format.percent(used)), \(detail)" }
+        override func accessibilityValue() -> Any? {
+            "\(name) \(Format.percent(used)), \(detail)" + (resets.map { $0 == detail ? "" : ", " + $0 } ?? "")
+        }
     }
 
     /// One line: the provider's mark and name, then the account and the plan on the
@@ -61,7 +82,9 @@ final class PlanCard: CardView {
         var provider = ""
         /// Shown in place of the provider's name, as T3 Code labels its accounts.
         var title: String?
-        var account = "" { didSet { detail.text = account } }
+        /// When the figures were reported ("4m ago"); hovering it shows `account` instead.
+        var updated = "" { didSet { showDetail() } }
+        var account = "" { didSet { showDetail() } }
         var plan: String? { didSet { needsLayout = true } }
         private let detail = MarqueeLabel()
         static let height: CGFloat = 24
@@ -75,6 +98,11 @@ final class PlanCard: CardView {
         }
 
         required init?(coder: NSCoder) { fatalError() }
+
+        private func showDetail() {
+            detail.text = updated.isEmpty ? account : updated
+            detail.hoverText = updated.isEmpty || account.isEmpty ? nil : account
+        }
 
         private var planWidth: CGFloat { plan.map { A2Dev.width($0, Self.planFont) + 16 } ?? 0 }
         private var titleWidth: CGFloat { A2Dev.width(title ?? provider, Self.titleFont) }
@@ -135,7 +163,8 @@ final class PlanCard: CardView {
     func show(_ usage: PlanUsage, now: Date) {
         header.provider = usage.provider
         header.title = usage.label
-        header.account = Self.detail(usage, now: now)
+        header.updated = Self.updated(usage, now: now)
+        header.account = usage.account
         header.plan = usage.plan
         note.text = Self.problemText(usage.problem ?? "")
         note.isHidden = usage.problem == nil
@@ -154,8 +183,9 @@ final class PlanCard: CardView {
             row.used = window.used
             row.detail = pace.text
             row.short = pace.short
+            row.resets = pace.resets
             row.meter.fraction = window.used
-            row.meter.color = window.used >= 0.9 ? A2.bad : (pace.short ? A2.power : A2.cpu)
+            row.meter.color = Self.meterColor(window, short: pace.short)
             row.needsDisplay = true
         }
         needsLayout = true
@@ -163,15 +193,46 @@ final class PlanCard: CardView {
 
     /// The account, after how old the figures are once they are a while old, so the
     /// age stays in view when a long account is cut short.
-    static func detail(_ usage: PlanUsage, now: Date) -> String {
-        guard let updated = usage.updated, now.timeIntervalSince(updated) > 900 else { return usage.account }
-        let minutes = Int(now.timeIntervalSince(updated) / 60)
-        let age = minutes < 60 ? "\(minutes)m" : (minutes < 1440 ? "\(minutes / 60)h" : "\(minutes / 1440)d")
-        return age + " ago · " + usage.account
+    /// "Updated 4m ago": when the tool last reported the figures.
+    static func updated(_ usage: PlanUsage, now: Date) -> String {
+        guard let updated = usage.updated else { return "" }
+        let minutes = max(0, Int(now.timeIntervalSince(updated) / 60))
+        if minutes < 1 { return "Updated just now" }
+        return "Updated " + (minutes < 60 ? "\(minutes)m" : (minutes < 1440 ? "\(minutes / 60)h" : "\(minutes / 1440)d")) + " ago"
     }
 
+    /// A limit's meter colour. It steps from calm to amber to red as the window fills
+    /// (amber early when the pace would use it up). The 5-hour session takes the light
+    /// shade of each step and the week the deep one, so the two read apart by colour alone.
+    static func meterColor(_ window: PlanUsage.Window, short: Bool) -> NSColor {
+        let session = window.name.hasPrefix("5-hour")
+        if window.used >= 0.9 { return session ? Self.sessionFull : A2.bad }
+        if window.used >= 0.6 || short { return session ? Self.sessionHigh : A2.power }
+        return session ? Self.sessionCalm : A2.cpu
+    }
+
+    private static let sessionCalm = Theme.dynamic(0x32ADE6, 0x64D2FF)
+    private static let sessionHigh = Theme.dynamic(0xE0A800, 0xFFD60A)
+    private static let sessionFull = Theme.dynamic(0xFF6B6B, 0xFF8A80)
+
     /// When the window resets and, if the current pace would use it up first, when that happens.
-    static func pace(_ window: PlanUsage.Window, now: Date) -> (text: String, short: Bool) {
+    /// `resets` is the reset alone, with its clock time, for showing on hover.
+    static func pace(_ window: PlanUsage.Window, now: Date) -> (text: String, short: Bool, resets: String?) {
+        let (text, short) = paceText(window, now: now)
+        guard let resets = window.resets, resets > now else { return (text, short, nil) }
+        return (text, short, "Resets in " + Format.duration(resets.timeIntervalSince(now)) + " · " + clock(resets, now: now))
+    }
+
+    /// "3:40 PM" today, "Tomorrow 3:40 PM", or "Wed 3:40 PM" later in the week.
+    static func clock(_ date: Date, now: Date) -> String {
+        let calendar = Calendar.current
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if calendar.isDate(date, inSameDayAs: now) { return time }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(date, inSameDayAs: tomorrow) { return "Tomorrow " + time }
+        return date.formatted(.dateTime.weekday(.abbreviated)) + " " + time
+    }
+
+    private static func paceText(_ window: PlanUsage.Window, now: Date) -> (String, Bool) {
         guard let resets = window.resets else { return (window.used == 0 ? "Not used since it reset" : "", false) }
         let left = resets.timeIntervalSince(now)
         guard left > 0 else { return ("Resetting", false) }
@@ -303,8 +364,11 @@ final class AgentsPage: CardPage {
         if Date().timeIntervalSince(plansAt) > 60, !plansBusy {
             plansBusy = true
             let helper = PlanLimitsSetup.helper
+            let hosts = T3RemoteLimits.hosts(delegate.settings.remoteLimitHosts)
             DispatchQueue.global(qos: .utility).async {
-                let result = PlanUsageReader.readAll()
+                CodexLive.refresh(maxAge: 300)
+                T3RemoteLimits.refresh(hosts: hosts, maxAge: 300)
+                let result = PlanUsageReader.readAll(remoteHosts: hosts)
                 let unconnected = helper.map { ClaudeStatusLine.unconnected(helper: $0) } ?? []
                 DispatchQueue.main.async { [weak self] in
                     self?.plansBusy = false
