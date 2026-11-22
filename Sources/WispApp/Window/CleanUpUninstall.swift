@@ -242,7 +242,7 @@ final class UninstallBrowser: NSObject {
 
     // MARK: Running apps
 
-    /// Launches and quits change which apps can be removed. Watched only while the tab shows.
+    /// Launches and quits change which apps can be removed. Watched while the Clean Up page shows.
     private func observeWorkspace() {
         guard observers.isEmpty else { return }
         let center = NSWorkspace.shared.notificationCenter

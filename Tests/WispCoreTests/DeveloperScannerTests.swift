@@ -143,10 +143,44 @@ import Testing
         let scanner = WorktreeScanner(roots: [home.path + "/src"], workingFolders: { [home.path + "/src/repo-worktrees/busy"] },
                                       readsGuardedFolders: { true })
         let items = scanner.scan(home.context())
-        #expect(Set(items.map(\.name)) == ["gone (repo)", "deleted-repo (deleted)", "beside (repo)", "inner (repo)"])
+        // "live" is still tracked, and listed because it is in an agent's folder.
+        #expect(Set(items.map(\.name)) == ["gone (repo)", "deleted-repo (deleted)", "beside (repo)", "inner (repo)", "live (repo)"])
         #expect(items.allSatisfy { $0.safety == .checkFirst && $0.group == "Worktrees" && !$0.checkedByDefault })
         let gone = try #require(items.first { $0.name == "gone (repo)" })
         #expect(gone.paths == [home.path + "/.t3/worktrees/repo/gone"])
+    }
+
+    @Test func agentWorktreesAllListButHandMadeOnesOnlyWhenStale() throws {
+        let home = FakeHome()
+        home.file("src/repo/.git/HEAD", text: "ref: refs/heads/main")
+        for name in ["old", "fresh", "pinned", "busy"] {
+            home.file("src/repo/.git/worktrees/\(name)/HEAD", text: "ref: refs/heads/\(name)")
+            worktree(home, ".t3/worktrees/repo/\(name)", gitdir: home.path + "/src/repo/.git/worktrees/\(name)")
+        }
+        for name in ["mine-old", "mine-fresh"] {
+            home.file("src/repo/.git/worktrees/\(name)/HEAD", text: "ref: refs/heads/\(name)")
+            worktree(home, "src/repo-worktrees/\(name)", gitdir: home.path + "/src/repo/.git/worktrees/\(name)")
+        }
+        home.file("src/repo/.git/worktrees/pinned/locked", text: "")
+        for name in ["old", "pinned", "busy"] {
+            home.age(".t3/worktrees/repo/\(name)", days: 40)
+            home.age("src/repo/.git/worktrees/\(name)", days: 40)
+        }
+        home.age("src/repo-worktrees/mine-old", days: 40)
+        home.age("src/repo/.git/worktrees/mine-old", days: 40)
+        // An agent ran git in this one yesterday, though its files are old.
+        home.age(".t3/worktrees/repo/fresh", days: 40)
+        home.age("src/repo/.git/worktrees/fresh", days: 1)
+
+        let scanner = WorktreeScanner(roots: [home.path + "/src"], workingFolders: { [home.path + "/.t3/worktrees/repo/busy"] },
+                                      readsGuardedFolders: { true })
+        let items = scanner.scan(home.context())
+        #expect(Set(items.map(\.name)) == ["old (repo)", "fresh (repo)", "mine-old (repo)"])
+        #expect(items.allSatisfy { $0.safety == .checkFirst && !$0.checkedByDefault })
+        let fresh = try #require(items.first { $0.name == "fresh (repo)" })
+        #expect(fresh.detail.hasPrefix("A git worktree, last used yesterday."))
+        let old = try #require(items.first { $0.name == "old (repo)" })
+        #expect(old.detail.hasPrefix("A git worktree, last used 40 days ago."))
     }
 
     // MARK: Tool caches

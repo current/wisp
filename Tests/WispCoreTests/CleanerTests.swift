@@ -194,6 +194,49 @@ import Testing
         #expect(record.removedCount == 2)
     }
 
+    @Test func aCacheSomethingStillRunsFromStays() throws {
+        let scratch = Scratch()
+        let fm = FileManager.default
+        // pnpm 11's layout: a global install is a link into the store, and the command is a script that runs it.
+        let store = scratch.make("Library/pnpm/store")
+        let exe = scratch.make("Library/pnpm/store/v11/links/@pnpm/exe/11.8.0/abc/node_modules/@pnpm/exe")
+        scratch.make("Library/pnpm/store/v11/links/@pnpm/exe/11.8.0/abc/node_modules/@pnpm/exe/pnpm", file: true)
+        let global = scratch.make("Library/pnpm/global/v11/8047/node_modules/@pnpm")
+        try fm.createSymbolicLink(atPath: global + "/exe", withDestinationPath: exe)
+        let fakes = Fakes(scratch)
+        let cleaner = Cleaner(home: scratch.home, guards: fakes.guards)
+        #expect(cleaner.clean([item([store])]).results[0].outcome
+            == .skipped("~/Library/pnpm/global/v11/8047/node_modules/@pnpm/exe links into it"))
+
+        let script = scratch.make("Library/pnpm/bin/pnpm", file: true)
+        try Data("#!/bin/sh\nbasedir=$(dirname \"$0\")\nexec \"$basedir/../global/v11/8047/node_modules/@pnpm/exe/pnpm\" \"$@\"\n".utf8)
+            .write(to: URL(fileURLWithPath: script))
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        #expect(cleaner.clean([item([store])]).results[0].outcome == .skipped("pnpm in ~/Library/pnpm/bin runs from it"))
+        #expect(fakes.trashed.isEmpty)
+
+        // Neighbours in a folder many tools share are not read; links within the item itself do not count.
+        let cache = scratch.make("Library/Caches/com.example.app")
+        try fm.createSymbolicLink(atPath: cache + "/self", withDestinationPath: cache)
+        let other = scratch.make("Library/Caches/com.example.other")
+        try fm.createSymbolicLink(atPath: other + "/link", withDestinationPath: cache)
+        #expect(cleaner.clean([item([cache])]).results[0].outcome == .removed)
+    }
+
+    @Test func trashingAWorktreeLetsGitForgetIt() throws {
+        let scratch = Scratch()
+        let repository = scratch.make("src/repo")
+        scratch.make("src/repo/.git/worktrees/feature")
+        let worktree = scratch.make(".t3/worktrees/repo/feature")
+        try Data("gitdir: \(repository)/.git/worktrees/feature\n".utf8).write(to: URL(fileURLWithPath: worktree + "/.git"))
+        #expect(Cleaner.worktreeRepository(worktree) == repository)
+        #expect(Cleaner.worktreeRepository(repository) == nil)
+        let fakes = Fakes(scratch)
+        let report = Cleaner(home: scratch.home, guards: fakes.guards).clean([item([worktree])])
+        #expect(report.results[0].outcome == .removed)
+        if CleanTools.git != nil { #expect(fakes.tools.last?.suffix(4) == ["-C", repository, "worktree", "prune"]) }
+    }
+
     @Test func aPathNamedTwiceIsRemovedOnce() {
         let scratch = Scratch()
         let movie = scratch.make("Movies/big.mov", file: true)

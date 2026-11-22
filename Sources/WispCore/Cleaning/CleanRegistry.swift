@@ -11,7 +11,7 @@ public enum CleanRegistry {
             DeveloperCacheScanner(),
             SimulatorScanner(),
             ProjectArtifactScanner(staleAfter: TimeInterval(CleanSettings.load().staleProjectDays) * 86_400),
-            WorktreeScanner(),
+            WorktreeScanner(staleAfter: TimeInterval(CleanSettings.load().staleProjectDays) * 86_400),
             LeftoversScanner(),
             LargeFilesScanner(),
         ]

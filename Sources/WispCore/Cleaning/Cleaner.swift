@@ -97,6 +97,8 @@ public struct ProcessUse: Sendable {
             if let executable, let range = executable.range(of: ".app/") {
                 bundles.insert(String(executable[..<range.lowerBound]) + ".app")
             }
+            // A program running from a folder holds no open file there, only its mapped executable.
+            if let executable, executable.hasPrefix("/Users/") { entries.append((name, executable)) }
             let size = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
             guard size > 0 else { continue }
             var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(size) / MemoryLayout<proc_fdinfo>.stride + 16)
@@ -131,17 +133,21 @@ public struct CleanGuards: Sendable {
     /// which puts a window on screen, so simctl is not run.
     public var developerTools: @Sendable () -> Bool
     public var now: @Sendable () -> Date
+    /// What still links into or runs from an item's paths, given the paths and the home folder.
+    public var dependent: @Sendable ([String], String) -> String?
 
     public init(processUse: @escaping @Sendable () -> ProcessUse, gitState: @escaping @Sendable (String) -> GitState,
                 runTool: @escaping @Sendable (String, [String]) -> (status: Int32, output: String),
                 trash: @escaping @Sendable (String) throws -> Void, developerTools: @escaping @Sendable () -> Bool = { CleanGuards.developerToolsInstalled() },
-                now: @escaping @Sendable () -> Date = { Date() }) {
+                now: @escaping @Sendable () -> Date = { Date() },
+                dependent: @escaping @Sendable ([String], String) -> String? = { CleanDependents.dependent(of: $0, home: $1) }) {
         self.processUse = processUse
         self.gitState = gitState
         self.runTool = runTool
         self.trash = trash
         self.developerTools = developerTools
         self.now = now
+        self.dependent = dependent
     }
 
     public static func developerToolsInstalled() -> Bool { CleanTools.hasDeveloperTools }
@@ -369,7 +375,7 @@ public struct Cleaner: Sendable {
             case .unknown: return "Wisp could not check it for uncommitted changes"
             }
         }
-        return nil
+        return guards.dependent(existing, home)
     }
 
     private func remove(_ item: CleanItem, newestSnapshot: String?) -> CleanResult {
@@ -378,9 +384,12 @@ public struct Cleaner: Sendable {
             let existing = item.paths.filter(Self.exists)
             var moved = 0
             for path in existing {
+                let repository = Self.worktreeRepository(path)
                 do {
                     try guards.trash(path)
                     moved += 1
+                    // Until git forgets the worktree, its branch counts as checked out and cannot be checked out elsewhere.
+                    if let repository, let git = CleanTools.git { _ = guards.runTool(git, ["-C", repository, "worktree", "prune"]) }
                 } catch {
                     let reason = moved == 0 ? "It could not be moved to the Trash" : "Moved \(moved) of \(existing.count) to the Trash, then one failed"
                     return CleanResult(item: item, outcome: .failed(reason))
@@ -434,6 +443,13 @@ public struct Cleaner: Sendable {
             ok = !token.isEmpty && !token.hasPrefix("-") && token.allSatisfy { ($0.isLowercase || $0.isNumber || "@._+-".contains($0)) && $0.isASCII }
         }
         return ok ? nil : "Its name does not look right, so Wisp left it alone"
+    }
+
+    /// The repository a linked worktree belongs to, read from its `.git` file; nil for anything else.
+    static func worktreeRepository(_ path: String) -> String? {
+        guard !isDirectory(path + "/.git"), let gitdir = WorktreeScanner.gitdir(path) else { return nil }
+        guard let range = gitdir.range(of: "/.git/worktrees/") else { return nil }
+        return String(gitdir[..<range.lowerBound])
     }
 
     static func isSnapshotDate(_ text: String) -> Bool {

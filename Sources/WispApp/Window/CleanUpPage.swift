@@ -2,8 +2,9 @@ import AppKit
 import WispCore
 
 /// Clean Up: what can go from the Mac, by tab, ticked and reviewed before anything moves.
-/// Scans run only while the page is on screen, on a utility queue, and stop when it is
-/// left. Results stay in memory with their time until the window closes.
+/// Opening the page scans every tab at once, each on its own utility thread, so a tab is
+/// ready by the time it is picked. Scans stop when the page is left. Results stay in
+/// memory with their time until the window closes.
 @MainActor
 final class CleanUpPage: CardPage {
     private struct Found {
@@ -18,7 +19,10 @@ final class CleanUpPage: CardPage {
     /// Every id seen, so a rescan keeps the owner's ticks instead of resetting them.
     private var seen: Set<String> = []
     private var tab: CleanTab = .junk
-    private var scanning: (flag: ScanFlag, tabs: [CleanTab])?
+    /// The scans running now, one per tab.
+    private var scanning: [CleanTab: ScanFlag] = [:]
+    /// When each item was cleaned, so a scan that started before the clean does not bring it back.
+    private var cleanedAt: [String: Date] = [:]
     private var leftoversOf: (id: String, name: String)?
     private var history: [CleanRecord]?
     private var visible = false
@@ -35,6 +39,8 @@ final class CleanUpPage: CardPage {
     private let uninstall = UninstallBrowser()
     private let root = Root()
     private static let work = DispatchQueue(label: "app.wisp.clean", qos: .utility)
+    /// Tabs scan side by side.
+    private static let scanWork = DispatchQueue(label: "app.wisp.clean.scan", qos: .utility, attributes: .concurrent)
 
     /// Holds the scrolling cards and the footer over them.
     private final class Root: NSView {
@@ -114,7 +120,7 @@ final class CleanUpPage: CardPage {
         super.viewDidAppear()
         guard !visible else { return }
         visible = true
-        scanIfNeeded()
+        scanAll()
         // WISP_CLEAN_REVIEW=1 opens the review for the ticked items (=all for every item on the tab), for screenshots.
         if let review = ProcessInfo.processInfo.environment["WISP_CLEAN_REVIEW"] { openReviewWhenFound(all: review == "all", tries: 10) }
     }
@@ -132,70 +138,93 @@ final class CleanUpPage: CardPage {
         super.viewDidDisappear()
         guard visible else { return }
         visible = false
-        stopScan()
+        stopAllScans()
         uninstall.disappear()
     }
 
     override func update(system: SystemSnapshot) {
         // Keeps "scanned 2 min ago" true; redraws only when the words change.
-        if visible, scanning == nil, !uninstall.isScanning { updateHeader() }
+        if visible, scanning[tab] == nil, !uninstall.isScanning { updateHeader() }
     }
 
     // MARK: Scanning
 
+    /// The page opened: start every tab that has not finished a scan, the shown one first,
+    /// and the Uninstall tab's list of apps.
+    private func scanAll() {
+        loadHistory()
+        uninstall.appear()
+        let order = [tab] + CleanRegistry.cleaningTabs.filter { $0 != tab }
+        for tab in order where tab != .uninstall && found[tab]?.complete != true { scan(tab) }
+        reviewScheduledIfReady()
+    }
+
+    /// A tab was picked: scan it again if its last scan was stopped.
     private func scanIfNeeded() {
         guard tab != .history else { return loadHistory() }
         guard tab != .uninstall else { return uninstall.appear() }
-        let tabs = (scheduledPending ? CleanRegistry.safeTabs : [tab]).filter { tab in scanners.contains { $0.tab == tab } }
-        if tabs.contains(where: { found[$0]?.complete != true }) { scan(tabs) }
+        if found[tab]?.complete != true { scan(tab) }
     }
 
-    private func scan(_ tabs: [CleanTab]) {
-        stopScan()
+    private func scan(_ tab: CleanTab) {
+        guard scanners.contains(where: { $0.tab == tab }) else { return }
+        stopScan(tab)
         let flag = ScanFlag()
-        scanning = (flag, tabs)
-        for tab in tabs {
-            found[tab, default: Found()].complete = false
-        }
+        let started = Date()
+        scanning[tab] = flag
+        found[tab, default: Found()].complete = false
+        found[tab]?.items = []
         let incoming = Incoming()
         let context = CleanScanContext(excluded: center.settings.exclusions, isCancelled: { flag.isSet }, found: { [weak self] batch in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    guard let self, self.scanning?.flag === flag else { return }
-                    for item in batch where incoming.ids.insert(item.id).inserted { self.found[item.tab, default: Found()].items.append(item) }
+                    guard let self, self.scanning[tab] === flag else { return }
+                    for item in batch where incoming.ids.insert(item.id).inserted && !self.cleaned(item, since: started) {
+                        self.found[item.tab, default: Found()].items.append(item)
+                    }
                     self.queueRefresh()
                 }
             }
         })
-        for tab in tabs { found[tab]?.items = [] }
         let scanners = self.scanners
         updateHeader()
-        Self.work.async { [weak self] in
-            let items = CleanRegistry.scan(tabs, context: context, using: scanners)
+        Self.scanWork.async { [weak self] in
+            let items = CleanRegistry.scan([tab], context: context, using: scanners)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    guard let self, self.scanning?.flag === flag else { return }
-                    self.scanning = nil
-                    let now = Date()
-                    for tab in tabs {
-                        self.found[tab] = Found(items: items.filter { $0.tab == tab }, scannedAt: now, complete: !flag.isSet)
-                    }
+                    guard let self, self.scanning[tab] === flag else { return }
+                    self.scanning[tab] = nil
+                    self.found[tab] = Found(items: items.filter { $0.tab == tab && !self.cleaned($0, since: started) }, scannedAt: Date(),
+                                            complete: !flag.isSet)
                     self.fill()
-                    if self.scheduledPending {
-                        self.scheduledPending = false
-                        self.presentReview(items.filter(\.isSafeTrash), trigger: .scheduled)
-                    }
+                    self.reviewScheduledIfReady()
                 }
             }
         }
     }
 
-    private func stopScan() {
-        guard let scanning else { return }
-        scanning.flag.set()
-        self.scanning = nil
+    /// True when `item` was cleaned after a scan that started at `start`, which may still have listed it.
+    private func cleaned(_ item: CleanItem, since start: Date) -> Bool {
+        cleanedAt[item.id].map { $0 >= start } ?? false
+    }
+
+    /// Opens the review of the safe items once a scheduled clean's tabs are all scanned.
+    private func reviewScheduledIfReady() {
+        guard scheduledPending, visible,
+              CleanRegistry.safeTabs.allSatisfy({ scanning[$0] == nil && found[$0]?.complete == true }) else { return }
+        scheduledPending = false
+        presentReview(CleanRegistry.safeTabs.flatMap { found[$0]?.items ?? [] }.filter(\.isSafeTrash), trigger: .scheduled)
+    }
+
+    private func stopScan(_ tab: CleanTab) {
+        guard let flag = scanning.removeValue(forKey: tab) else { return }
+        flag.set()
         // What came in so far stays on screen; the tab scans again the next time it is shown.
         updateHeader()
+    }
+
+    private func stopAllScans() {
+        for tab in Array(scanning.keys) { stopScan(tab) }
     }
 
     /// Ids that came in during one scan, so a batch sent twice shows once.
@@ -217,11 +246,11 @@ final class CleanUpPage: CardPage {
     private func scanPressed() {
         if tab == .uninstall {
             if uninstall.isScanning { uninstall.stopScan() } else { uninstall.scan(again: uninstall.complete) }
-        } else if scanning != nil {
-            stopScan()
+        } else if scanning[tab] != nil {
+            stopScan(tab)
             fill()
         } else {
-            scan([tab])
+            scan(tab)
         }
     }
 
@@ -232,10 +261,8 @@ final class CleanUpPage: CardPage {
             tabs.select(CleanTab.allCases.firstIndex(of: tab) ?? 0, animated: false)
             return
         }
-        if tab == .uninstall, new != .uninstall { uninstall.disappear() }
         tab = new
         if new != .leftovers { leftoversOf = nil }
-        if let scanning, !scanning.tabs.contains(new) { stopScan() }
         fill()
         scrollToTop()
         Motion.enter(listCard, from: CGPoint(x: 0, y: 6), duration: 0.2)
@@ -249,14 +276,15 @@ final class CleanUpPage: CardPage {
         tabs.select(0, animated: false)
         tab = .junk
         fill()
-        if visible { scan(CleanRegistry.safeTabs) }
+        // Fresh scans of the safe tabs; the page's opening scan covers them when it is not on screen yet.
+        if visible { CleanRegistry.safeTabs.forEach(scan) }
     }
 
     func show(_ shown: CleanTab) {
         tabs.select(CleanTab.allCases.firstIndex(of: shown) ?? 0, animated: false)
         tab = shown
         fill()
-        if visible, found[shown]?.complete != true { scan([shown]) }
+        if visible, found[shown]?.complete != true, scanning[shown] == nil { scan(shown) }
     }
 
     /// A deleted app's notification was clicked: Leftovers, only that app's.
@@ -266,7 +294,7 @@ final class CleanUpPage: CardPage {
         tab = .leftovers
         found[.leftovers]?.complete = false
         fill()
-        if visible { scan([.leftovers]) }
+        if visible { scan(.leftovers) }
     }
 
     private func showAll() {
@@ -367,7 +395,7 @@ final class CleanUpPage: CardPage {
         let hasScanners = scanners.contains { $0.tab == tab }
         emptyNote.text = Theme.caption(tab == .uninstall ? "Finding what \(uninstall.chosen?.name ?? "the app") keeps on this Mac…"
                                        : !hasScanners ? "Wisp has nothing to look for on this tab yet"
-                                       : scanning != nil ? "Looking…"
+                                       : scanning[tab] != nil ? "Looking…"
                                        : found[tab]?.scannedAt == nil ? "Not scanned yet"
                                        : leftoversOf != nil ? "Nothing left of \(leftoversOf!.name)"
                                        : "Nothing found", size: 12)
@@ -471,7 +499,7 @@ final class CleanUpPage: CardPage {
             figureText = hasScanners ? Format.bytes(UInt64(items.totalBytes)) : "–"
             unitText = !hasScanners ? "" : "can go" + (items.isEmpty ? "" : " · " + (items.count == 1 ? "1 item" : "\(items.count) items"))
                 + (leftoversOf.map { " left by \($0.name)" } ?? "")
-            if scanning != nil {
+            if scanning[tab] != nil {
                 statusText = "Scanning…" + (items.isEmpty ? "" : " \(items.count) found so far")
             } else if hasScanners, let date = found[tab]?.scannedAt {
                 let locked = tab == .largeFiles && !StorageAccess.hasFullDiskAccess
@@ -496,7 +524,7 @@ final class CleanUpPage: CardPage {
             scanTitle = uninstall.isScanning ? "Stop" : uninstall.complete ? "Scan Again" : "Scan"
         } else {
             scanButton.isHidden = !(tab != .history && scanners.contains { $0.tab == tab })
-            scanTitle = scanning != nil ? "Stop" : found[tab]?.scannedAt == nil ? "Scan" : "Scan Again"
+            scanTitle = scanning[tab] != nil ? "Stop" : found[tab]?.scannedAt == nil ? "Scan" : "Scan Again"
         }
         scanButton.title = scanTitle
         showAllButton.isHidden = !(tab == .leftovers && leftoversOf != nil)
@@ -605,6 +633,8 @@ final class CleanUpPage: CardPage {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     let removed = Set(report.removed.map(\.item.id))
+                    let now = Date()
+                    for id in removed { self.cleanedAt[id] = now }
                     let removedPaths = Set(report.removed.flatMap(\.item.paths))
                     for tab in self.found.keys {
                         self.found[tab]?.items.removeAll { removed.contains($0.id) || $0.paths.contains(where: removedPaths.contains) }
