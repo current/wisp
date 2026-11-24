@@ -1,7 +1,7 @@
 import Foundation
 
 public enum Wisp {
-    public static let version = "0.3.0"
+    public static let version = "0.4.0"
     public static let bundleIdentifier = "app.wisp.Wisp"
 
     /// ~/Library/Application Support/Wisp, created on first use.
