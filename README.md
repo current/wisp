@@ -137,7 +137,7 @@ signed ad hoc and not notarized. The cask removes macOS's quarantine flag from
 `Wisp.app` after installing, so the first launch doesn't stop at Open Anyway. It
 also links the `wisp` command.
 
-Without Homebrew, download `Wisp-0.3.0.zip` from the
+Without Homebrew, download `Wisp-0.4.0.zip` from the
 [latest release](https://github.com/current/wisp/releases/latest), check its
 SHA-256 against the release notes, unzip it and drag Wisp to Applications. On the
 first launch, open System Settings > Privacy & Security and click Open Anyway,
@@ -220,7 +220,10 @@ else. The newest figures for an account win, wherever they came from.
 
 While Antigravity runs, its language server writes its port and a per-run token
 to `~/.gemini/antigravity/daemon/hub_<port>.json` and answers on 127.0.0.1.
-Once a minute Wisp requests each model's remaining quota from it. Models that share
+When T3 Code runs Antigravity threads, its `antigravity acp` bridge starts the same
+server and logs its port under
+`~/.t3/userdata/providers/antigravity/<id>/antigravity-acp/log`. Once a minute Wisp
+requests each model's remaining quota from whichever is running. Models that share
 a pool, such as every Gemini model, are one limit. The last answer stays on
 screen after Antigravity quits.
 

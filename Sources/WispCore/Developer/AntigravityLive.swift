@@ -1,9 +1,11 @@
 import Foundation
 
-/// Asks Antigravity for its plan limits. While it runs, Antigravity's language server
-/// writes its port and a per-run token to ~/.gemini/antigravity/daemon/hub_<port>.json
-/// and answers `GetUserStatus` on 127.0.0.1 with each model's remaining quota. Wisp
-/// reads that answer only; the request never leaves the Mac and no sign-in is read.
+/// Asks Antigravity for its plan limits. Its language server answers `GetUserStatus` on
+/// 127.0.0.1 with each model's remaining quota. The Antigravity app's server writes its
+/// port and a per-run token to ~/.gemini/antigravity/daemon/hub_<port>.json; T3 Code
+/// runs Antigravity through its `antigravity acp` bridge, which starts the same server
+/// on a random port and logs it. Wisp reads that answer only; the request never leaves
+/// the Mac and no sign-in is read.
 public enum AntigravityLive {
     struct Record: Codable, Equatable {
         var updated: Date
@@ -19,6 +21,47 @@ public enum AntigravityLive {
     }
 
     static let fileName = "live-antigravity.json"
+
+    /// A running language server: its local HTTP port, and the token the app's server
+    /// asks for (the bridge's asks for none).
+    struct Server: Equatable {
+        var port: Int
+        var token: String?
+    }
+
+    /// Every running server, the app's first, then T3 Code's bridges, newest first.
+    static func servers(home: String) -> [Server] {
+        (hub(home: home).map { [Server(port: $0.httpPort, token: $0.csrfToken)] } ?? []) + bridges(home: home)
+    }
+
+    /// T3 Code's bridges: each logs to providers/antigravity/<id>/antigravity-acp/log/
+    /// acp-server-<date>-<pid>.log, with a line "Language server listening on random
+    /// port at <port> for HTTP" near the start. Only logs whose process still runs count.
+    static func bridges(home: String) -> [Server] {
+        let root = home + "/.t3/userdata/providers/antigravity"
+        var found: [(Server, Date)] = []
+        for provider in (try? FileManager.default.contentsOfDirectory(atPath: root)) ?? [] {
+            let folder = root + "/" + provider + "/antigravity-acp/log"
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? [] where name.hasPrefix("acp-server-") && name.hasSuffix(".log") {
+                guard let pid = Int32(name.dropLast(4).split(separator: "-").last ?? ""), kill(pid, 0) == 0,
+                      let handle = FileHandle(forReadingAtPath: folder + "/" + name) else { continue }
+                let head = String(decoding: handle.readData(ofLength: 65_536), as: UTF8.self)
+                try? handle.close()
+                guard let port = httpPort(inLog: head) else { continue }
+                let modified = (try? FileManager.default.attributesOfItem(atPath: folder + "/" + name)[.modificationDate] as? Date) ?? .distantPast
+                found.append((Server(port: port, token: nil), modified))
+            }
+        }
+        return found.sorted { $0.1 > $1.1 }.map(\.0)
+    }
+
+    /// The HTTP port in a language server's log ("... at 55275 for HTTP"), not the gRPC one.
+    static func httpPort(inLog text: String) -> Int? {
+        for line in text.split(separator: "\n") where line.hasSuffix(" for HTTP") && line.contains("listening on random port at ") {
+            if let port = line.components(separatedBy: "port at ").last?.split(separator: " ").first.flatMap({ Int($0) }) { return port }
+        }
+        return nil
+    }
 
     /// The running language server's hub file, newest first when there are several.
     static func hub(home: String) -> Hub? {
@@ -55,8 +98,10 @@ public enum AntigravityLive {
     public static func refresh(home: String = NSHomeDirectory(), store: URL = ClaudeStatusLine.store,
                                maxAge: TimeInterval, now: Date = Date()) {
         if let saved = saved(store: store), now.timeIntervalSince(saved.updated) < maxAge { return }
-        guard let hub = hub(home: home), let status = ask(hub), let record = record(status, now: now) else { return }
-        save(record, store: store)
+        for server in servers(home: home) {
+            guard let status = ask(server), let record = record(status, now: now) else { continue }
+            return save(record, store: store)
+        }
     }
 
     /// Models share quota pools: every Gemini model draws on one, Claude and GPT-OSS on
@@ -90,6 +135,12 @@ public enum AntigravityLive {
         return Record(updated: now, account: user["email"] as? String, plan: tier ?? planInfo, windows: windows)
     }
 
+    /// The plan as the other accounts name theirs: "Google AI Ultra" is "Ultra", as
+    /// Claude's is "Max" and Codex's "Plus".
+    static func planName(_ plan: String) -> String {
+        plan.hasPrefix("Google AI ") ? String(plan.dropFirst("Google AI ".count)) : plan
+    }
+
     /// "Gemini" for every Gemini model and orchestrator, otherwise the label's first word
     /// ("Claude", "GPT-OSS").
     static func vendorName(_ config: [String: Any]) -> String {
@@ -99,12 +150,12 @@ public enum AntigravityLive {
         return label.split(separator: " ").first.map(String.init) ?? "Other"
     }
 
-    static func ask(_ hub: Hub, timeout: TimeInterval = 5) -> [String: Any]? {
-        guard let url = URL(string: "http://127.0.0.1:\(hub.httpPort)/exa.language_server_pb.LanguageServerService/GetUserStatus") else { return nil }
+    static func ask(_ server: Server, timeout: TimeInterval = 5) -> [String: Any]? {
+        guard let url = URL(string: "http://127.0.0.1:\(server.port)/exa.language_server_pb.LanguageServerService/GetUserStatus") else { return nil }
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(hub.csrfToken, forHTTPHeaderField: "X-Codeium-Csrf-Token")
+        if let token = server.token { request.setValue(token, forHTTPHeaderField: "X-Codeium-Csrf-Token") }
         request.httpBody = Data(#"{"metadata":{"ideName":"antigravity","extensionName":"antigravity","locale":"en"}}"#.utf8)
         let done = DispatchSemaphore(value: 0)
         nonisolated(unsafe) var answer: [String: Any]?

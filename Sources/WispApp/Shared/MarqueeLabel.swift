@@ -2,6 +2,9 @@ import AppKit
 
 /// One line of text that ends in "…" when it does not fit, and scrolls through the
 /// rest while the pointer is over it. It costs nothing until hovered.
+///
+/// The scroll eases out to the end, rests, eases back and rests again, with the clipped
+/// edges faded, so it never jumps. Swapping to `hoverText` and back crossfades.
 final class MarqueeLabel: NSView {
     var text = "" { didSet { if text != oldValue { reset() } } }
     /// Shown in place of `text` while the pointer is over the label, such as the account
@@ -13,17 +16,25 @@ final class MarqueeLabel: NSView {
     var color: NSColor = A2.tertiary { didSet { needsDisplay = true } }
     /// Short text sits against the right edge, as a value beside a title does.
     var alignRight = true
+    /// Extra space between letters, and whether AppKit thickens the strokes: the menu bar
+    /// dropdown sets its text looser and thinner.
+    var kern: CGFloat = 0 { didSet { needsDisplay = true } }
+    var smoothsFonts = true
 
     private var offset: CGFloat = 0
     private var timer: Timer?
-    private var pauseUntil: CFTimeInterval = 0
-    private static let speed: CGFloat = 32
-    private static let pause: CFTimeInterval = 0.9
+    private var started: CFTimeInterval = 0
+    /// Points a second at the middle of the eased scroll.
+    private static let speed: CGFloat = 30
+    private static let restAtStart: CFTimeInterval = 0.7
+    private static let restAtEnd: CFTimeInterval = 1.1
+    private static let edge: CGFloat = 12
 
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        wantsLayer = true
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)
     }
@@ -32,29 +43,53 @@ final class MarqueeLabel: NSView {
 
     override func accessibilityValue() -> Any? { hoverText.map { text + ", " + $0 } ?? text }
 
-    private var textWidth: CGFloat { ceil((shown as NSString).size(withAttributes: [.font: font]).width) }
+    private var textWidth: CGFloat { A2Dev.width(shown, font, kern: kern) }
     private var overflow: CGFloat { max(0, textWidth - bounds.width) }
 
     override func draw(_ dirtyRect: NSRect) {
         let line = ceil(font.ascender - font.descender)
         let y = (bounds.height - line) / 2
-        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        if kern != 0 { attributes[.kern] = kern }
+        if !smoothsFonts { NSGraphicsContext.current?.cgContext.setShouldSmoothFonts(false) }
         guard overflow > 0 else {
             let x = alignRight ? bounds.width - textWidth : 0
             (shown as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attributes)
             return
         }
-        if timer == nil {
+        guard timer != nil, let context = NSGraphicsContext.current?.cgContext else {
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineBreakMode = .byTruncatingTail
             var truncated = attributes
             truncated[.paragraphStyle] = paragraph
             (shown as NSString).draw(with: NSRect(x: 0, y: y, width: bounds.width, height: line + 2),
                                     options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: truncated)
-        } else {
-            NSBezierPath(rect: bounds).addClip()
-            (shown as NSString).draw(at: NSPoint(x: -offset, y: y), withAttributes: attributes)
+            return
         }
+        // The text, then its clipped ends faded out: the left once it has moved, the
+        // right while there is more to come.
+        context.saveGState()
+        context.clip(to: bounds)
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        (shown as NSString).draw(at: NSPoint(x: -offset, y: y), withAttributes: attributes)
+        context.setBlendMode(.destinationOut)
+        let space = CGColorSpaceCreateDeviceGray()
+        let opaque = CGColor(gray: 0, alpha: 1), clear = CGColor(gray: 0, alpha: 0)
+        if let gradient = CGGradient(colorsSpace: space, colors: [opaque, clear] as CFArray, locations: [0, 1]) {
+            let edge = Self.edge
+            if offset > 0.5 {
+                let strength = min(1, offset / edge)
+                context.setAlpha(strength)
+                context.drawLinearGradient(gradient, start: CGPoint(x: 0, y: 0), end: CGPoint(x: edge, y: 0), options: [])
+            }
+            if offset < overflow - 0.5 {
+                let strength = min(1, (overflow - offset) / edge)
+                context.setAlpha(strength)
+                context.drawLinearGradient(gradient, start: CGPoint(x: bounds.width, y: 0), end: CGPoint(x: bounds.width - edge, y: 0), options: [])
+            }
+        }
+        context.endTransparencyLayer()
+        context.restoreGState()
     }
 
     override func updateTrackingAreas() {
@@ -65,40 +100,56 @@ final class MarqueeLabel: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         hovering = true
-        if hoverText != nil { needsDisplay = true }
+        if hoverText != nil || overflow > 0 { crossfade() }
+        needsDisplay = true
         startScrolling()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        if hoverText != nil || timer != nil { crossfade(duration: 0.25) }
+        reset()
+    }
+
+    /// Where the text sits `elapsed` seconds into the hover: rest, ease to the end, rest,
+    /// ease back (quicker), and again.
+    private func position(_ elapsed: CFTimeInterval) -> CGFloat {
+        let distance = overflow
+        let forward = max(0.6, Double(distance / Self.speed) * 1.4)
+        let back = max(0.45, forward * 0.55)
+        let cycle = Self.restAtStart + forward + Self.restAtEnd + back
+        var t = elapsed.truncatingRemainder(dividingBy: cycle)
+        if t < Self.restAtStart { return 0 }
+        t -= Self.restAtStart
+        if t < forward { return distance * Self.ease(t / forward) }
+        t -= forward
+        if t < Self.restAtEnd { return distance }
+        t -= Self.restAtEnd
+        return distance * (1 - Self.ease(t / back))
+    }
+
+    /// Ease in and out (cubic), so the text starts and stops gently.
+    private static func ease(_ p: Double) -> CGFloat {
+        CGFloat(p < 0.5 ? 4 * p * p * p : 1 - pow(-2 * p + 2, 3) / 2)
     }
 
     private func startScrolling() {
         guard overflow > 0, timer == nil, !Theme.reduceMotion else { return }
         offset = 0
-        pauseUntil = CACurrentMediaTime() + Self.pause / 2
-        var last = CACurrentMediaTime()
+        started = CACurrentMediaTime()
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                let now = CACurrentMediaTime()
-                defer { last = now }
-                guard now >= self.pauseUntil else { return }
-                if self.offset >= self.overflow {
-                    // At the end: rest, then start over from the beginning.
-                    self.offset = 0
-                    self.pauseUntil = now + Self.pause
-                } else {
-                    self.offset = min(self.overflow, self.offset + Self.speed * CGFloat(now - last))
-                    if self.offset >= self.overflow { self.pauseUntil = now + Self.pause }
+                let next = self.position(CACurrentMediaTime() - self.started)
+                if abs(next - self.offset) > 0.01 {
+                    self.offset = next
+                    self.needsDisplay = true
                 }
-                self.needsDisplay = true
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         needsDisplay = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        hovering = false
-        reset()
     }
 
     override func viewDidMoveToWindow() {

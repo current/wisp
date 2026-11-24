@@ -347,6 +347,8 @@ final class TimeChart: BitmapView {
     enum Style { case line, bars }
     var style: Style = .line { didSet { needsDisplay = true } }
     var edgeToEdge = false { didSet { needsDisplay = true } }
+    /// The shape an edge-to-edge chart is cut to; the card's rounded bottom by default.
+    var edgeClip: ((CGRect) -> CGPath)?
     /// The time labels under the plot; compact cards leave them off.
     var showsTimeAxis = true { didSet { needsDisplay = true } }
     /// The value at the bottom of the scale, for series that never reach zero (memory, temperature).
@@ -407,7 +409,7 @@ final class TimeChart: BitmapView {
 
         if edgeToEdge, let context = NSGraphicsContext.current?.cgContext {
             context.saveGState()
-            context.addPath(A2.bottomRounded(bounds))
+            context.addPath(edgeClip?(bounds) ?? A2.bottomRounded(bounds))
             context.clip()
             drawEdgeGrid(rect, context: context)
             if style == .bars {

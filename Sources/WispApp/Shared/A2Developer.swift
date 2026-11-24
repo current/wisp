@@ -90,20 +90,21 @@ enum A2Dev {
     /// Returns the width it took.
     @discardableResult
     static func text(_ text: String, x: CGFloat, mid: CGFloat, width: CGFloat, font: NSFont, color: NSColor,
-                     right: Bool = false) -> CGFloat {
+                     right: Bool = false, kern: CGFloat = 0) -> CGFloat {
         guard width > 4, !text.isEmpty else { return 0 }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         paragraph.alignment = right ? .right : .left
-        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
+        var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
+        if kern != 0 { attributes[.kern] = kern }
         let line = ceil(font.ascender - font.descender)
         (text as NSString).draw(with: NSRect(x: x, y: mid - line / 2, width: width, height: line + 2),
                                 options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attributes)
-        return min(width, ceil((text as NSString).size(withAttributes: [.font: font]).width))
+        return min(width, Self.width(text, font, kern: kern))
     }
 
-    static func width(_ text: String, _ font: NSFont) -> CGFloat {
-        ceil((text as NSString).size(withAttributes: [.font: font]).width)
+    static func width(_ text: String, _ font: NSFont, kern: CGFloat = 0) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: kern == 0 ? [.font: font] : [.font: font, .kern: kern]).width)
     }
 
     /// A small warning capsule ("Left over", "1 idle").

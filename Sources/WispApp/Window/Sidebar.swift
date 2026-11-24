@@ -196,8 +196,9 @@ final class Sidebar: NSView {
     /// The window server's blur needs a real window behind it; snapshots draw a tint instead.
     static var usesGlass: Bool { !Theme.solidPanels }
     private let content = FlippedContent()
-    /// Dark mode lays a dark wash over the blur: the window server blurs whatever is
-    /// behind the window, which in dark mode is often a light window.
+    /// A wash over the blur in the appearance's own tone: the window server blurs whatever
+    /// is behind the window, which is often a light window in dark mode and a dark one in
+    /// light mode, and either would take the sidebar's text down with it.
     private let wash = SidebarWash()
     /// The hairline on the right edge, against the page, and the one over the Settings row.
     private let edge = CALayer()
@@ -549,7 +550,7 @@ final class SidebarSurface: NSView {
 }
 
 final class SidebarWash: NSView {
-    private static let color = A2.dynamic(.clear, NSColor(white: 0.11, alpha: 0.72))
+    private static let color = A2.dynamic(NSColor(white: 0.96, alpha: 0.66), NSColor(white: 0.11, alpha: 0.72))
 
     override init(frame: NSRect) {
         super.init(frame: frame)

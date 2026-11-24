@@ -127,7 +127,7 @@ public enum PlanUsageReader {
             byAccount["codex:" + key] = usage
         }
         if let live = AntigravityLive.saved(store: store) {
-            var usage = PlanUsage(provider: "Antigravity", account: live.account ?? "Antigravity", plan: live.plan,
+            var usage = PlanUsage(provider: "Antigravity", account: live.account ?? "Antigravity", plan: live.plan.map(AntigravityLive.planName),
                                   windows: live.windows.map { window($0.name, used: $0.used, resets: $0.resets, now: now) })
             usage.updated = live.updated
             byAccount["antigravity"] = usage

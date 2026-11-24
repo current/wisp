@@ -10,6 +10,10 @@ final class DashboardPopover: NSObject {
     private unowned let delegate: AppDelegate
     private var panel: DashboardPanel?
     private var content: DashboardView?
+    /// Items redone in the soft style have their own dropdown and panel, made on first use.
+    private var soft: [MenuMetric: (view: SoftDropdown, panel: DashboardPanel)] = [:]
+    /// Whichever panel is open, or was last.
+    private var current: DashboardPanel?
     private var monitors: [Any] = []
     private var closedByClickAt: TimeInterval = 0
     /// The status item the dropdown hangs from, and the reading it is about (nil: the dashboard).
@@ -23,22 +27,24 @@ final class DashboardPopover: NSObject {
         super.init()
         delegate.observeSystem { [weak self] snapshot in
             guard let self, self.isShown else { return }
+            if let focus = self.focus, let view = self.soft[focus]?.view { return view.update(snapshot, history: delegate.monitor.history) }
             self.content?.update(snapshot, history: delegate.monitor.history)
         }
         delegate.observeTable { [weak self] table in
             guard let self, self.isShown else { return }
+            if let focus = self.focus, let view = self.soft[focus]?.view { return view.update(table) }
             self.content?.update(table)
         }
     }
 
-    var isShown: Bool { panel?.isVisible ?? false }
+    var isShown: Bool { current?.isVisible ?? false }
 
     /// The saved layout changed: rebuild the blocks. A closed dashboard does it now
     /// too, so it opens at the right size.
     func layoutChanged() {
         guard let content, focus == nil else { return }
         content.apply(delegate.settings.dashboard, animated: false)
-        if isShown {
+        if isShown, current === panel {
             content.update(delegate.system, history: delegate.monitor.history)
             content.update(delegate.table)
         }
@@ -58,26 +64,36 @@ final class DashboardPopover: NSObject {
         if sameItem, ProcessInfo.processInfo.systemUptime - closedByClickAt < 0.5 { return }
         anchorButton = button
         self.focus = focus
-        let view = content ?? DashboardView(delegate: delegate)
-        content = view
-        let panel = self.panel ?? DashboardPanel(content: view)
-        self.panel = panel
-        view.onHeightChange = { [weak panel] in panel?.fit() }
-        view.show(focus: focus)
-        delegate.dashboardLayout = view.layout
-        if view.layout.contains(.usage) { delegate.plans.refresh(maxAge: 20, liveAge: 60) }
-        view.update(delegate.system, history: delegate.monitor.history)
-        view.update(delegate.table)
+        let panel: DashboardPanel
+        if let focus, let made = softDropdown(for: focus) {
+            panel = made.panel
+            delegate.dashboardLayout = Self.softBlocks(focus)
+            made.view.prepare()
+        } else {
+            let view = content ?? DashboardView(delegate: delegate)
+            content = view
+            panel = self.panel ?? DashboardPanel(content: view)
+            self.panel = panel
+            view.onHeightChange = { [weak panel] in panel?.fit() }
+            view.show(focus: focus)
+            delegate.dashboardLayout = view.layout
+            if view.layout.contains(.usage) { delegate.plans.refresh(maxAge: 20, liveAge: 60) }
+            view.update(delegate.system, history: delegate.monitor.history)
+            view.update(delegate.table)
+        }
+        current = panel
         let screen = button.window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
         panel.maxHeight = screen.height - 16
         panel.fit()
 
         if let window = button.window {
             let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
+            // The frame includes the room for a soft panel's shadow; place the panel itself.
+            let margin = panel.margin
             var x = anchor.midX - panel.frame.width / 2
-            x = min(max(screen.minX + 8, x), screen.maxX - panel.frame.width - 8)
+            x = min(max(screen.minX + 8 - margin, x), screen.maxX - panel.frame.width - 8 + margin)
             panel.anchorTop = anchor.minY - 6
-            panel.setFrameOrigin(NSPoint(x: x, y: anchor.minY - 6 - panel.frame.height))
+            panel.setFrameOrigin(NSPoint(x: x, y: anchor.minY - 6 - panel.frame.height + margin))
         }
         panel.alphaValue = 0
         if MainWindowController.background {
@@ -104,24 +120,73 @@ final class DashboardPopover: NSObject {
         } as Any)
     }
 
+    /// The soft dropdown for `focus`, made the first time it opens; nil for items that
+    /// still use the dashboard's blocks.
+    private func softDropdown(for focus: MenuMetric) -> (view: SoftDropdown, panel: DashboardPanel)? {
+        if let made = soft[focus] { return made }
+        guard let view = Self.makeSoft(focus, delegate: delegate) else { return nil }
+        let panel = DashboardPanel(content: view, soft: true)
+        view.onHeightChange = { [weak panel] in panel?.fit() }
+        soft[focus] = (view, panel)
+        return (view, panel)
+    }
+
+    private static func makeSoft(_ focus: MenuMetric, delegate: AppDelegate) -> SoftDropdown? {
+        switch focus {
+        case .usage: return UsageDropdown(delegate: delegate)
+        case .temperature: return TemperatureDropdown(delegate: delegate)
+        case .memory: return MemoryDropdown(delegate: delegate)
+        case .cpu: return CPUDropdown(delegate: delegate)
+        case .network: return NetworkDropdown(delegate: delegate)
+        case .gpu: return GPUDropdown(delegate: delegate)
+        case .disk: return DiskDropdown(delegate: delegate)
+        case .battery, .power: return PowerDropdown(delegate: delegate, metric: focus)
+        }
+    }
+
+    /// What a soft dropdown reads while open, so the monitor samples it.
+    private static func softBlocks(_ focus: MenuMetric) -> [DashboardBlock] {
+        switch focus {
+        case .usage: return [.usage]
+        case .temperature: return [.sensors]
+        case .memory: return [.memory, .apps]
+        case .cpu: return [.cpu, .cores, .apps]
+        case .network: return [.network, .apps]
+        case .gpu: return [.gpu, .sensors]
+        case .disk: return [.disk, .apps]
+        case .battery, .power: return [.power, .apps]
+        }
+    }
+
     /// WISP_POPOVER_SNAPSHOT=<file.png> builds the dashboard in a panel far off every
     /// screen, lets it fill for WISP_SNAPSHOT_DELAY seconds (default 5), draws it into
     /// a PNG and quits. The real popover never opens. Liquid Glass does not show here.
     func snapshotIfAsked() {
         guard let path = ProcessInfo.processInfo.environment["WISP_POPOVER_SNAPSHOT"] else { return }
         let delay = ProcessInfo.processInfo.environment["WISP_SNAPSHOT_DELAY"].flatMap(Double.init) ?? 5
+        // WISP_POPOVER_FOCUS=usage (or temperature) draws that item's soft dropdown instead.
+        let focus = ProcessInfo.processInfo.environment["WISP_POPOVER_FOCUS"].flatMap(MenuMetric.init(rawValue:))
         let view = DashboardView(delegate: delegate)
-        let panel = DashboardPanel(content: view)
+        let softView = focus.flatMap { Self.makeSoft($0, delegate: delegate) }
+        let panel = softView.map { DashboardPanel(content: $0, soft: true) } ?? DashboardPanel(content: view)
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1)
         view.onHeightChange = { [weak panel] in panel?.fit() }
+        softView?.onHeightChange = { [weak panel] in panel?.fit() }
         panel.fit()
         panel.setFrameOrigin(NSPoint(x: -30000, y: -30000))
         panel.orderBack(nil)
+        if let focus { delegate.dashboardLayout = Self.softBlocks(focus) }
         delegate.dashboardOpen = true
+        if focus == .usage { delegate.plans.refresh(maxAge: 0, liveAge: 60) }
+        softView?.prepare()
         let refresh = { [weak self, weak view] in
             guard let self, let view else { return }
+            if let softView {
+                softView.update(self.delegate.system, history: self.delegate.monitor.history)
+                return softView.update(self.delegate.table)
+            }
             view.update(self.delegate.system, history: self.delegate.monitor.history)
             view.update(self.delegate.table)
         }
@@ -156,10 +221,10 @@ final class DashboardPopover: NSObject {
     }
 
     func close() {
-        guard let panel, panel.isVisible else { return }
+        guard let current, current.isVisible else { return }
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
-        panel.orderOut(nil)
+        current.orderOut(nil)
         content?.hideTooltip()
         delegate.dashboardOpen = false
     }
@@ -170,14 +235,24 @@ final class DashboardPopover: NSObject {
 /// they scroll.
 final class DashboardPanel: NSPanel {
     private let frameView = CardView()
+    /// The soft panel's frosted glass: the window server blurs what is behind the panel,
+    /// and `frameView` lays a tint over it. Snapshots have nothing behind to blur.
+    private var blur: NSVisualEffectView?
+    private var face: SoftDropdown.Face?
     private let scroll = NSScrollView()
-    private let view: DashboardView
+    private let view: NSView
     var maxHeight: CGFloat = 2000
     /// The screen y the panel hangs from, so it grows and shrinks downwards.
     var anchorTop: CGFloat?
+    /// Room around a soft panel for the shadow it draws itself. The system's window
+    /// shadow traces the edge with a crisp dark line; this one is only a soft falloff.
+    let margin: CGFloat
+    private var shadow: SoftDropdown.Shadow?
 
-    init(content: DashboardView) {
+    /// `soft`: the tinted panel with larger corners that the AI usage dropdown sits on.
+    init(content: NSView, soft: Bool = false) {
         view = content
+        margin = soft && !Theme.solidPanels ? 28 : 0
         super.init(contentRect: NSRect(origin: .zero, size: content.frame.size),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         isOpaque = false
@@ -188,26 +263,75 @@ final class DashboardPanel: NSPanel {
         isReleasedWhenClosed = false
         frameView.fill = Theme.ground
         frameView.radius = Theme.panelRadius
+        if soft {
+            // The face draws the panel; the frame only holds the scroll view.
+            frameView.fill = .clear
+            frameView.stroke = .clear
+            let face = SoftDropdown.Face()
+            face.solid = Theme.solidPanels
+            self.face = face
+            if !Theme.solidPanels {
+                hasShadow = false
+                let shadow = SoftDropdown.Shadow()
+                shadow.margin = margin
+                self.shadow = shadow
+                let blur = NSVisualEffectView()
+                blur.material = .popover
+                blur.blendingMode = .behindWindow
+                blur.state = .active
+                blur.maskImage = Self.roundedMask(radius: SoftDropdown.panelRadius)
+                self.blur = blur
+            }
+        }
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
         scroll.documentView = content
         frameView.addSubview(scroll)
-        contentView = frameView
+        if let face {
+            let root = NSView()
+            if let shadow { root.addSubview(shadow) }
+            if let blur { root.addSubview(blur) }
+            root.addSubview(face)
+            root.addSubview(frameView)
+            contentView = root
+        } else {
+            contentView = frameView
+        }
         setAccessibilityLabel("Wisp")
+    }
+
+    /// A stretchable mask with the panel's continuous corners, for the blur.
+    private static func roundedMask(radius: CGFloat) -> NSImage {
+        // A continuous corner starts curving further along the side than its radius, so
+        // the fixed caps must cover all of it or stretching bends the curve.
+        let cap = ceil(radius * 1.3) + 1
+        let side = cap * 2 + 1
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(cgPath: CGPath.continuous(rect, radius: radius)).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: cap, left: cap, bottom: cap, right: cap)
+        image.resizingMode = .stretch
+        return image
     }
 
     override var canBecomeKey: Bool { true }
 
     func fit() {
         let size = NSSize(width: view.frame.width, height: min(view.frame.height, maxHeight))
-        if frame.size != size {
+        let outer = NSSize(width: size.width + margin * 2, height: size.height + margin * 2)
+        if frame.size != outer {
             var origin = frame.origin
-            if let anchorTop { origin.y = anchorTop - size.height }
-            setFrame(NSRect(origin: origin, size: size), display: true)
+            if let anchorTop { origin.y = anchorTop - size.height - margin }
+            setFrame(NSRect(origin: origin, size: outer), display: true)
         }
-        frameView.frame = NSRect(origin: .zero, size: size)
+        shadow?.frame = NSRect(origin: .zero, size: outer)
+        frameView.frame = NSRect(origin: NSPoint(x: margin, y: margin), size: size)
+        blur?.frame = frameView.frame
+        face?.frame = frameView.frame
         // Inset by the corner radius' worth so scrolled content stays inside the rounded edge.
         scroll.frame = NSRect(origin: .zero, size: size)
     }

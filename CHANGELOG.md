@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.4.0, 23 November 2026
 
 Fixed:
 
+- In light mode the sidebar turned grey over a dark window behind Wisp.
 - Clean Up trashed the pnpm store, which pnpm 10 and later run global installs
   from, pnpm itself included. A clean now skips any folder that a command, a
   link beside it or a running program still uses, and says what uses it. A
@@ -18,9 +19,17 @@ Fixed:
 
 Changed:
 
+- Every menu bar item's dropdown is redrawn as compact cards on a light blur,
+  with slim bars and the same charts as the window. Usage, Temperature, Memory, CPU, Network, GPU, Disk, Battery and Power
+  each have one. Hovering a line shows more about it, and long account names
+  scroll back and forth.
+- A usage limit shows "Resets in" by default. Hover it to see how long the
+  limit lasts at the current pace.
+- Plan names drop "Google AI", so Antigravity shows "Ultra".
 - AI usage shows Antigravity's limits: one 5-hour meter for the Gemini models
   and one for Claude and GPT-OSS. Wisp asks Antigravity's own language server on
-  127.0.0.1 while it runs, once a minute.
+  127.0.0.1 once a minute, while the Antigravity app or T3 Code's Antigravity
+  bridge runs.
 - Each account in AI usage shows when its figures were last reported, such
   as "Updated 4m ago". Hover it to see the account instead.
 - Hovering a limit that says "Runs out in" or "Used up" shows when it

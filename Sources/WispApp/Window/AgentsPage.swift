@@ -24,10 +24,16 @@ final class PlanCard: CardView {
         var used: Double = 0
         var detail = ""
         var short = false
-        /// Shown in place of `detail` while hovered: when the window resets, which a
-        /// "Runs out in…" or "Used up" warning would otherwise hide.
+        /// Shown in place of `detail` while hovered: how the window is going, "Runs out
+        /// in…" when the pace would use it up, otherwise the reset's clock time.
         var resets: String?
-        private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
+        private var hovering = false {
+            didSet {
+                guard hovering != oldValue else { return }
+                crossfade()
+                needsDisplay = true
+            }
+        }
         let meter = TickMeter()
 
         override init(frame: NSRect) {
@@ -63,8 +69,9 @@ final class PlanCard: CardView {
             let right = bounds.width - 64
             let used = A2Dev.text(name, x: 0, mid: 7, width: right, font: Theme.sans(12), color: A2.secondary)
             let showReset = hovering && resets != nil
-            A2Dev.text(showReset ? resets ?? "" : detail, x: used + 12, mid: 7, width: right - used - 12, font: Theme.sans(11),
-                       color: short && !showReset ? A2.warn : A2.tertiary, right: true)
+            let room = right - used - 12
+            A2Dev.text(PlanCard.fitted(showReset ? resets ?? "" : detail, room: room, font: Theme.sans(11)), x: used + 12, mid: 7,
+                       width: room, font: Theme.sans(11), color: short && showReset ? A2.warn : A2.tertiary, right: true)
             let font = Theme.digits(15, .semibold)
             A2Dev.text(Format.percent(self.used), x: right, mid: bounds.height - 6, width: 64, font: font, color: A2.primary, right: true)
         }
@@ -215,20 +222,41 @@ final class PlanCard: CardView {
     private static let sessionHigh = Theme.dynamic(0xE0A800, 0xFFD60A)
     private static let sessionFull = Theme.dynamic(0xFF6B6B, 0xFF8A80)
 
-    /// When the window resets and, if the current pace would use it up first, when that happens.
-    /// `resets` is the reset alone, with its clock time, for showing on hover.
+    /// A window's detail in `room`: the first wording that fits, from the whole one down
+    /// to the fewest words that still say it ("Runs out in 3h", "Tomorrow 9:40 AM").
+    static func fitted(_ text: String, room: CGFloat, font: NSFont, kern: CGFloat = 0) -> String {
+        var candidates = [text]
+        func add(_ next: String) { if next != candidates.last { candidates.append(next) } }
+        add(text.replacingOccurrences(of: "Not used since it reset", with: "Not used").replacingOccurrences(of: " at this rate", with: ""))
+        // A reset's time alone, once "Resets" or "Used up" does not fit beside it.
+        for prefix in ["Used up, resets ", "Resets "] where text.hasPrefix(prefix) && !text.hasPrefix("Resets in") {
+            let time = String(text.dropFirst(prefix.count))
+            add(time.prefix(1).uppercased() + time.dropFirst())
+            add((time.prefix(1).uppercased() + time.dropFirst()).replacingOccurrences(of: " at ", with: " "))
+        }
+        return candidates.first { A2Dev.width($0, font, kern: kern) <= room } ?? candidates.last ?? text
+    }
+
+    /// What a limit's line says, and what it says while hovered. The line shows when
+    /// the window resets; hovering shows how it is going: when the current pace would
+    /// use it up first ("Runs out in 2h at this rate", `short`), or else the reset's
+    /// clock time.
     static func pace(_ window: PlanUsage.Window, now: Date) -> (text: String, short: Bool, resets: String?) {
         let (text, short) = paceText(window, now: now)
         guard let resets = window.resets, resets > now else { return (text, short, nil) }
-        return (text, short, "Resets in " + Format.duration(resets.timeIntervalSince(now)) + " · " + clock(resets, now: now))
+        let resetText = "Resets in " + Format.duration(resets.timeIntervalSince(now))
+        let at = resetsAt(resets, now: now)
+        if window.used >= 1 { return (resetText, true, "Used up, resets " + at) }
+        if short { return (resetText, true, text) }
+        return (text, false, "Resets " + at)
     }
 
-    /// "3:40 PM" today, "Tomorrow 3:40 PM", or "Wed 3:40 PM" later in the week.
-    static func clock(_ date: Date, now: Date) -> String {
+    /// "at 3:40 PM" today, "tomorrow at 3:40 PM", or "Wed at 3:40 PM" later in the week.
+    static func resetsAt(_ date: Date, now: Date) -> String {
         let calendar = Calendar.current
-        let time = date.formatted(date: .omitted, time: .shortened)
+        let time = "at " + date.formatted(date: .omitted, time: .shortened)
         if calendar.isDate(date, inSameDayAs: now) { return time }
-        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(date, inSameDayAs: tomorrow) { return "Tomorrow " + time }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(date, inSameDayAs: tomorrow) { return "tomorrow " + time }
         return date.formatted(.dateTime.weekday(.abbreviated)) + " " + time
     }
 

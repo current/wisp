@@ -178,7 +178,7 @@ private func settings(_ path: String) -> [String: Any] {
     AntigravityLive.save(AntigravityLive.record(status, now: now)!, store: store)
     let usage = PlanUsageReader.readAll(home: home, store: store, now: now)
     #expect(usage.count == 1)
-    #expect(usage.first?.provider == "Antigravity" && usage.first?.account == "me@example.com" && usage.first?.plan == "Google AI Ultra")
+    #expect(usage.first?.provider == "Antigravity" && usage.first?.account == "me@example.com" && usage.first?.plan == "Ultra")
     #expect(usage.first?.windows.map(\.name) == ["5-hour Gemini", "5-hour Claude and GPT-OSS"])
     #expect(usage.first?.windows.map(\.used) == [0.25, 1])
 }
@@ -349,4 +349,20 @@ private func touch(_ path: String, _ date: Date) {
     T3RemoteLimits.refresh(hosts: ["bare"], store: store, maxAge: 0, now: now) { _, _ in (Data((T3RemoteLimits.noT3 + "\n").utf8), 0) }
     #expect(T3RemoteLimits.status(hosts: ["gone", "slow", "bare", "new"], store: store, now: now)
             == ["gone: could not connect with ssh", "slow: ssh did not answer in time", "bare: T3 Code has no logs there", "new: not checked yet"])
+}
+
+@Test func antigravityBridgesAreFoundFromTheirLogs() {
+    let home = scratchHome()
+    let logs = home + "/.t3/userdata/providers/antigravity/abc/antigravity-acp/log"
+    let running = ProcessInfo.processInfo.processIdentifier
+    let log = """
+    I1122 18:47:46.479506      24 server.go:1305] Language server listening on random port at 55274 for HTTPS (gRPC)
+    I1122 18:47:46.479788      24 server.go:1313] Language server listening on random port at 55275 for HTTP
+    E1122 18:47:46.480715      86 errorreport.go:282] Failed to poll ListExperiments
+    """
+    write(log, to: logs + "/acp-server-20261122_184746-\(running).log")
+    // A bridge that has quit leaves its log behind.
+    write(log.replacingOccurrences(of: "55275", with: "40000"), to: logs + "/acp-server-20261121_100000-99999999.log")
+    #expect(AntigravityLive.httpPort(inLog: log) == 55275)
+    #expect(AntigravityLive.bridges(home: home) == [.init(port: 55275, token: nil)])
 }

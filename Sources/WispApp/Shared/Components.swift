@@ -48,10 +48,19 @@ class BitmapView: DrawnView {
         }
     }
 
+    /// Pixels per point of this view's own coordinates: the screen's, times any scaling a
+    /// superview's bounds apply (the usage dropdown is laid out large and shown smaller),
+    /// so the bitmap matches the pixels it lands on.
+    private var pixelScale: CGFloat {
+        let backing = window?.backingScaleFactor ?? 2
+        let zoom = convert(NSSize(width: 1, height: 1), to: nil).width
+        return zoom > 0 ? backing * zoom : backing
+    }
+
     override func updateLayer() {
         guard let layer, bounds.width >= 1, bounds.height >= 1 else { return }
         if drawsVisibleOnly { return drawVisible(into: layer) }
-        let scale = window?.backingScaleFactor ?? 2
+        let scale = pixelScale
         let width = Int((bounds.width * scale).rounded(.up)), height = Int((bounds.height * scale).rounded(.up))
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -108,6 +117,19 @@ class BitmapView: DrawnView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         needsDisplay = true
+    }
+}
+
+extension NSView {
+    /// Fades the layer's next contents in over the current ones, for text that swaps on
+    /// hover. Runs on the render server; nothing is drawn twice.
+    func crossfade(duration: CFTimeInterval = 0.2) {
+        guard !Theme.reduceMotion, let layer, window != nil else { return }
+        let fade = CATransition()
+        fade.type = .fade
+        fade.duration = duration
+        fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.add(fade, forKey: "crossfade")
     }
 }
 
