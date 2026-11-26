@@ -1,17 +1,20 @@
 import Foundation
 
-/// Asks Antigravity for its plan limits. Its language server answers `GetUserStatus` on
-/// 127.0.0.1 with each model's remaining quota. The Antigravity app's server writes its
-/// port and a per-run token to ~/.gemini/antigravity/daemon/hub_<port>.json; T3 Code
-/// runs Antigravity through its `antigravity acp` bridge, which starts the same server
-/// on a random port and logs it. Wisp reads that answer only; the request never leaves
-/// the Mac and no sign-in is read.
+/// Asks Antigravity for its plan limits. The Antigravity CLI answers `agy -p /usage`
+/// without starting an agent turn, spending quota or keeping a conversation, with each
+/// model group's 5-hour and weekly limit; Wisp runs it, reads the answer and stops it.
+/// Without the CLI, the Antigravity app's language server answers on 127.0.0.1 while the
+/// app runs: it writes its port and a per-run token to ~/.gemini/antigravity/daemon/
+/// hub_<port>.json, and answers `RetrieveUserQuotaSummary` and `GetUserStatus`. Either
+/// way Antigravity asks with its own sign-in, which Wisp never reads.
 public enum AntigravityLive {
     struct Record: Codable, Equatable {
         var updated: Date
         var account: String?
         var plan: String?
         var windows: [ClaudeStatusLine.Record.Window]
+        /// Checks in a row that answered the same, which spaces the next ones out.
+        var unchanged: Int?
     }
 
     struct Hub: Decodable {
@@ -22,45 +25,27 @@ public enum AntigravityLive {
 
     static let fileName = "live-antigravity.json"
 
-    /// A running language server: its local HTTP port, and the token the app's server
-    /// asks for (the bridge's asks for none).
+    /// A running language server: its local HTTP port, and the token it asks for.
     struct Server: Equatable {
         var port: Int
         var token: String?
     }
 
-    /// Every running server, the app's first, then T3 Code's bridges, newest first.
-    static func servers(home: String) -> [Server] {
-        (hub(home: home).map { [Server(port: $0.httpPort, token: $0.csrfToken)] } ?? []) + bridges(home: home)
+    /// The Antigravity CLI.
+    static func binary(home: String = NSHomeDirectory()) -> String? {
+        LiveCheck.binary(["agy"], home: home, extra: ["/Applications/Antigravity.app/Contents/Resources/app/bin/agy"])
     }
 
-    /// T3 Code's bridges: each logs to providers/antigravity/<id>/antigravity-acp/log/
-    /// acp-server-<date>-<pid>.log, with a line "Language server listening on random
-    /// port at <port> for HTTP" near the start. Only logs whose process still runs count.
-    static func bridges(home: String) -> [Server] {
-        let root = home + "/.t3/userdata/providers/antigravity"
-        var found: [(Server, Date)] = []
-        for provider in (try? FileManager.default.contentsOfDirectory(atPath: root)) ?? [] {
-            let folder = root + "/" + provider + "/antigravity-acp/log"
-            for name in (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? [] where name.hasPrefix("acp-server-") && name.hasSuffix(".log") {
-                guard let pid = Int32(name.dropLast(4).split(separator: "-").last ?? ""), kill(pid, 0) == 0,
-                      let handle = FileHandle(forReadingAtPath: folder + "/" + name) else { continue }
-                let head = String(decoding: handle.readData(ofLength: 65_536), as: UTF8.self)
-                try? handle.close()
-                guard let port = httpPort(inLog: head) else { continue }
-                let modified = (try? FileManager.default.attributesOfItem(atPath: folder + "/" + name)[.modificationDate] as? Date) ?? .distantPast
-                found.append((Server(port: port, token: nil), modified))
-            }
+    /// The signed-in Google account, from the account list Antigravity keeps beside its
+    /// settings (addresses only; the sign-in is elsewhere).
+    static func account(home: String) -> String? {
+        let path = home + "/.gemini/google_accounts.json"
+        return FileCache.value(path, kind: "agy-account") {
+            guard let data = FileManager.default.contents(atPath: path),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let active = json["active"] as? String, !active.isEmpty else { return nil }
+            return active
         }
-        return found.sorted { $0.1 > $1.1 }.map(\.0)
-    }
-
-    /// The HTTP port in a language server's log ("... at 55275 for HTTP"), not the gRPC one.
-    static func httpPort(inLog text: String) -> Int? {
-        for line in text.split(separator: "\n") where line.hasSuffix(" for HTTP") && line.contains("listening on random port at ") {
-            if let port = line.components(separatedBy: "port at ").last?.split(separator: " ").first.flatMap({ Int($0) }) { return port }
-        }
-        return nil
     }
 
     /// The running language server's hub file, newest first when there are several.
@@ -79,29 +64,126 @@ public enum AntigravityLive {
         return nil
     }
 
-    static func saved(store: URL) -> Record? {
-        guard let data = FileManager.default.contents(atPath: store.appendingPathComponent(fileName).path) else { return nil }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .secondsSince1970
-        return try? decoder.decode(Record.self, from: data)
+    /// True once Antigravity has answered on this Mac.
+    public static func seen(store: URL = ClaudeStatusLine.store) -> Bool {
+        FileManager.default.fileExists(atPath: store.appendingPathComponent(fileName).path)
     }
 
-    static func save(_ record: Record, store: URL) {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .secondsSince1970
-        guard let data = try? encoder.encode(record) else { return }
-        try? FileManager.default.createDirectory(at: store, withIntermediateDirectories: true)
-        try? data.write(to: store.appendingPathComponent(fileName), options: .atomic)
-    }
+    static func saved(store: URL) -> Record? { LiveCheck.load(Record.self, name: fileName, store: store) }
 
-    /// Asks again when Antigravity is running and the saved answer is older than `maxAge`.
+    static func save(_ record: Record, store: URL) { LiveCheck.save(record, as: fileName, store: store) }
+
+    /// Asks again when the saved answer is older than `maxAge` (spaced out while the
+    /// figures stay the same when `paced`): the CLI when it is installed, otherwise the
+    /// app's server while it runs. `ask` stands in for the CLI in tests.
     public static func refresh(home: String = NSHomeDirectory(), store: URL = ClaudeStatusLine.store,
-                               maxAge: TimeInterval, now: Date = Date()) {
-        if let saved = saved(store: store), now.timeIntervalSince(saved.updated) < maxAge { return }
-        for server in servers(home: home) {
-            guard let status = ask(server), let record = record(status, now: now) else { continue }
-            return save(record, store: store)
+                               maxAge: TimeInterval, paced: Bool = false, now: Date = Date(),
+                               ask: ((String) -> [ClaudeStatusLine.Record.Window]?)? = nil) {
+        let previous = saved(store: store)
+        if let previous, now.timeIntervalSince(previous.updated) < LiveCheck.interval(maxAge: maxAge, unchanged: previous.unchanged ?? 0, paced: paced) { return }
+        if LiveCheck.failedRecently("antigravity", now: now) { return }
+        LiveCheck.once("antigravity") {
+            var record: Record?
+            let agy = binary(home: home) ?? (ask == nil ? nil : "agy")
+            let running = ask == nil ? hub(home: home) : nil
+            // Neither is there: nothing to ask, and nothing failed.
+            if agy == nil && running == nil { return }
+            if let agy, let windows = ask.map({ $0(agy) }) ?? askCLI(agy, home: home, store: store) {
+                record = Record(updated: now, account: account(home: home) ?? previous?.account, plan: previous?.plan, windows: windows)
+            }
+            // The app's own server answers while it runs: the fallback when the CLI did not,
+            // and the only place the plan's name comes from.
+            if let hub = running, record == nil || record?.plan == nil {
+                let server = Server(port: hub.httpPort, token: hub.csrfToken)
+                if let status = self.ask(server), var found = self.record(status, now: now) {
+                    if let record {
+                        found.windows = record.windows
+                    } else if let summary = self.ask(server, method: "RetrieveUserQuotaSummary"), let windows = windows(summary) {
+                        found.windows = windows
+                    }
+                    record = found
+                }
+            }
+            guard var record else { return LiveCheck.failed("antigravity", now: now) }
+            record.unchanged = LiveCheck.unchanged(previous: previous?.windows, count: previous?.unchanged, next: record.windows)
+            save(record, store: store)
         }
+    }
+
+    /// `agy -p /usage --output-format json`, its log kept out of Antigravity's log folder.
+    static func askCLI(_ agy: String, home: String, store: URL) -> [ClaudeStatusLine.Record.Window]? {
+        let answer: [ClaudeStatusLine.Record.Window]?? = LiveCheck.run(
+            agy, ["-p", "/usage", "--output-format", "json", "--log-file", "/dev/null", "--print-timeout", "20s"],
+            environment: LiveCheck.environment(home: home), directory: store, closeInput: true, timeout: 30
+        ) { line in
+            guard let json = LiveCheck.json(line), json["status"] != nil || json["command"] != nil else { return nil }
+            return .some(cliWindows(json))
+        }
+        return answer ?? nil
+    }
+
+    /// The CLI's answer: `command.data.groups[].buckets[]` with `id`, `window`,
+    /// `remaining_fraction` and `reset_time`, or failing that the tab-separated lines of
+    /// `response` ("Gemini Models\tFive Hour Limit Remaining\t98%\t2026-11-26T18:25:41Z").
+    static func cliWindows(_ json: [String: Any]) -> [ClaudeStatusLine.Record.Window]? {
+        let data = (json["command"] as? [String: Any])?["data"] as? [String: Any]
+        if let groups = data?["groups"] as? [[String: Any]] {
+            let converted: [[String: Any]] = groups.map { group in
+                ["displayName": group["name"] ?? "", "buckets": (group["buckets"] as? [[String: Any]] ?? []).map { bucket in
+                    ["bucketId": bucket["id"] ?? "", "window": bucket["window"] ?? "",
+                     "remainingFraction": bucket["remaining_fraction"] ?? 0, "resetTime": bucket["reset_time"] ?? ""] as [String: Any]
+                }]
+            }
+            if let windows = windows(["response": ["groups": converted]]) { return windows }
+        }
+        guard let text = json["response"] as? String else { return nil }
+        var groups: [String: [[String: Any]]] = [:]
+        var order: [String] = []
+        for line in text.split(separator: "\n") {
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard fields.count >= 3, let percent = Double(fields[2].replacingOccurrences(of: "%", with: "")) else { continue }
+            let window = fields[1].lowercased().contains("five hour") || fields[1].lowercased().contains("5-hour") ? "5h"
+                : fields[1].lowercased().contains("week") ? "weekly" : ""
+            let id = (fields[0].lowercased().hasPrefix("gemini") ? "gemini-" : "3p-") + window
+            if groups[fields[0]] == nil { order.append(fields[0]) }
+            groups[fields[0], default: []].append(["bucketId": id, "window": window, "remainingFraction": percent / 100,
+                                                   "resetTime": fields.count > 3 ? fields[3] : ""])
+        }
+        return windows(["response": ["groups": order.map { ["displayName": $0, "buckets": groups[$0] ?? []] as [String: Any] }]])
+    }
+
+    /// The limits AI usage can show, in order, with their names in Settings.
+    public static let limits: [(name: String, title: String)] = [
+        ("5-hour Gemini", "Gemini, 5-hour"),
+        ("Gemini this week", "Gemini, weekly"),
+        ("5-hour Claude and GPT-OSS", "Claude and GPT-OSS, 5-hour"),
+        ("Claude and GPT-OSS this week", "Claude and GPT-OSS, weekly"),
+    ]
+
+    /// `RetrieveUserQuotaSummary` has each model group's 5-hour and weekly limit, which
+    /// `GetUserStatus` folds into one figure per model. Servers older than it answer nothing.
+    static func windows(_ summary: [String: Any]) -> [ClaudeStatusLine.Record.Window]? {
+        let groups = (summary["response"] as? [String: Any])?["groups"] as? [[String: Any]] ?? []
+        var windows: [ClaudeStatusLine.Record.Window] = []
+        for group in groups {
+            for bucket in group["buckets"] as? [[String: Any]] ?? [] {
+                let id = bucket["bucketId"] as? String ?? ""
+                let models = id.hasPrefix("gemini") ? "Gemini" : id.hasPrefix("3p") ? "Claude and GPT-OSS"
+                    : (group["displayName"] as? String ?? "Other").replacingOccurrences(of: " Models", with: "").replacingOccurrences(of: " models", with: "")
+                let name: String
+                switch bucket["window"] as? String {
+                case "5h": name = "5-hour " + models
+                case "weekly": name = models + " this week"
+                default: continue
+                }
+                let remaining = (bucket["remainingFraction"] as? NSNumber)?.doubleValue ?? 0
+                windows.append(.init(name: name, used: min(max(1 - remaining, 0), 1),
+                                     resets: LiveCheck.date(bucket["resetTime"])))
+            }
+        }
+        // Each group's 5-hour limit before its weekly one.
+        let order = { (name: String) in limits.firstIndex { $0.name == name } ?? limits.count }
+        return windows.isEmpty ? nil : windows.enumerated().sorted { (order($0.element.name), $0.offset) < (order($1.element.name), $1.offset) }.map(\.element)
     }
 
     /// Models share quota pools: every Gemini model draws on one, Claude and GPT-OSS on
@@ -150,8 +232,8 @@ public enum AntigravityLive {
         return label.split(separator: " ").first.map(String.init) ?? "Other"
     }
 
-    static func ask(_ server: Server, timeout: TimeInterval = 5) -> [String: Any]? {
-        guard let url = URL(string: "http://127.0.0.1:\(server.port)/exa.language_server_pb.LanguageServerService/GetUserStatus") else { return nil }
+    static func ask(_ server: Server, method: String = "GetUserStatus", timeout: TimeInterval = 5) -> [String: Any]? {
+        guard let url = URL(string: "http://127.0.0.1:\(server.port)/exa.language_server_pb.LanguageServerService/" + method) else { return nil }
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

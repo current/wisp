@@ -23,11 +23,11 @@ public struct PlanUsage: Codable, Sendable, Equatable, Identifiable {
     public var id: String { provider + ":" + account }
 }
 
-/// Reads plan limits from what Claude Code and Codex already report on this Mac:
-/// Claude Code hands them to its status line, which Wisp joins (see `ClaudeStatusLine`),
-/// T3 Code logs them for the Claude accounts it runs (see `T3CodeLimits`),
-/// Codex writes them into its session logs, and Antigravity answers on 127.0.0.1 while
-/// it runs (see `AntigravityLive`). No sign-in is read and nothing is sent.
+/// Reads plan limits from what each agent reports. Claude Code, Codex and Antigravity are
+/// asked by their own programs for each signed-in account (see `ClaudeLive`, `CodexLive`
+/// and `AntigravityLive`), which covers use anywhere: other apps, other machines, the
+/// web. Codex's session logs and Claude Code's status line, where Wisp was added to it
+/// before, report between the questions. No sign-in is read and Wisp sends nothing itself.
 public enum PlanUsageReader {
     /// Claude Code config folders: ~/.claude and any ~/.claude-* with a .claude.json.
     public static func claudeFolders(home: String = NSHomeDirectory()) -> [String] {
@@ -51,10 +51,13 @@ public enum PlanUsageReader {
     static func claudeAccount(folder: String, home: String) -> (email: String?, plan: String?) {
         let paths = folder == home + "/.claude" ? [home + "/.claude.json", folder + "/.claude.json"] : [folder + "/.claude.json"]
         for path in paths {
-            guard let data = FileManager.default.contents(atPath: path),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let account = json["oauthAccount"] as? [String: Any], let email = account["emailAddress"] as? String else { continue }
-            return (email, account["planDisplayName"] as? String ?? planName(organizationType: account["organizationType"] as? String))
+            let found: (email: String?, plan: String?)? = FileCache.value(path, kind: "account") {
+                guard let data = FileManager.default.contents(atPath: path),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let account = json["oauthAccount"] as? [String: Any], let email = account["emailAddress"] as? String else { return nil }
+                return (email, account["planDisplayName"] as? String ?? planName(organizationType: account["organizationType"] as? String))
+            }
+            if let found { return found }
         }
         return (nil, nil)
     }
@@ -66,34 +69,32 @@ public enum PlanUsageReader {
         return name.isEmpty ? nil : name.prefix(1).uppercased() + name.dropFirst()
     }
 
-    /// Every account with figures, plus connected Claude folders still waiting for their first.
-    /// `remoteHosts` are SSH hosts whose T3 Code limits were checked (see `T3RemoteLimits`).
-    public static func readAll(home: String = NSHomeDirectory(), store: URL = ClaudeStatusLine.store, now: Date = Date(),
-                               remoteHosts: [String] = []) -> [PlanUsage] {
+    /// Every account with figures.
+    public static func readAll(home: String = NSHomeDirectory(), store: URL = ClaudeStatusLine.store, now: Date = Date()) -> [PlanUsage] {
         var byAccount: [String: PlanUsage] = [:]
-        var t3: [String: T3CodeLimits.Account] = [:]
-        // This Mac's T3 Code and the linked machines' report the same accounts; the newer figures win.
-        let local = T3CodeLimits.read(home: home, now: now, cacheFile: store.appendingPathComponent("t3-logs.json"))
-        for account in local + T3RemoteLimits.accounts(hosts: remoteHosts, home: home, store: store) {
-            if let known = t3[account.record.folder], known.record.updated >= account.record.updated { continue }
-            t3[account.record.folder] = account
-        }
-        let labels = T3CodeLimits.labels(home: home)
-        for folder in Set(claudeFolders(home: home)).union(t3.keys).sorted() {
+        let labels = T3CodeNames.labels(home: home)
+        for folder in claudeFolders(home: home) {
             let (email, plan) = claudeAccount(folder: folder, home: home)
             let account = email ?? (folder as NSString).lastPathComponent
-            var usage = PlanUsage(provider: "Claude", account: account, plan: plan, windows: [])
-            usage.label = t3[folder]?.label ?? labels[folder]
-            // The status line and T3 Code can both report one folder; the newer figures win.
-            let records = [ClaudeStatusLine.read(folder: folder, store: store), t3[folder]?.record].compactMap { $0 }
-            if let record = records.max(by: { $0.updated < $1.updated }) {
-                usage.windows = record.windows.map { window($0.name, used: $0.used, resets: $0.resets, now: now) }
-                usage.updated = record.updated
-            } else if ClaudeStatusLine.state(folder: folder) == .connected {
-                usage.problem = "Waiting for Claude Code's next reply"
-            } else {
-                continue
+            let live = ClaudeLive.saved(folder: folder, store: store)
+            var usage = PlanUsage(provider: "Claude", account: account, plan: plan ?? live?.plan, windows: [])
+            usage.label = labels[folder]
+            // Claude Code's answer and its status line can both report one folder: the
+            // newer figures win, and limits only the answer has (a model's weekly limit)
+            // stay beside them.
+            var records = ClaudeStatusLine.read(folder: folder, store: store).map { [$0] } ?? []
+            if let live {
+                // Signed out since the status line last ran: nothing to show.
+                if !live.available, live.updated >= (records.first?.updated ?? .distantPast) { continue }
+                if live.available { records.append(.init(folder: folder, updated: live.updated, windows: live.windows)) }
             }
+            guard let newest = records.max(by: { $0.updated < $1.updated }) else { continue }
+            var windows = newest.windows
+            for record in records where record != newest {
+                windows += record.windows.filter { window in !windows.contains { $0.name == window.name } }
+            }
+            usage.windows = windows.map { window($0.name, used: $0.used, resets: $0.resets, now: now) }
+            usage.updated = newest.updated
             // Two folders signed in to one account: keep the newer figures.
             let key = "claude:" + account
             if let existing = byAccount[key], (existing.updated ?? .distantPast) >= (usage.updated ?? .distantPast) { continue }
@@ -138,6 +139,14 @@ public enum PlanUsageReader {
         }
     }
 
+    /// Files earlier versions kept: T3 Code's log index and the SSH hosts' answers.
+    public static func removeRetiredFiles(store: URL = ClaudeStatusLine.store) {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: store.path)) ?? []
+        for name in names where name == "t3-logs.json" || (name.hasPrefix("remote-") && name.hasSuffix(".json")) {
+            try? FileManager.default.removeItem(at: store.appendingPathComponent(name))
+        }
+    }
+
     /// A window whose reset time has passed has had no use reported since.
     static func window(_ name: String, used: Double, resets: Date?, now: Date) -> PlanUsage.Window {
         if let resets, resets <= now { return .init(name: name, used: 0, resets: nil) }
@@ -147,6 +156,8 @@ public enum PlanUsageReader {
     public static func windowName(minutes: Double?) -> String? {
         guard let minutes else { return nil }
         if minutes <= 300 { return "5-hour session" }
+        // Codex's free plan has a 30-day limit in place of a weekly one.
+        if minutes >= 27 * 1440 { return "This month" }
         if minutes >= 6 * 1440 { return "This week" }
         return nil
     }
@@ -158,7 +169,8 @@ public enum PlanUsageReader {
     static func codex(folder: String, now: Date) -> (PlanUsage, accountID: String?)? {
         var best: (usage: PlanUsage, file: String)?
         for file in newestSessions(folder + "/sessions", count: 4) {
-            guard let line = lastLine(containing: "\"rate_limits\":{", in: file),
+            let line = FileCache.value(file, kind: "codex-limits") { lastLine(containing: "\"rate_limits\":{", in: file) }
+            guard let line,
                   let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
                   let payload = json["payload"] as? [String: Any],
                   let limits = payload["rate_limits"] as? [String: Any] else { continue }
@@ -172,12 +184,11 @@ public enum PlanUsageReader {
             guard !usage.windows.isEmpty else { continue }
             let iso = ISO8601DateFormatter()
             iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            usage.updated = (json["timestamp"] as? String).flatMap(iso.date(from:))
-                ?? (try? FileManager.default.attributesOfItem(atPath: file)[.modificationDate] as? Date)
+            usage.updated = (json["timestamp"] as? String).flatMap(iso.date(from:)) ?? FileCache.modified(file)
             if let best, (best.usage.updated ?? .distantPast) >= (usage.updated ?? .distantPast) { continue }
             best = (usage, file)
         }
-        return best.map { ($0.usage, accountID(sessionFile: $0.file)) }
+        return best.map { best in (best.usage, FileCache.value(best.file, kind: "codex-account") { accountID(sessionFile: best.file) }) }
     }
 
     /// The account id from a session's opening `session_meta` line, which comes first.
@@ -209,7 +220,7 @@ public enum PlanUsageReader {
             }
         }
         let files = days.flatMap(sortedDown).filter { $0.hasSuffix(".jsonl") }
-        let dated = files.map { ($0, (try? fm.attributesOfItem(atPath: $0)[.modificationDate] as? Date) ?? .distantPast) }
+        let dated = files.map { ($0, FileCache.modified($0) ?? .distantPast) }
         return dated.sorted { $0.1 > $1.1 }.prefix(count).map(\.0)
     }
 
@@ -405,75 +416,163 @@ public enum ClaudeStatusLine {
 
     public static var backups: URL { Wisp.supportDirectory.appendingPathComponent("claude-settings-backup", isDirectory: true) }
 
-    /// Claude folders whose status line does not run `helper` yet.
-    public static func unconnected(helper: String, home: String = NSHomeDirectory()) -> [String] {
-        PlanUsageReader.claudeFolders(home: home).filter { state(folder: $0, helper: helper) == .notConnected }
-    }
-
-    public static func connectAll(helper: String, home: String = NSHomeDirectory()) {
-        for folder in PlanUsageReader.claudeFolders(home: home) { connect(folder: folder, helper: helper, backups: backups) }
-    }
-
     public static func disconnectAll(home: String = NSHomeDirectory()) {
         for folder in PlanUsageReader.claudeFolders(home: home) { disconnect(folder: folder) }
     }
 }
 
 /// Tokens Claude Code used today, counted from the session logs it keeps on this Mac.
-/// Reads only what was appended since the last count.
+/// Reads only what each log gained since the last count, and walks the folders for new
+/// logs every few minutes; between walks it only checks the logs it knows.
 public final class TokenCounter: @unchecked Sendable {
-    private var offsets: [String: UInt64] = [:]
+    /// The app's counter, so what it has read outlives the window that shows it.
+    public static let shared = TokenCounter()
+
+    private struct File {
+        var inode: UInt64
+        var offset: UInt64
+    }
+
+    private let roots: [String]?
+    private let walkEvery: TimeInterval
+    private var files: [String: File] = [:]
+    private var walkedAt = Date.distantPast
     private var day = ""
     private var total = 0
     private var counted = Set<String>()
     private let lock = NSLock()
+    private static let chunk = 4 << 20
+    private static let usage = Data(#""usage""#.utf8)
 
-    public init() {}
+    /// `roots` are the projects folders to read; by default those of every Claude folder.
+    public init(roots: [String]? = nil, walkEvery: TimeInterval = 300) {
+        self.roots = roots
+        self.walkEvery = walkEvery
+    }
 
-    public func today() -> Int {
+    public func today(now: Date = Date()) -> Int {
         lock.lock()
         defer { lock.unlock() }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        let todayText = formatter.string(from: Date())
+        let todayText = formatter.string(from: now)
         if todayText != day {
+            // Offsets stay: what was read before midnight was written before it.
             day = todayText
             total = 0
-            offsets.removeAll()
             counted.removeAll()
         }
-        let midnight = Calendar.current.startOfDay(for: Date())
+        let midnight = Calendar.current.startOfDay(for: now)
+        if now.timeIntervalSince(walkedAt) >= walkEvery {
+            walk(midnight: midnight)
+            walkedAt = now
+        }
+        // Lines carry UTC timestamps; today here spans one or two UTC dates.
+        let utc = DateFormatter()
+        utc.dateFormat = "yyyy-MM-dd"
+        utc.timeZone = TimeZone(identifier: "UTC")
+        let days = Set([midnight, now].map { utc.string(from: $0) }).map { Data(("\"timestamp\":\"" + $0).utf8) }
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        for folder in PlanUsageReader.claudeFolders() {
-            guard let walker = FileManager.default.enumerator(at: URL(fileURLWithPath: folder + "/projects"),
-                                                              includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]) else { continue }
-            for case let url as URL in walker where url.pathExtension == "jsonl" {
-                guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
-                      let modified = values.contentModificationDate, modified >= midnight,
-                      let size = values.fileSize else { continue }
-                let start = offsets[url.path] ?? 0
-                guard UInt64(size) > start, let handle = try? FileHandle(forReadingFrom: url) else { continue }
-                defer { try? handle.close() }
-                try? handle.seek(toOffset: start)
-                guard let data = try? handle.readToEnd() else { continue }
-                // Count whole lines only; a line still being written is read next time.
-                guard let lastNewline = data.lastIndex(of: 10) else { continue }
-                offsets[url.path] = start + UInt64(lastNewline + 1)
-                for line in data[..<lastNewline].split(separator: 10) {
-                    guard line.count > 40, line.range(of: Data("\"usage\"".utf8)) != nil,
-                          let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                          let stamp = (json["timestamp"] as? String).flatMap(iso.date(from:)), stamp >= midnight,
-                          let message = json["message"] as? [String: Any], let usage = message["usage"] as? [String: Any] else { continue }
-                    // A reply split over several lines repeats its usage on each; count it once.
-                    let key = (message["id"] as? String ?? "") + ":" + (json["requestId"] as? String ?? "")
-                    if key != ":" { guard counted.insert(key).inserted else { continue } }
-                    for key in ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"] {
-                        total += usage[key] as? Int ?? 0
+        var bytesRead: UInt64 = 0
+        defer {
+            // Parsing a day's logs frees tens of MB of small blocks whose pages malloc keeps
+            // dirty; after a large read, hand them back.
+            if bytesRead > 32 << 20 { malloc_zone_pressure_relief(nil, 0) }
+        }
+        for (path, file) in files {
+            var info = stat()
+            guard stat(path, &info) == 0 else {
+                files[path] = nil
+                continue
+            }
+            var start = file.offset
+            // Replaced or cut short: read it again from the top.
+            if UInt64(info.st_ino) != file.inode || UInt64(info.st_size) < start { start = 0 }
+            guard UInt64(info.st_size) > start else {
+                files[path] = File(inode: UInt64(info.st_ino), offset: start)
+                continue
+            }
+            let end = read(path, from: start, days: days, midnight: midnight, iso: iso)
+            bytesRead += end - start
+            files[path] = File(inode: UInt64(info.st_ino), offset: end)
+        }
+        return total
+    }
+
+    private func walk(midnight: Date) {
+        var found = Set<String>()
+        for root in roots ?? PlanUsageReader.claudeFolders().map({ $0 + "/projects" }) {
+            guard let walker = FileManager.default.enumerator(atPath: root) else { continue }
+            for case let name as String in walker where name.hasSuffix(".jsonl") { found.insert(root + "/" + name) }
+        }
+        files = files.filter { found.contains($0.key) }
+        for path in found where files[path] == nil {
+            var info = stat()
+            guard stat(path, &info) == 0 else { continue }
+            // A log untouched since midnight holds nothing from today: start at its end.
+            let untouched = TimeInterval(info.st_mtimespec.tv_sec) < midnight.timeIntervalSince1970
+            files[path] = File(inode: UInt64(info.st_ino), offset: untouched ? UInt64(info.st_size) : 0)
+        }
+    }
+
+    /// Counts the whole lines from `start` on and returns where the next read begins;
+    /// a line still being written is read next time.
+    private func read(_ path: String, from start: UInt64, days: [Data], midnight: Date, iso: ISO8601DateFormatter) -> UInt64 {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return start }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: start)) != nil else { return start }
+        var offset = start
+        var pending = Data()
+        // Each chunk the handle reads, and every line parsed from it, is autoreleased. A log
+        // touched today is read from its start, and a day's logs run to hundreds of MB, so
+        // without a pool per chunk all of it stays in memory until the whole count ends.
+        while autoreleasepool(invoking: { () -> Bool in
+            guard let chunk = try? handle.read(upToCount: Self.chunk), !chunk.isEmpty else { return false }
+            pending.append(chunk)
+            guard let lastNewline = pending.lastIndex(of: 10) else { return true }
+            count(pending[..<lastNewline], days: days, midnight: midnight, iso: iso)
+            offset += UInt64(lastNewline - pending.startIndex + 1)
+            pending = Data(pending[(lastNewline + 1)...])
+            return true
+        }) {}
+        return offset
+    }
+
+    /// Adds the usage on lines stamped today. memmem finds today's lines by their
+    /// timestamp, so older lines are never split out or parsed.
+    private func count(_ data: Data, days: [Data], midnight: Date, iso: ISO8601DateFormatter) {
+        var lines: [Range<Int>] = []
+        var starts = Set<Int>()
+        data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+            guard let base = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            let count = buffer.count
+            for day in days {
+                day.withUnsafeBytes { needle in
+                    var position = 0
+                    while position < count, let match = memmem(base + position, count - position, needle.baseAddress, needle.count) {
+                        let at = base.distance(to: match.assumingMemoryBound(to: UInt8.self))
+                        var lineStart = at
+                        while lineStart > position, base[lineStart - 1] != 10 { lineStart -= 1 }
+                        let lineEnd = memchr(base + at, 10, count - at).map { base.distance(to: $0.assumingMemoryBound(to: UInt8.self)) } ?? count
+                        if starts.insert(lineStart).inserted { lines.append(lineStart..<lineEnd) }
+                        position = lineEnd + 1
                     }
                 }
             }
         }
-        return total
+        for range in lines {
+            let line = data[(data.startIndex + range.lowerBound)..<(data.startIndex + range.upperBound)]
+            guard line.count > 40, line.range(of: Self.usage) != nil,
+                  let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  let stamp = (json["timestamp"] as? String).flatMap(iso.date(from:)), stamp >= midnight,
+                  let message = json["message"] as? [String: Any], let usage = message["usage"] as? [String: Any] else { continue }
+            // A reply split over several lines repeats its usage on each; count it once.
+            let key = (message["id"] as? String ?? "") + ":" + (json["requestId"] as? String ?? "")
+            if key != ":" { guard counted.insert(key).inserted else { continue } }
+            for key in ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"] {
+                total += usage[key] as? Int ?? 0
+            }
+        }
     }
 }

@@ -14,16 +14,13 @@ public enum CodexLive {
         var accountID: String?
         var plan: String?
         var windows: [ClaudeStatusLine.Record.Window]
+        /// Checks in a row that answered the same, which spaces the next ones out.
+        var unchanged: Int?
     }
 
-    /// Where the codex program usually is. A Mac app starts with a short PATH, so the
-    /// usual install folders are tried as well.
+    /// The codex program, or the one inside the Codex app.
     static func binary(home: String = NSHomeDirectory()) -> String? {
-        let path = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { String($0) + "/codex" }
-        let usual = ["/opt/homebrew/bin/codex", "/usr/local/bin/codex", home + "/.local/bin/codex",
-                     home + "/.npm-global/bin/codex", home + "/Library/pnpm/codex",
-                     "/Applications/Codex.app/Contents/Resources/codex"]
-        return (path + usual).first { FileManager.default.isExecutableFile(atPath: $0) }
+        LiveCheck.binary(["codex"], home: home, extra: ["/Applications/Codex.app/Contents/Resources/codex"])
     }
 
     static func fileName(folder: String) -> String {
@@ -48,9 +45,11 @@ public enum CodexLive {
     }
 
     /// Asks again for each signed-in Codex folder whose saved answer is older than
-    /// `maxAge`. Folders that share one sign-in file are asked once.
+    /// `maxAge` (spaced out while the figures stay the same when `paced`). Folders that
+    /// share one sign-in file are asked once; a sign-in whose last question failed waits
+    /// ten minutes.
     public static func refresh(home: String = NSHomeDirectory(), store: URL = ClaudeStatusLine.store,
-                               maxAge: TimeInterval, now: Date = Date()) {
+                               maxAge: TimeInterval, paced: Bool = false, now: Date = Date()) {
         guard let codex = binary(home: home) else { return }
         var asked = Set<String>()
         for folder in PlanUsageReader.codexFolders(home: home) {
@@ -59,9 +58,16 @@ public enum CodexLive {
             // T3 Code's ~/.codex-t3/auth.json links to ~/.codex's: one account, one question.
             let signIn = (auth as NSString).resolvingSymlinksInPath
             guard asked.insert(signIn).inserted else { continue }
-            if let saved = saved(folder: folder, store: store), now.timeIntervalSince(saved.updated) < maxAge { continue }
-            guard let answer = ask(codex: codex, folder: folder) else { continue }
-            save(record(answer, folder: folder, now: now), store: store)
+            let previous = saved(folder: folder, store: store)
+            if let previous, now.timeIntervalSince(previous.updated) < LiveCheck.interval(maxAge: maxAge, unchanged: previous.unchanged ?? 0, paced: paced) { continue }
+            let key = "codex:" + signIn
+            if LiveCheck.failedRecently(key, now: now) { continue }
+            LiveCheck.once(key) {
+                guard let answer = ask(codex: codex, folder: folder, home: home) else { return LiveCheck.failed(key, now: now) }
+                var next = record(answer, folder: folder, now: now)
+                next.unchanged = LiveCheck.unchanged(previous: previous?.windows, count: previous?.unchanged, next: next.windows)
+                save(next, store: store)
+            }
         }
     }
 
@@ -80,52 +86,19 @@ public enum CodexLive {
 
     /// Starts `codex app-server` for one folder, asks for the limits and stops it.
     /// Gives up after `timeout` seconds, as when Codex is signed out or offline.
-    static func ask(codex: String, folder: String, timeout: TimeInterval = 20) -> [String: Any]? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: codex)
-        process.arguments = ["app-server"]
-        var environment = ProcessInfo.processInfo.environment
-        environment["CODEX_HOME"] = folder
-        process.environment = environment
-        let input = Pipe(), output = Pipe()
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-
-        let done = DispatchSemaphore(value: 0)
-        let lock = NSLock()
-        var buffer = Data()
-        var answer: [String: Any]?
-        output.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            lock.lock()
-            defer { lock.unlock() }
-            guard answer == nil else { return }
-            if chunk.isEmpty { done.signal(); return }
-            buffer.append(chunk)
-            while let end = buffer.firstIndex(of: 10) {
-                let line = buffer[buffer.startIndex..<end]
-                buffer.removeSubrange(buffer.startIndex...end)
-                guard let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                      (json["id"] as? NSNumber)?.intValue == 2 else { continue }
-                answer = json["result"] as? [String: Any] ?? [:]
-                done.signal()
-                return
-            }
-        }
-        do { try process.run() } catch { return nil }
+    static func ask(codex: String, folder: String, home: String = NSHomeDirectory(), timeout: TimeInterval = 20) -> [String: Any]? {
         let requests = [
             #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"wisp","version":"\#(Wisp.version)"}}}"#,
             #"{"jsonrpc":"2.0","method":"initialized"}"#,
             #"{"jsonrpc":"2.0","id":2,"method":"account/rateLimits/read"}"#,
         ]
-        try? input.fileHandleForWriting.write(contentsOf: Data((requests.joined(separator: "\n") + "\n").utf8))
-        _ = done.wait(timeout: .now() + timeout)
-        output.fileHandleForReading.readabilityHandler = nil
-        try? input.fileHandleForWriting.close()
-        if process.isRunning { process.terminate() }
-        lock.lock()
-        defer { lock.unlock() }
+        let answer: [String: Any]? = LiveCheck.run(
+            codex, ["app-server"], environment: LiveCheck.environment(setting: ["CODEX_HOME": folder], home: home),
+            input: Data((requests.joined(separator: "\n") + "\n").utf8), timeout: timeout
+        ) { line in
+            guard let json = LiveCheck.json(line), (json["id"] as? NSNumber)?.intValue == 2 else { return nil }
+            return json["result"] as? [String: Any] ?? [:]
+        }
         guard let answer, answer["rateLimits"] != nil else { return nil }
         return answer
     }
