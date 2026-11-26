@@ -42,8 +42,8 @@ final class ThermalCollector {
         fans = []
     }
 
-    /// Without `detail` only the CPU and GPU sensors are read: each SMC read is a
-    /// round trip to a coprocessor (about 0.2 ms), and the menu bar shows one number.
+    /// Without `detail` only the CPU sensors are read: each SMC read is a round trip to
+    /// a coprocessor (about 0.2 ms), and the menu bar, history and alerts use one number.
     func sample(detail: Bool) -> ThermalReading {
         let pressure: ThermalPressure
         switch ProcessInfo.processInfo.thermalState {
@@ -61,7 +61,7 @@ final class ThermalCollector {
         readings.reserveCapacity(sensors.count)
         var cpu = (0.0, 0), gpu = (0.0, 0)
         for sensor in sensors {
-            if !detail, sensor.group != .cpu, sensor.group != .gpu { continue }
+            if !detail, sensor.group != .cpu { continue }
             guard let value = smc.read(sensor.key, sensor.info) else { continue }
             // Power-gated domains report 0 or small negative sentinels instead of failing.
             let floor = sensor.group == .cpu || sensor.group == .gpu ? 10.0 : 1.0

@@ -61,6 +61,7 @@ final class ProcessScanner {
     private var entries: [Int32: Entry] = [:]
     private var groupInfo: [String: GroupInfo] = [:]
     private var generation = 0
+    private let ownUID = getuid()
     private var lastScan: UInt64 = 0
     private var host = (ticks: host_cpu_load_info(), valid: false)
     private let coreCount = ProcessInfo.processInfo.activeProcessorCount
@@ -96,17 +97,31 @@ final class ProcessScanner {
         for index in 0..<count {
             let pid = pids[index]
             if pid == 0 && index > 0 { continue }
-            let readable = withUnsafeMutablePointer(to: &usage) {
-                $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
-                    proc_pid_rusage(pid, RUSAGE_INFO_V6, $0) == 0
+            var entry = entries[pid]
+            // Another user's process stays unreadable while it lives; asking again costs
+            // a failing syscall per process per pass. Its identity is still rechecked below.
+            func read() -> Bool {
+                withUnsafeMutablePointer(to: &usage) {
+                    $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+                        proc_pid_rusage(pid, RUSAGE_INFO_V6, $0) == 0
+                    }
                 }
             }
-
-            var entry = entries[pid]
+            var readable = entry?.readable != false && read()
             if let existing = entry {
                 let reused = readable ? existing.start != usage.ri_proc_start_abstime
                     : (generation - existing.checkedAt > 15 && identityChanged(existing, pid: pid))
-                if reused { entry = nil }
+                if reused {
+                    entry = nil
+                    // The process now on this pid may be readable though the last one was not.
+                    if !readable { readable = read() }
+                } else if !readable, existing.uid == ownUID, generation - existing.checkedAt > 15 {
+                    // One of the owner's processes caught mid-exec or before it dropped
+                    // privileges is asked again now and then, not written off for its life.
+                    existing.checkedAt = generation
+                    readable = read()
+                    if readable { entry = nil }
+                }
             }
             if entry == nil {
                 guard let fresh = resolve(pid: pid, start: readable ? usage.ri_proc_start_abstime : 0, readable: readable) else { continue }
@@ -155,6 +170,10 @@ final class ProcessScanner {
 
         if generation % 8 == 0 || entries.count > count + 64 {
             entries = entries.filter { $0.value.seen == generation }
+        }
+        if generation % 64 == 0 {
+            let live = Set(entries.values.lazy.map(\.groupID))
+            groupInfo = groupInfo.filter { live.contains($0.key) }
         }
 
         let apps = AppGrouping.group(rows) { id in

@@ -48,6 +48,7 @@ public final class BatteryLog: @unchecked Sendable {
         }
         sqlite3_exec(db, """
         PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
         CREATE TABLE IF NOT EXISTS battery_minutes (minute INTEGER PRIMARY KEY, level REAL NOT NULL, state INTEGER NOT NULL);
         """, nil, nil, nil)
     }
@@ -73,15 +74,19 @@ public final class BatteryLog: @unchecked Sendable {
         }
     }
 
-    /// Writes buffered samples to disk, for quitting.
+    /// Writes buffered samples to disk and empties the write-ahead log, which SQLite
+    /// would not checkpoint by itself at this rate (see `HourlyArchive.checkpoint`).
     public func flush() {
-        lock.withLock { writePending() }
+        lock.withLock {
+            writePending()
+            if let db { sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, nil, nil) }
+        }
     }
 
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     private func writePending() {
-        guard let db, !pending.isEmpty else { return }
+        guard let db, !pending.isEmpty, !Wisp.readOnly else { return }
         sqlite3_exec(db, "BEGIN", nil, nil, nil)
         var statement: OpaquePointer?
         if sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO battery_minutes VALUES (?,?,?)", -1, &statement, nil) == SQLITE_OK {

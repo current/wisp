@@ -64,6 +64,22 @@ import Testing
         #expect(samples.first?.level == 90)
     }
 
+    @Test func flushEmptiesTheWriteAheadLog() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("wisp-battery-\(UUID().uuidString).sqlite")
+        let wal = url.path + "-wal"
+        defer { for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: url.path + suffix) } }
+        let log = BatteryLog(url: url)
+        let start = Date(timeIntervalSince1970: 60 * 2_000_000)
+        for minute in 0..<20 {
+            log.record(level: 50, charging: false, plugged: false, at: start.addingTimeInterval(Double(minute) * 60))
+        }
+        let size = { (try? FileManager.default.attributesOfItem(atPath: wal)[.size] as? Int) ?? nil }
+        #expect((size() ?? 0) > 0)
+        log.flush()
+        #expect(size() == 0)
+        #expect(log.samples(since: 0).count == 20)
+    }
+
     @Test func seriesShadesChargingAndCarriesHeldLevel() {
         let samples = [
             sample(100, 60, .onBattery), sample(101, 59, .onBattery),

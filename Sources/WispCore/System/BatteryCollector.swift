@@ -7,6 +7,19 @@ final class BatteryCollector {
     /// macOS 27 moved the pack temperature onto this child node.
     private var pack: io_service_t = 0
     private var looked = false
+    /// Figures that move over weeks (wear, cycles, the pack's date), which come from the
+    /// large BatteryData dictionaries, so they are read once an hour.
+    private var lasting: Lasting?
+
+    private struct Lasting {
+        var readAt: Date
+        var cycleCount: Int?
+        var designCycleCount: Int?
+        var fullChargeCapacity: Int?
+        var designCapacity: Int?
+        var health: Double?
+        var manufactured: Date?
+    }
 
     deinit {
         if battery != 0 { IOObjectRelease(battery) }
@@ -33,12 +46,9 @@ final class BatteryCollector {
                 (source[kIOPSPowerSourceStateKey] as? String) == kIOPSACPowerValue)
     }
 
-    func sample() -> BatteryReading? {
-        if !looked {
-            looked = true
-            battery = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
-            pack = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBatteryPack"))
-        }
+    /// Without `detail` only the power source list is read, which is all the menu bar
+    /// shows; the registry reads are for the dropdown and the window.
+    func sample(detail: Bool = true) -> BatteryReading? {
         guard let source = Self.internalSource() else { return nil }
 
         let current = (source[kIOPSCurrentCapacityKey] as? NSNumber)?.doubleValue ?? 0
@@ -52,51 +62,75 @@ final class BatteryCollector {
         var reading = BatteryReading(percent: max > 0 ? Swift.min(100, current / max * 100) : current,
                                      isCharging: charging, isPluggedIn: plugged, minutesRemaining: minutes)
         reading.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
-        if battery != 0 {
-            // Only the keys used, not the whole node: it carries large port controller blobs.
-            func top(_ key: String) -> Any? {
-                IORegistryEntryCreateCFProperty(battery, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
-            }
-            let data = top("BatteryData") as? [String: Any] ?? [:]
-            let packData = pack != 0
-                ? (IORegistryEntryCreateCFProperty(pack, "BatteryData" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any] ?? [:])
-                : [:]
-            func value(_ key: String) -> NSNumber? {
-                (top(key) ?? data[key] ?? packData[key]) as? NSNumber
-            }
-            reading.cycleCount = value("CycleCount")?.intValue
-            reading.designCycleCount = (top("DesignCycleCount9C") as? NSNumber)?.intValue
+        guard detail else { return reading }
+        if !looked {
+            looked = true
+            battery = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+            pack = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBatteryPack"))
+        }
+        guard battery != 0 else { return reading }
+
+        // Only the keys used, not the whole node: it carries large port controller blobs.
+        func top(_ key: String) -> Any? {
+            IORegistryEntryCreateCFProperty(battery, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
+        }
+        var batteryData: [String: Any]?
+        func data() -> [String: Any] {
+            if batteryData == nil { batteryData = top("BatteryData") as? [String: Any] ?? [:] }
+            return batteryData ?? [:]
+        }
+        let packData = pack != 0
+            ? (IORegistryEntryCreateCFProperty(pack, "BatteryData" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any] ?? [:])
+            : [:]
+        func value(_ key: String) -> NSNumber? {
+            (top(key) ?? data()[key] ?? packData[key]) as? NSNumber
+        }
+
+        if lasting.map({ Date().timeIntervalSince($0.readAt) > 3600 }) ?? true {
+            var figures = Lasting(readAt: Date())
+            figures.cycleCount = value("CycleCount")?.intValue
+            figures.designCycleCount = (top("DesignCycleCount9C") as? NSNumber)?.intValue
                 ?? (source["DesignCycleCount"] as? NSNumber)?.intValue
-            let design = (data["DesignCapacity"] ?? packData["DesignCapacity"] ?? top("DesignCapacity")) as? NSNumber
+            let design = (data()["DesignCapacity"] ?? packData["DesignCapacity"] ?? top("DesignCapacity")) as? NSNumber
             // Nominal charge capacity is the figure closest to what System Settings shows;
             // the raw maximum is the gauge's own, more conservative estimate.
-            let full = (data["NominalChargeCapacity"] ?? packData["NominalChargeCapacity"]
-                ?? data["AppleRawMaxCapacity"] ?? top("AppleRawMaxCapacity")) as? NSNumber
+            let full = (data()["NominalChargeCapacity"] ?? packData["NominalChargeCapacity"]
+                ?? data()["AppleRawMaxCapacity"] ?? top("AppleRawMaxCapacity")) as? NSNumber
             if let full, let design, design.doubleValue > 0 {
-                reading.fullChargeCapacity = full.intValue
-                reading.designCapacity = design.intValue
-                reading.health = Swift.min(1, full.doubleValue / design.doubleValue)
+                figures.fullChargeCapacity = full.intValue
+                figures.designCapacity = design.intValue
+                figures.health = Swift.min(1, full.doubleValue / design.doubleValue)
             }
-            if let raw = ((packData["Temperature"] ?? top("Temperature") ?? data["Temperature"]) as? NSNumber)?.doubleValue, raw > 0 {
-                reading.temperature = raw / 100
+            if let raw = ((data()["ManufactureDate"] ?? packData["ManufactureDate"] ?? top("ManufactureDate")) as? NSNumber)?.intValue {
+                figures.manufactured = Self.manufactureDate(raw)
             }
-            if let volts = value("Voltage")?.doubleValue, let amps = value("Amperage")?.int64Value {
-                reading.watts = volts / 1000 * Double(Int16(truncatingIfNeeded: amps)) / 1000
-            }
-            if plugged, let adapter = top("AdapterDetails") as? [String: Any],
-               let watts = (adapter["Watts"] as? NSNumber)?.intValue, watts > 0 {
-                reading.adapterWatts = watts
-            }
-            if let telemetry = top("PowerTelemetryData") as? [String: Any],
-               let load = (telemetry["SystemLoad"] as? NSNumber)?.doubleValue, load > 0, load < 1_000_000 {
-                reading.systemWatts = load / 1000
-            }
-            let fullyCharged = (top("FullyCharged") as? Bool) ?? false
-            reading.chargeHeld = plugged && !charging && !fullyCharged && reading.percent < 99
-            if let raw = ((data["ManufactureDate"] ?? packData["ManufactureDate"] ?? top("ManufactureDate")) as? NSNumber)?.intValue {
-                reading.manufactured = Self.manufactureDate(raw)
-            }
+            lasting = figures
         }
+        if let lasting {
+            reading.cycleCount = lasting.cycleCount
+            reading.designCycleCount = lasting.designCycleCount
+            reading.fullChargeCapacity = lasting.fullChargeCapacity
+            reading.designCapacity = lasting.designCapacity
+            reading.health = lasting.health
+            reading.manufactured = lasting.manufactured
+        }
+
+        if let raw = ((packData["Temperature"] ?? top("Temperature") ?? data()["Temperature"]) as? NSNumber)?.doubleValue, raw > 0 {
+            reading.temperature = raw / 100
+        }
+        if let volts = value("Voltage")?.doubleValue, let amps = value("Amperage")?.int64Value {
+            reading.watts = volts / 1000 * Double(Int16(truncatingIfNeeded: amps)) / 1000
+        }
+        if plugged, let adapter = top("AdapterDetails") as? [String: Any],
+           let watts = (adapter["Watts"] as? NSNumber)?.intValue, watts > 0 {
+            reading.adapterWatts = watts
+        }
+        if let telemetry = top("PowerTelemetryData") as? [String: Any],
+           let load = (telemetry["SystemLoad"] as? NSNumber)?.doubleValue, load > 0, load < 1_000_000 {
+            reading.systemWatts = load / 1000
+        }
+        let fullyCharged = (top("FullyCharged") as? Bool) ?? false
+        reading.chargeHeld = plugged && !charging && !fullyCharged && reading.percent < 99
         return reading
     }
 

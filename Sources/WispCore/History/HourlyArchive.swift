@@ -32,6 +32,7 @@ public final class HourlyArchive: @unchecked Sendable {
         }
         exec("""
         PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
         CREATE TABLE IF NOT EXISTS app_hours (
             hour INTEGER NOT NULL, app TEXT NOT NULL, name TEXT NOT NULL,
             cpu REAL, memory_peak REAL, energy_wh REAL, disk_bytes REAL, network_bytes REAL, minutes INTEGER,
@@ -52,6 +53,7 @@ public final class HourlyArchive: @unchecked Sendable {
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     func write(hour: Int, apps: [Row], system: [SystemMetric: Double]) {
+        guard !Wisp.readOnly else { return }
         lock.withLock {
             exec("BEGIN")
             var statement: OpaquePointer?
@@ -85,6 +87,15 @@ public final class HourlyArchive: @unchecked Sendable {
             exec("DELETE FROM system_hours WHERE hour < \(hour - Self.retentionHours)")
             exec("COMMIT")
         }
+    }
+
+    /// Moves the write-ahead log into the database and empties it. The few pages written
+    /// an hour never reach SQLite's own 1000-page checkpoint, and the connection is
+    /// never closed (closing is what checkpoints otherwise), so without this the log
+    /// would hold every write since the file was made.
+    func checkpoint() {
+        guard !Wisp.readOnly else { return }
+        lock.withLock { sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, nil, nil) }
     }
 
     /// Hourly rows for one app, or for every app when `app` is nil, newest last.

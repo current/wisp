@@ -14,8 +14,8 @@ public struct Volume: Codable, Sendable, Equatable {
 /// browsable in Finder. Disk images and system volumes are left out.
 public enum Volumes {
     public static func list() -> [Volume] {
-        let keys: [URLResourceKey] = [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey,
-                                      .volumeAvailableCapacityKey, .volumeIsInternalKey, .volumeIsBrowsableKey, .volumeIsRootFileSystemKey]
+        let keys: [URLResourceKey] = [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey,
+                                      .volumeIsInternalKey, .volumeIsBrowsableKey, .volumeIsRootFileSystemKey]
         let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? []
         return urls.compactMap { url -> Volume? in
             guard let values = try? url.resourceValues(forKeys: Set(keys)), values.volumeIsBrowsable ?? true,

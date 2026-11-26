@@ -303,7 +303,13 @@ extension HistoryStore {
             snapshot.disk = DiskReading(readBytesPerSecond: disk * 0.3, writeBytesPerSecond: disk * 0.7, volumeTotal: 0, volumeFree: 0)
             snapshot.network = NetworkReading(receivedBytesPerSecond: 120_000, sentBytesPerSecond: 30_000, totalReceived: 0, totalSent: 0)
             let watts = groups.reduce(0) { $0 + $1.watts }
-            snapshot.power = PowerReading(cpu: watts * 0.8, gpu: watts * 0.2, ane: 0)
+            // Photos analysis in the morning, a dictation and a short Live Text burst, so the
+            // Neural Engine page has a day to draw too.
+            var ane = 0.0
+            for (from, length, peak) in [(980, 26, 1.6), (640, 5, 0.7), (75, 9, 2.4)] where offset <= from && offset > from - length {
+                ane = peak * (0.6 + 0.4 * sin(Double(from - offset) / Double(length) * .pi)) + 0.05 * sin(Double(minute))
+            }
+            snapshot.power = PowerReading(cpu: watts * 0.8, gpu: watts * 0.2, ane: ane)
             record(system: snapshot, interval: 60)
             record(table: ProcessTable(date: date, interval: 60, apps: groups, machineCPU: busy, coreCount: cores))
         }

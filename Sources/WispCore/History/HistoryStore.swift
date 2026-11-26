@@ -4,6 +4,8 @@ public enum SystemMetric: String, CaseIterable, Codable, Sendable {
     case cpu, memory, diskRead, diskWrite, networkIn, networkOut, gpu, cpuTemperature, power, battery, cpuSystem
     /// Free bytes on the startup disk, archived once an hour.
     case diskFree
+    /// Neural Engine watts, so its page can show the day and not only the last minutes.
+    case neural
 }
 
 public enum AppMetric: String, CaseIterable, Codable, Sendable {
@@ -31,6 +33,12 @@ public final class HistoryStore: @unchecked Sendable {
         var sum: Double = 0
         var time: Double = 0
         var peak: Double = 0
+
+        mutating func add(_ value: Double, over seconds: Double) {
+            sum += value * seconds
+            time += seconds
+            peak = max(peak, value)
+        }
     }
 
     fileprivate final class AppHistory {
@@ -96,6 +104,7 @@ public final class HistoryStore: @unchecked Sendable {
         if let power = snapshot.power?.cpu.map({ $0 + (snapshot.power?.gpu ?? 0) + (snapshot.power?.ane ?? 0) }) {
             values.append((.power, power))
         }
+        if let ane = snapshot.power?.ane { values.append((.neural, ane)) }
         if let battery = snapshot.battery { values.append((.battery, battery.percent)) }
 
         let minute = Self.minute(snapshot.date)
@@ -103,14 +112,8 @@ public final class HistoryStore: @unchecked Sendable {
             if firstMinute == nil { firstMinute = minute }
             if minute != systemPendingMinute { flushSystem(newMinute: minute) }
             for (metric, value) in values {
-                var acc = systemPending[metric] ?? Accumulator()
-                acc.sum += value * max(interval, 0.001)
-                acc.time += max(interval, 0.001)
-                acc.peak = max(acc.peak, value)
-                systemPending[metric] = acc
-                var ring = recent[metric] ?? RecentRing(capacity: Self.recentSamples)
-                ring.append(Float(value))
-                recent[metric] = ring
+                systemPending[metric, default: Accumulator()].add(value, over: max(interval, 0.001))
+                recent[metric, default: RecentRing(capacity: Self.recentSamples)].append(Float(value))
             }
             if let cores = snapshot.cpu?.cores, !cores.isEmpty {
                 if recentCores.count != cores.count {
@@ -124,9 +127,7 @@ public final class HistoryStore: @unchecked Sendable {
     private func flushSystem(newMinute: Int) {
         if systemPendingMinute != 0 {
             for (metric, acc) in systemPending where acc.time > 0 {
-                var ring = systemRings[metric] ?? MinuteRing(capacity: Self.minutes)
-                ring.set(Float(acc.sum / acc.time), minute: systemPendingMinute)
-                systemRings[metric] = ring
+                systemRings[metric, default: MinuteRing(capacity: Self.minutes)].set(Float(acc.sum / acc.time), minute: systemPendingMinute)
             }
         }
         systemPending.removeAll(keepingCapacity: true)
@@ -151,12 +152,12 @@ public final class HistoryStore: @unchecked Sendable {
                     history.pendingMinute = minute
                 }
                 history.lastSeenMinute = minute
-                let rates: [Double] = [app.cpu, Double(app.memory), app.watts, app.diskPerSecond, app.networkPerSecond]
-                for index in rates.indices {
-                    history.pending[index].sum += rates[index] * dt
-                    history.pending[index].time += dt
-                    history.pending[index].peak = max(history.pending[index].peak, rates[index])
-                }
+                // In AppMetric order.
+                history.pending[0].add(app.cpu, over: dt)
+                history.pending[1].add(Double(app.memory), over: dt)
+                history.pending[2].add(app.watts, over: dt)
+                history.pending[3].add(app.diskPerSecond, over: dt)
+                history.pending[4].add(app.networkPerSecond, over: dt)
             }
             // Flush apps that stopped reporting so their last minute is not lost.
             for history in apps.values where history.pendingMinute != 0 && history.pendingMinute < minute {
@@ -227,6 +228,7 @@ public final class HistoryStore: @unchecked Sendable {
             flushSystem(newMinute: minute)
             archiveHours(through: minute / 60)
         }
+        archive?.checkpoint()
         batteryLog.flush()
     }
 

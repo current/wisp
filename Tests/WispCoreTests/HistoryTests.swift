@@ -163,3 +163,37 @@ import Testing
         #expect(!AlertEngine.isGrowing([1e9, 3e9], by: 1e9))
     }
 }
+
+@Suite struct MonitorTests {
+    @Test func readingsNoLongerAskedForAreDroppedNotRecorded() {
+        let monitor = Monitor(history: HistoryStore(archive: nil))
+        monitor.update(activity: .popover, plan: SamplingPlan(demand: [.cpu, .memory, .disk, .network, .thermal]))
+        monitor.perform { $0.sampleThermal(); $0.sampleSystem() }
+        #expect(monitor.currentSystem.disk != nil && monitor.currentSystem.thermal != nil)
+        // The dropdown closes; the menu bar shows memory only.
+        monitor.update(activity: .menuBar, plan: SamplingPlan(demand: [.memory]))
+        monitor.perform { $0.sampleSystem(); $0.sampleSystem() }
+        let system = monitor.currentSystem
+        #expect(system.cpu == nil && system.disk == nil && system.network == nil && system.thermal == nil)
+        #expect(monitor.history.recent(.diskRead).count == 1)
+        #expect(monitor.history.recent(.memory).count == 3)
+    }
+
+    @MainActor @Test func severalJobsPublishOnce() async {
+        let monitor = Monitor(history: HistoryStore(archive: nil))
+        let published = Published()
+        monitor.onSystem = { _ in published.count += 1 }
+        // A long interval, so a busy Mac cannot fit a second pass in before the check.
+        monitor.update(activity: .popover, plan: SamplingPlan(demand: [.cpu, .memory, .thermal, .battery], interval: 30, backgroundProcessInterval: nil))
+        monitor.start()
+        // The first pass runs the system, thermal and battery jobs together.
+        for _ in 0..<100 where published.count == 0 { try? await Task.sleep(for: .milliseconds(20)) }
+        monitor.stop()
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(published.count == 1)
+    }
+}
+
+@MainActor private final class Published {
+    var count = 0
+}

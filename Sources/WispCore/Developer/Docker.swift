@@ -78,12 +78,16 @@ public enum Docker {
             if stats {
                 let group = DispatchGroup()
                 let lock = NSLock()
+                // Set once the wait is over: a reading that comes later leaves the result
+                // and the watcher alone.
+                var finished = false
                 for index in containers.indices {
                     let id = containers[index].id
                     DispatchQueue.global(qos: .utility).async(group: group) {
                         guard let data = request("/containers/\(id)/stats?stream=false&one-shot=true", socket: socket),
                               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
                         lock.withLock {
+                            guard !finished else { return }
                             apply(json, to: &containers[index])
                             watcher?.cpu(json, for: &containers[index])
                             watcher?.rates(for: &containers[index])
@@ -91,6 +95,7 @@ public enum Docker {
                     }
                 }
                 _ = group.wait(timeout: .now() + 3)
+                lock.withLock { finished = true }
             }
             return DockerStatus(socket: socket, containers: containers.sorted { $0.name < $1.name })
         }

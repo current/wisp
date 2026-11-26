@@ -57,6 +57,9 @@ public final class DevServerScanner: @unchecked Sendable {
                                  "deno.json", "mix.exs", "pom.xml", "build.gradle", "Package.swift"]
     /// Idle means nothing connected for this long.
     public static let idleAfter: Double = 30 * 60
+    /// The app's scanner: the pages that list dev servers share what it has seen, such as
+    /// when each server last had a connection.
+    public static let shared = DevServerScanner()
 
     private var lastActive: [String: Date] = [:]
     private let watchStart = Date()

@@ -62,31 +62,35 @@ public enum AppGrouping {
 
     /// Sums process rows into app rows, ordered by CPU.
     public static func group(_ rows: [ProcessRow], names: (String) -> (name: String, kind: AppKind, bundlePath: String?, bundleIdentifier: String?)) -> [AppGroup] {
-        var groups: [String: AppGroup] = [:]
+        // Rows accumulate in place in an array; a dictionary of structs would copy each
+        // group, and its growing pid list, out and back for every process.
+        var groups: [AppGroup] = []
+        var slots: [String: Int] = [:]
         groups.reserveCapacity(96)
+        slots.reserveCapacity(96)
         for row in rows {
-            if var group = groups[row.groupID] {
-                group.pids.append(row.pid)
-                group.cpu += row.cpu
-                group.memory += row.memory
-                group.watts += row.watts
-                group.diskReadPerSecond += row.diskReadPerSecond
-                group.diskWritePerSecond += row.diskWritePerSecond
-                group.networkInPerSecond += row.networkInPerSecond
-                group.networkOutPerSecond += row.networkOutPerSecond
-                group.wakeupsPerSecond += row.wakeupsPerSecond
-                if !row.readable { group.unreadable += 1 }
-                groups[row.groupID] = group
+            if let slot = slots[row.groupID] {
+                groups[slot].pids.append(row.pid)
+                groups[slot].cpu += row.cpu
+                groups[slot].memory += row.memory
+                groups[slot].watts += row.watts
+                groups[slot].diskReadPerSecond += row.diskReadPerSecond
+                groups[slot].diskWritePerSecond += row.diskWritePerSecond
+                groups[slot].networkInPerSecond += row.networkInPerSecond
+                groups[slot].networkOutPerSecond += row.networkOutPerSecond
+                groups[slot].wakeupsPerSecond += row.wakeupsPerSecond
+                if !row.readable { groups[slot].unreadable += 1 }
             } else {
                 let info = names(row.groupID)
-                groups[row.groupID] = AppGroup(id: row.groupID, name: info.name, kind: info.kind,
-                                               bundlePath: info.bundlePath, bundleIdentifier: info.bundleIdentifier,
-                                               pids: [row.pid], cpu: row.cpu, memory: row.memory, watts: row.watts,
-                                               diskReadPerSecond: row.diskReadPerSecond, diskWritePerSecond: row.diskWritePerSecond,
-                                               networkInPerSecond: row.networkInPerSecond, networkOutPerSecond: row.networkOutPerSecond,
-                                               unreadable: row.readable ? 0 : 1, wakeupsPerSecond: row.wakeupsPerSecond)
+                slots[row.groupID] = groups.count
+                groups.append(AppGroup(id: row.groupID, name: info.name, kind: info.kind,
+                                       bundlePath: info.bundlePath, bundleIdentifier: info.bundleIdentifier,
+                                       pids: [row.pid], cpu: row.cpu, memory: row.memory, watts: row.watts,
+                                       diskReadPerSecond: row.diskReadPerSecond, diskWritePerSecond: row.diskWritePerSecond,
+                                       networkInPerSecond: row.networkInPerSecond, networkOutPerSecond: row.networkOutPerSecond,
+                                       unreadable: row.readable ? 0 : 1, wakeupsPerSecond: row.wakeupsPerSecond))
             }
         }
-        return groups.values.sorted { ($0.cpu, $0.memory, $1.name) > ($1.cpu, $1.memory, $0.name) }
+        return groups.sorted { ($0.cpu, $0.memory, $1.name) > ($1.cpu, $1.memory, $0.name) }
     }
 }

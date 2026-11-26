@@ -217,7 +217,10 @@ public final class AlertEngine: @unchecked Sendable {
 
     private func fire(_ kind: AlertKind, id: String, name: String, now: Date, _ message: (String, String)) -> Alert? {
         let key = kind.rawValue + "|" + id
-        if let last = lastFired[key], now.timeIntervalSince(last) < rules.cooldownMinutes * 60 { return nil }
+        let cooldown = rules.cooldownMinutes * 60
+        if let last = lastFired[key], now.timeIntervalSince(last) < cooldown { return nil }
+        // Keys past their cooldown hold nothing back; apps that come and go would pile them up.
+        lastFired = lastFired.filter { now.timeIntervalSince($0.value) < cooldown }
         lastFired[key] = now
         let alert = Alert(kind: kind, appID: id, appName: name, title: message.0, body: message.1, date: now)
         recent.append(alert)
