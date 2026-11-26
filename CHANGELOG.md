@@ -1,5 +1,137 @@
 # Changelog
 
+## 0.5.0, 26 November 2026
+
+AI usage now comes straight from each agent, every screen is redrawn in one
+design, scans are faster and cleaning is safer. After updating, Wisp shows what
+changed in a What's New window.
+
+Added:
+
+- What's New: the first launch after an update shows what changed in each new
+  version. It opens again from Settings, About, and from the menu bar item's
+  menu.
+
+Changed:
+
+- AI usage asks each agent for its own figures, so it no longer depends on T3
+  Code, a Claude Code status line or a running Antigravity app. Claude Code, Codex
+  and the Antigravity CLI each report a signed-in account's limits wherever the
+  account was used, with their own sign-in and without using tokens or keeping a
+  conversation. Plan limits no longer change Claude Code's settings,
+  and the SSH hosts setting is gone, since the figures already cover other
+  machines.
+- Claude accounts show a model's own weekly limit, such as Fable's, once it is in
+  use.
+- Plan limit cards on the Coding Agents page are redrawn like the dropdowns.
+  The fullest limit is the large figure, with where it is heading by its reset.
+  Each limit has a line with a mark for where even use would be by now. A pill
+  says when an account is ahead of pace or near a limit. Limits read scope
+  first, such as "Gemini · Weekly", and a card shows its age once the figures
+  are 10 minutes old.
+- Each account is checked every 5 minutes while its figures move and less often,
+  up to every 30 minutes, while they stay the same.
+- The AI usage dropdown opens with the limit closest to running out and a chart
+  of where it is heading by its reset. Account lines have a pace mark.
+- Projects, Containers and Login & Background lead with a total and a bar split
+  by project, kind of disk use or developer, with the rows lined up below.
+- Clean Up shows what can go as a bar split by kind, and each item has a size
+  bar. History charts the space freed.
+- The Apps page has totals for CPU, memory, power, disk and network above the
+  table, and the sorted column gets a bar. The app drawer's chart draws its own
+  readings until the hour fills in.
+- The Neural Engine page shows today by hour and the services that use it. Sound
+  has a volume chart that marks when apps played and when the microphone was in
+  use. Bluetooth explains what it will show before access is given.
+- The full menu bar dashboard uses the same design as the item dropdowns. Its
+  blocks are cards on one plate, and CPU, GPU and Network have charts.
+- VoiceOver reads the new cards, charts and tables, including what a pace mark
+  or a coloured state means, and Clean Up's rows are checkboxes it can tick.
+  Wisp's own buttons take keyboard focus when Keyboard Navigation is on.
+- Settings uses the whole window, with each section's settings in cards. Blocks
+  already on the dashboard show their colour and a check, and every block's
+  description shows in full.
+- Storage, Clean Up, Login & Background, Projects and the dashboard show their
+  layout with grey rows while they read.
+- AI usage shows all four of Antigravity's limits: 5-hour and weekly, for the
+  Gemini models and for Claude and GPT-OSS. Before, the weekly limits were
+  missing. Pick which ones show in Settings, Assistants, or from the usage
+  dropdown's menu. With several shown, the menu bar item uses the fullest.
+- Drag accounts in the usage dropdown into the order you want. The order is
+  kept, and the Coding Agents page and the account list in Settings follow it.
+  Reset Order in the dropdown's menu puts them back.
+- In the menu bar, AI usage can show one exact limit of an account, such as
+  Antigravity's Gemini weekly. The 5-hour and weekly limits can also sit in a
+  row, next to the stacked look.
+- Add more than one AI usage item to the menu bar, each with its own account,
+  limit and look. One set to an account is labelled with its name.
+
+Performance:
+
+- Giving or removing Full Disk Access no longer throws away the Storage scan
+  and reads the whole home folder again. Only the folders that were locked are
+  read. A scan in progress keeps going, at low priority, when you leave the
+  page, so coming back does not start it over.
+- The Storage summary is about 4 times faster, and parts of a scan are shown
+  every 2 seconds instead of twice a second.
+- With only the menu bar showing, Wisp uses about half the CPU it did. The
+  process pass takes about 0.6 ms instead of 1.1 ms. The battery item reads
+  only the charge, and the GPU temperature is skipped until a dropdown opens.
+- The Coding Agents page no longer reads every Claude log written today from
+  the start each time the window opens. It reads only what was added. Usage
+  figures from disk show at once, and the live checks for Claude Code, Codex
+  and Antigravity run side by side. They pause while the displays sleep.
+- Project, dev server, Docker and volume checks no longer run on the main
+  thread.
+- Charts, lists and dropdowns redraw only when what they show changes.
+- Storage reads the home folder about a third faster, and folders such as
+  ~/Library/Developer two and a half times faster. Refreshing a folder that has
+  not changed takes a fraction of a second.
+- Clean Up remembers what it measured. Scanning a tab again reads only what
+  changed since: the Developer tab takes about half a second where it took 33,
+  and Large Files shows its first file in a tenth of a second.
+
+Fixed:
+
+- Storage counted hard links and APFS clones again once it had seen many of
+  them, and again on each refresh, so the home folder could add up to more than
+  the disk holds. Each shared file now counts once in all.
+- Clean Up no longer offers a mounted disk image, a folder git tracks, iCloud
+  Drive files or a worktree git has already forgotten. The pnpm store and the
+  Yarn cache, which tools run from, are marked check first. App logs are listed
+  per app, so one open log no longer keeps them all.
+- Clean Up checks every item again just before it goes, by the file's identity,
+  and leaves it if something replaced it since the scan. It no longer moves a
+  disk image that is mounted, a folder with a disk mounted inside it, a folder
+  git tracks or a repository with its own history.
+- Removing a worktree no longer makes git forget other worktrees that are
+  missing, such as one on a disk that is not plugged in. Removing a simulator
+  runtime names it exactly.
+- A clean can be stopped while it runs. When a clean moves some items to the
+  Trash and removes others, the result still says to empty the Trash.
+- With AI plan limits turned off, Wisp no longer asks Claude Code, Codex or
+  Antigravity for figures.
+- Antigravity's limits come from the Antigravity app while it runs when the CLI
+  does not answer.
+- A process Wisp could not read at first is tried again, so it no longer shows
+  0% CPU until it quits.
+- Login & Background no longer offers to trash an item whose program is on a
+  disk that is not plugged in.
+- After an app is deleted, the notice and the Leftovers tab show what it left,
+  including folders it used in its last week.
+- Counting today's tokens on the Coding Agents page keeps only the part of a log
+  it is reading in memory. Its peak fell from about 890 MB to 120 MB here.
+- When Docker's first answer came back empty, Containers drew memory climbing
+  from zero and lost the key under Disk use.
+- In the Network and Disk dropdowns, "Last 4 minutes" could run under the
+  reading beside it.
+- The 30-day limit of Codex's free plan showed as weekly and turned amber too
+  early.
+- After the dashboard or the window had been open, the history kept recording
+  their last network, disk and GPU readings every few seconds.
+- The battery history's log file was never written back into the database and
+  kept growing.
+
 ## 0.4.0, 23 November 2026
 
 Fixed:

@@ -137,7 +137,7 @@ signed ad hoc and not notarized. The cask removes macOS's quarantine flag from
 `Wisp.app` after installing, so the first launch doesn't stop at Open Anyway. It
 also links the `wisp` command.
 
-Without Homebrew, download `Wisp-0.4.0.zip` from the
+Without Homebrew, download `Wisp-0.5.0.zip` from the
 [latest release](https://github.com/current/wisp/releases/latest), check its
 SHA-256 against the release notes, unzip it and drag Wisp to Applications. On the
 first launch, open System Settings > Privacy & Security and click Open Anyway,
@@ -192,42 +192,45 @@ remove, but it can't remove anything.
 
 ### Plan limits
 
-Plan limits on the Coding Agents page are off until you turn them on. Wisp reads
-the figures Claude Code, Codex and Antigravity already keep on your Mac. It never
-reads their sign-in or sends the figures anywhere.
+Plan limits on the Coding Agents page are off until you turn them on. Wisp asks
+each agent's own program for the limits of every account signed in on this Mac.
+The program asks with its own sign-in. Wisp never reads a sign-in and sends nothing
+itself. The figures are for the whole account, so use in other apps, on other
+machines and on the web shows up too. Nothing else needs to be running or set up.
 
-Claude Code passes its 5-hour and weekly limits to its status line. Turning plan
-limits on adds `wisp statusline` to the status line command in each Claude Code
-settings file. If you already had a status line, Wisp runs it after saving the
-limits. It looks the same as before. Turning plan limits off puts the old
-command back. A copy of each settings file is kept in
-`~/Library/Application Support/Wisp/claude-settings-backup`. Claude Code only
-reports limits on Pro, Max and Ultra plans.
+- Claude Code: for each config folder signed in to a claude.ai account (`~/.claude`
+  and any `~/.claude-*`), Wisp runs `claude -p` and sends the `get_usage` request
+  of its stream-json protocol. No model turn runs and no tokens are used. Hooks,
+  MCP servers, slash commands and session saving are off for that run. A Claude
+  Code too old for the request is asked for `/usage` instead. Limits show on Pro,
+  Max and Ultra plans, including a model's own weekly limit once it is in use.
+- Codex: for each `~/.codex*` folder with a sign-in, Wisp runs `codex app-server`
+  and asks for `account/rateLimits/read`. Folders that share one sign-in are asked
+  once. Codex's session logs fill in between questions.
+- Antigravity: Wisp runs `agy -p /usage --output-format json`, which starts no
+  agent turn, spends no quota and keeps no conversation. Gemini models share one
+  5-hour and one weekly limit, and Claude and GPT-OSS share another pair. Settings,
+  Assistants, Antigravity limits picks which of the four AI usage shows. Without
+  the CLI, Wisp asks the Antigravity app's language server on 127.0.0.1 while the
+  app runs.
 
-Codex writes its limits to its session logs in `~/.codex/sessions`, but only
-for work done on this Mac. So every 5 minutes, and when you open the dropdown,
-Wisp also runs `codex app-server` and asks it for each account's current
-limits. Codex makes that request to OpenAI with its own sign-in. Folders that
-share one sign-in are asked once, and the newer of the two figures is shown.
+Each account is asked every 5 minutes while the figures move, then less often,
+down to every 30 minutes while they stay the same. Opening a dropdown or the
+Coding Agents page asks any account whose figures are more than 3 minutes old.
+Checks pause while the displays sleep. An account whose program does not answer is
+asked again after 10 minutes.
 
-T3 Code logs the limits of the Claude accounts it runs. A thread in a linked
-environment, such as a devbox, logs them on that machine instead. To see those
-too, add the machine's SSH host under Settings, Assistants, Limits from other
-machines. Every 5 minutes Wisp runs `ssh -o BatchMode=yes <host>` with a short
-script that prints the newest limit lines from `~/.t3/userdata/logs/provider`
-there. It uses your own SSH setup, never asks for a password, and reads nothing
-else. The newest figures for an account win, wherever they came from.
+If an earlier version of Wisp added itself to a Claude Code status line, that
+status line still reports between questions. Turning plan limits off puts the old
+status line back. Names that T3 Code gives its accounts, such as "Claude (alt)",
+are used when T3 Code is installed.
 
-While Antigravity runs, its language server writes its port and a per-run token
-to `~/.gemini/antigravity/daemon/hub_<port>.json` and answers on 127.0.0.1.
-When T3 Code runs Antigravity threads, its `antigravity acp` bridge starts the same
-server and logs its port under
-`~/.t3/userdata/providers/antigravity/<id>/antigravity-acp/log`. Once a minute Wisp
-requests each model's remaining quota from whichever is running. Models that share
-a pool, such as every Gemini model, are one limit. The last answer stays on
-screen after Antigravity quits.
-
-Claude's figures are as recent as your last reply in Claude Code or T3 Code.
+In the menu bar, AI usage follows the account closest to a limit, or one you pick
+under Settings, Menu Bar, Edit. Shows picks the limit: 5-hour or weekly, the two
+together (stacked or in a row), or one exact limit such as Antigravity's Gemini
+weekly. Add another AI usage item to keep two accounts in the menu bar at once.
+An item set to one account is labelled with it ("Codex 10%"). Drag accounts in
+the usage dropdown to change their order, there and on the Coding Agents page.
 
 ## License
 

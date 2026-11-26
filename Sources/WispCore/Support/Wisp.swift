@@ -1,7 +1,7 @@
 import Foundation
 
 public enum Wisp {
-    public static let version = "0.4.0"
+    public static let version = "0.5.0"
     public static let bundleIdentifier = "app.wisp.Wisp"
 
     /// WISP_NO_SAVE: a screenshot, audit or benchmark run reads the owner's history and
