@@ -255,6 +255,7 @@ class SoftDropdown: DrawnView {
 
     @objc private func openPage() { delegate.showPage(page) }
     @objc func openSettings() { delegate.showSettings() }
+    @objc private func openWhatsNew() { delegate.showWhatsNew() }
     @objc private func emptyPressed() { onEmpty?() }
 
     @objc private func showMore(_ sender: NSButton) {
@@ -263,6 +264,7 @@ class SoftDropdown: DrawnView {
         extra.forEach(menu.addItem)
         if !extra.isEmpty { menu.addItem(.separator()) }
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
+        menu.addItem(withTitle: "What's New in Wisp", action: #selector(openWhatsNew), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Quit Wisp", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 6), in: sender)
     }

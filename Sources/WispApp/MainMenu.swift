@@ -1,7 +1,7 @@
 import AppKit
 
 /// The menu bar at the top of the screen while Wisp is the active app: About,
-/// Settings (⌘,), Hide and Quit, the editing commands the search field needs,
+/// What's New, Settings (⌘,), Hide and Quit, the editing commands the search field needs,
 /// a View menu with a ⌘ shortcut for the first nine pages, and Window.
 @MainActor
 enum MainMenu {
@@ -10,6 +10,7 @@ enum MainMenu {
 
         let app = NSMenu()
         app.addItem(withTitle: "About Wisp", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        app.addItem(Item("What's New in Wisp", key: "") { delegate.showWhatsNew() })
         app.addItem(.separator())
         app.addItem(Item("Settings…", key: ",") { delegate.showSettings() })
         app.addItem(.separator())

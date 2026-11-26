@@ -255,6 +255,9 @@ struct AppSettings: Codable, Equatable {
     var itemDropdowns = true
     /// Once a day, ask GitHub for the latest release's number.
     var checkForUpdates = true
+    /// The newest Wisp version that has run here, for showing What's New once after an
+    /// update. Empty in settings saved before 0.5.0, which did not record it.
+    var lastVersion = ""
 
     static let key = "settings"
 
@@ -298,6 +301,7 @@ struct AppSettings: Codable, Equatable {
         dashboard = DashboardBlock.layout(from: try? c.decode([String].self, forKey: .dashboard))
         itemDropdowns = (try? c.decode(Bool.self, forKey: .itemDropdowns)) ?? fallback.itemDropdowns
         checkForUpdates = (try? c.decode(Bool.self, forKey: .checkForUpdates)) ?? fallback.checkForUpdates
+        lastVersion = (try? c.decode(String.self, forKey: .lastVersion)) ?? fallback.lastVersion
     }
 
     static func load() -> AppSettings {

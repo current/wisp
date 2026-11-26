@@ -5,6 +5,8 @@ import WispCore
 /// the sampling plan in step with what is on screen.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Read first, before this launch writes settings or history of its own.
+    private let earlierTraces = WhatsNew.earlierVersionLeftTraces()
     private(set) var settings: AppSettings = {
         var settings = AppSettings.load()
         // Benchmarks set the update intervals for one run without saving them.
@@ -26,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A newer release than this build, once the daily check has seen one.
     private(set) var availableRelease: Release?
     private let launchDate = Date()
+    private lazy var whatsNew = WhatsNewPresenter(delegate: self)
 
     private(set) var system = SystemSnapshot()
     private(set) var table = ProcessTable()
@@ -108,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             if settings.openWindowAtLaunch { showWindow() }
         }
+        whatsNew.launched(earlierTraces: earlierTraces)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -330,6 +334,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func closeDashboard() { dashboard.close() }
+
+    /// What changed in the version running, from the menus and Settings.
+    func showWhatsNew() {
+        dashboard.close()
+        whatsNew.showCurrent()
+    }
 
     func toggleDashboard(from button: NSStatusBarButton, focus: MenuMetric? = nil) {
         dashboard.toggle(relativeTo: button, focus: focus)

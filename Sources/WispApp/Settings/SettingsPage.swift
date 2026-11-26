@@ -464,6 +464,11 @@ final class SettingsPage: NSViewController, Page {
                 NSWorkspace.shared.open(release.page)
             }, tip: release.page.absoluteString))
         }
+        if let notes = WhatsNew.current {
+            updates.append(.item(.symbol("sparkles", section.tint), "What's new in Wisp \(UpdateNotes.shortName(notes.version))",
+                                 "The changes in this version, as shown after the update.",
+                                 SettingsControls.pill("What's New") { [unowned self] in delegate.showWhatsNew() }, tip: nil))
+        }
         let last = checked > 0 ? "Last checked " + Date(timeIntervalSince1970: checked).formatted(date: .abbreviated, time: .shortened) + "." : "Not checked yet."
         updates.append(.control("Check for new versions", "Once a day Wisp asks GitHub for the latest version number. Nothing about you or this Mac is sent. " + (s.checkForUpdates ? last : ""),
                                 SettingsControls.toggle(s.checkForUpdates) { [unowned self] on in

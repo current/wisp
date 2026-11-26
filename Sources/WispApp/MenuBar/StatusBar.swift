@@ -101,6 +101,7 @@ final class StatusBar {
     private func showMenu(_ button: NSStatusBarButton) {
         let menu = NSMenu()
         menu.addItem(withTitle: "Open Wisp", action: #selector(openWindow), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "What's New in Wisp", action: #selector(openWhatsNew), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Wisp", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -113,6 +114,7 @@ final class StatusBar {
 
     @objc private func openWindow() { delegate.showWindow() }
     @objc private func openSettings() { delegate.showSettings() }
+    @objc private func openWhatsNew() { delegate.showWhatsNew() }
 
     // MARK: Drawing
 

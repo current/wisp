@@ -654,11 +654,13 @@ final class DashboardView: DrawnView {
     @objc private func openWindow() { delegate.showWindow() }
     @objc private func openSettings() { delegate.showSettings() }
     @objc private func closeDashboard() { delegate.closeDashboard() }
+    @objc private func openWhatsNew() { delegate.showWhatsNew() }
 
     @objc private func showMore(_ sender: NSButton) {
         let menu = NSMenu()
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Customize Dashboard…", action: #selector(customize), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "What's New in Wisp", action: #selector(openWhatsNew), keyEquivalent: "").target = self
         if layout.contains(.usage), let usage = views[.usage] as? UsageBlock {
             let items = usage.menuItems()
             if !items.isEmpty { menu.addItem(.separator()) }
