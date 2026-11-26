@@ -9,6 +9,17 @@ public struct BluetoothDevice: Sendable, Equatable {
     /// Headphones, Keyboard, Mouse, Phone...
     public var kind: String
     public var battery: Int?
+    /// When macOS last talked to the device, for the ones that are away.
+    public var lastUsed: Date?
+
+    public init(name: String, address: String, connected: Bool, kind: String, battery: Int?, lastUsed: Date? = nil) {
+        self.name = name
+        self.address = address
+        self.connected = connected
+        self.kind = kind
+        self.battery = battery
+        self.lastUsed = lastUsed
+    }
 }
 
 /// Paired Bluetooth devices from IOBluetooth, with the battery level for the ones
@@ -27,7 +38,8 @@ public enum Bluetooth {
         return paired.map { device in
             let name = device.name ?? device.addressString ?? "Device"
             return BluetoothDevice(name: name, address: device.addressString ?? "", connected: device.isConnected(),
-                                   kind: kind(major: device.deviceClassMajor, minor: device.deviceClassMinor), battery: batteries[name])
+                                   kind: kind(major: device.deviceClassMajor, minor: device.deviceClassMinor), battery: batteries[name],
+                                   lastUsed: device.recentAccessDate())
         }
         .sorted { ($0.connected ? 0 : 1, $0.name) < ($1.connected ? 0 : 1, $1.name) }
     }

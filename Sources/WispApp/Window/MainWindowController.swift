@@ -112,6 +112,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let toolbar = Toolbar()
     let drawer: AppDrawer
     private var drawerOpen = false
+    /// The app delegate's observer tokens, removed when the window closes.
+    private var observers: [Int] = []
     private var pages: [PageID: Page] = [:]
     private var current: Page?
     private(set) var currentID: PageID = .apps
@@ -127,6 +129,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
         window.title = "Wisp"
+        // Pages build their controls as they open; Tab should reach the ones on screen now.
+        window.autorecalculatesKeyViewLoop = true
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         // The sidebar blurs what is behind the window, so the window is clear under the
@@ -187,17 +191,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         show(.overview)
         sidebar.update(system: delegate.system)
 
-        delegate.observeSystem { [weak self] snapshot in
+        observers.append(delegate.observeSystem { [weak self] snapshot in
             guard let self, self.isVisible else { return }
             self.current?.update(system: snapshot)
             self.sidebar.update(system: snapshot)
-        }
-        delegate.observeTable { [weak self] table in
+        })
+        observers.append(delegate.observeTable { [weak self] table in
             guard let self, self.isVisible else { return }
             self.current?.update(table: table)
             self.sidebar.update(table: table)
             if self.drawerOpen { self.drawer.update(table: table) }
-        }
+        })
         delegate.windowVisible = true
         // WISP_AUDIT=<folder> visits every page, then the app drawer, audits each layout and
         // quits. It writes the page it is on to <folder>/now so a script can screenshot it.
@@ -310,6 +314,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self.show(.apps)
             self.select(.app(app.id))
         }))
+        // WISP_AUDIT_PAGES=ports,drawer audits only those steps, for checking one page quickly.
+        if let only = ProcessInfo.processInfo.environment["WISP_AUDIT_PAGES"]?.split(separator: ",").map(String.init) {
+            steps = steps.filter { only.contains($0.0) }
+        }
         var lines: [String] = []
         func run(_ index: Int) {
             guard index < steps.count else {
@@ -320,12 +328,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             }
             let (name, step) = steps[index]
             step()
-            // Let data arrive, layouts settle and entrance animations finish.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            // Let data arrive, layouts settle and entrance animations finish. WISP_AUDIT_WAIT
+            // gives slow pages (a Clean Up scan) longer.
+            let wait = ProcessInfo.processInfo.environment["WISP_AUDIT_WAIT"].flatMap(Double.init) ?? 2.5
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
                 guard let self, let root = self.window?.contentView else { return }
                 root.layoutSubtreeIfNeeded()
                 for issue in LayoutAudit.audit(root) { lines.append("\(appearance)\t\(size)\t\(name)\t\(issue)") }
                 self.writeSnapshot(to: folder.appendingPathComponent(name + ".png"))
+                AccessibilityDump.write(root, to: folder.appendingPathComponent(name + ".ax.txt"))
                 try? name.write(to: now, atomically: true, encoding: .utf8)
                 // The script screenshots while the page holds still.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { run(index + 1) }
@@ -667,7 +678,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidMiniaturize(_ notification: Notification) { delegate.windowVisible = false }
     func windowDidDeminiaturize(_ notification: Notification) { delegate.windowVisible = true }
-    func windowWillClose(_ notification: Notification) { delegate.mainWindowClosed() }
+    func windowWillClose(_ notification: Notification) {
+        observers.forEach(delegate.removeObserver)
+        delegate.mainWindowClosed()
+    }
 }
 
 /// Pages that keep a selected row clear it when the drawer closes.

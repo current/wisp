@@ -54,6 +54,13 @@ final class A2Button: DrawnView {
         onPress?()
         return true
     }
+    override var acceptsFirstResponder: Bool { KeyPress.reachable && isEnabled }
+    override var canBecomeKeyView: Bool { acceptsFirstResponder }
+    override func keyDown(with event: NSEvent) {
+        if KeyPress.presses(event) { onPress?() } else { super.keyDown(with: event) }
+    }
+    override var focusRingMaskBounds: NSRect { bounds }
+    override func drawFocusRingMask() { KeyPress.capsule(bounds) }
 }
 
 /// A small figure card, 96 pt tall: a quiet 11.5 pt label, a 24 pt figure with a 13 pt
@@ -136,10 +143,14 @@ final class A2List: BitmapView {
     }
 
     var rows: [Row] = [] { didSet { if rows != oldValue { needsDisplay = true } } }
+    /// Grey rows in the same columns after the real ones, while more are being read.
+    var ghostRows = 0 { didSet { if ghostRows != oldValue { needsDisplay = true } } }
     var header: Header? { didSet { needsDisplay = true } }
     var rowHeight: CGFloat = 40 { didSet { if rowHeight != oldValue { needsDisplay = true } } }
     var meterWidth: CGFloat = 96
-    var meterColors: (NSColor, NSColor?) = (A2.cpu, A2.cpuLight) { didSet { needsDisplay = true } }
+    var meterColors: (NSColor, NSColor?) = (A2.cpu, A2.cpuLight) {
+        didSet { if meterColors.0 != oldValue.0 || meterColors.1 != oldValue.1 { needsDisplay = true } }
+    }
     var valueWidth: CGFloat = 52
     /// Nil fits the column to its widest value.
     var secondWidth: CGFloat? = 48
@@ -155,7 +166,7 @@ final class A2List: BitmapView {
     private static let tileFill = A2.dynamic(NSColor(white: 0, alpha: 0.05), NSColor(white: 1, alpha: 0.09))
 
     private var top: CGFloat { header == nil ? 0 : Self.headerHeight }
-    var naturalHeight: CGFloat { top + CGFloat(rows.count) * rowHeight }
+    var naturalHeight: CGFloat { top + CGFloat(rows.count + ghostRows) * rowHeight }
     /// The height left for rows when the list is `height` tall.
     func roomForRows(_ height: CGFloat) -> CGFloat { height - top }
 
@@ -170,9 +181,9 @@ final class A2List: BitmapView {
         let hasSecond = rows.contains { !$0.second.isEmpty } || !(header?.second.isEmpty ?? true)
         let fitted = secondWidth ?? ceil(rows.map { ($0.second as NSString).size(withAttributes: [.font: Self.secondFont]).width }.max() ?? 0)
         let valueRight = hasSecond ? secondRight - fitted - (valueWidth > 0 ? Self.spacing : 0) : secondRight
-        let hasMeter = rows.contains { $0.fraction != nil }
+        let hasMeter = rows.contains { $0.fraction != nil } || ghostRows > 0
         let meterX = hasMeter ? valueRight - valueWidth - Self.spacing - meterWidth : valueRight - valueWidth
-        let iconWidth: CGFloat = rows.contains { $0.icon != nil || $0.symbol != nil } ? 22 + Self.spacing : 0
+        let iconWidth: CGFloat = rows.contains { $0.icon != nil || $0.symbol != nil } || ghostRows > 0 ? 22 + Self.spacing : 0
         return Columns(second: secondRight, value: valueRight, meter: meterX, name: iconWidth, nameRight: meterX - Self.spacing)
     }
 
@@ -188,6 +199,7 @@ final class A2List: BitmapView {
             let width = (header.second as NSString).size(withAttributes: attributes).width
             (header.second as NSString).draw(at: NSPoint(x: columns.second - width, y: y), withAttributes: attributes)
         }
+        drawGhosts(columns)
         let first = max(0, Int((dirtyRect.minY - top) / rowHeight))
         let last = min(rows.count, Int((dirtyRect.maxY - top) / rowHeight) + 1)
         guard first < last else { return }
@@ -248,6 +260,28 @@ final class A2List: BitmapView {
                 let size = (row.second as NSString).size(withAttributes: attributes)
                 (row.second as NSString).draw(at: NSPoint(x: columns.second - size.width, y: center - size.height / 2), withAttributes: attributes)
             }
+        }
+    }
+
+    private func drawGhosts(_ columns: Columns) {
+        for ghost in 0..<ghostRows {
+            let index = rows.count + ghost
+            let frame = rect(index)
+            let center = frame.midY
+            // Fainter as they go down, so the list reads as still filling in.
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current?.cgContext.setAlpha(max(0.3, 1 - CGFloat(ghost) * 0.09))
+            if index > 0 {
+                A2.hairline.setFill()
+                NSRect(x: 0, y: frame.minY, width: bounds.width, height: 0.5).fill()
+            }
+            Ghost.tile(NSRect(x: 0, y: center - 11, width: 22, height: 22))
+            let room = max(0, columns.nameRight - columns.name)
+            Ghost.bar(NSRect(x: columns.name, y: center - 11, width: min(room, Ghost.width(ghost, base: 70, spread: 90)), height: 9))
+            Ghost.bar(NSRect(x: columns.name, y: center + 3, width: min(room, Ghost.width(ghost + 3, base: 110, spread: 90)), height: 8))
+            Ghost.bar(NSRect(x: columns.meter, y: center - 2.5, width: meterWidth, height: 5))
+            Ghost.bar(NSRect(x: columns.value - 44, y: center - 5, width: 44, height: 10))
+            NSGraphicsContext.restoreGraphicsState()
         }
     }
 

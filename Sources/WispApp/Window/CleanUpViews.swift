@@ -12,6 +12,17 @@ extension CleanTab {
         case .history: return "clock.arrow.circlepath"
         }
     }
+    /// Where a tab's scan looks, for the lines shown while it runs and when it finds nothing.
+    var looksIn: String {
+        switch self {
+        case .junk: return "app caches, system junk, old installers and local snapshots"
+        case .developer: return "build output, package caches, simulators and old worktrees"
+        case .largeFiles: return "large and duplicate files in your folders"
+        case .leftovers: return "what deleted apps left behind"
+        case .uninstall: return "the apps on this Mac"
+        case .history: return "past cleans"
+        }
+    }
 }
 
 /// App and file icons for Clean Up rows, rasterised once at row size.
@@ -87,8 +98,10 @@ enum CleanIcons {
     }
 }
 
-/// The rows of a Clean Up tab drawn in one view: group headings, then items with a
-/// checkbox, icon, name, what it is, size and safety. Only the part on screen is drawn.
+/// The rows of a Clean Up tab drawn in one view: group headings with their colour from
+/// the bar above, then items with a checkbox, icon, name, what it is, a size bar, the size
+/// and how safe it is. While a scan runs, placeholder rows follow what has come in. Only
+/// the part on screen is drawn.
 final class CleanList: BitmapView {
     enum Check { case off, on, mixed }
 
@@ -107,16 +120,27 @@ final class CleanList: BitmapView {
         var symbol: String?
         /// The items a heading's checkbox ticks.
         var ids: [String] = []
+        /// The size bar's length against the largest row, and its colour; a heading's dot.
+        var fraction: Double?
+        var color: NSColor?
+        /// A heading's quiet count after its name ("12 items").
+        var count = ""
+        /// The whole text when the row's lines are cut short, or more about it.
+        var tip = ""
     }
 
     var rows: [Row] = [] { didSet { reflow() } }
+    /// Placeholder rows after the real ones while more are on the way, under a quiet heading.
+    var pending: (title: String, rows: Int)? {
+        didSet { if pending?.title != oldValue?.title || pending?.rows != oldValue?.rows { reflow() } }
+    }
     /// Items are 50 pt; a short list on a tall card spreads them a little, as in the mockup.
     var itemHeight: CGFloat = CleanList.baseItemHeight { didSet { if itemHeight != oldValue { reflow() } } }
     var onToggle: (([String], Bool) -> Void)?
     var onExclude: ((CleanItem) -> Void)?
     /// Set for a list of rows that open something (the Uninstall tab's apps) instead of ticking.
     var onOpen: ((Row) -> Void)? { didSet { needsDisplay = true } }
-    private var offsets: [CGFloat] = []
+    fileprivate var offsets: [CGFloat] = []
     private var total: CGFloat = 0
     private var hovered: Int? {
         didSet {
@@ -129,13 +153,22 @@ final class CleanList: BitmapView {
     static let baseItemHeight: CGFloat = 50
     static let headingHeight: CGFloat = 32
     private static let headingGap: CGFloat = 10
-    var naturalHeight: CGFloat { total }
+    private static let meterWidth: CGFloat = 112
+    private static let labelFont = Theme.sans(11.5)
+    var naturalHeight: CGFloat { total + pendingHeight }
+    private var pendingHeight: CGFloat {
+        guard let pending, pending.rows > 0 else { return 0 }
+        return (rows.isEmpty ? 0 : Self.headingGap) + Self.headingHeight + CGFloat(pending.rows) * itemHeight
+    }
+    /// The size column: as wide as the widest safety line or date, so the bars line up.
+    private var valueWidth: CGFloat = 96
 
     /// The height with 50 pt items, and how many items share any room beyond it.
     var baseHeight: CGFloat { total - CGFloat(itemCount) * (itemHeight - Self.baseItemHeight) }
     var itemCount: Int { rows.filter { $0.kind == .item }.count }
 
     private func reflow() {
+        valueWidth = max(96, rows.map { A2.width($0.label, Self.labelFont) }.max() ?? 0)
         offsets = []
         var y: CGFloat = 0
         for (index, row) in rows.enumerated() {
@@ -149,7 +182,7 @@ final class CleanList: BitmapView {
     }
 
     private func height(_ row: Row) -> CGFloat { row.kind == .heading ? Self.headingHeight : itemHeight }
-    private func frame(_ index: Int) -> NSRect { NSRect(x: 0, y: offsets[index], width: bounds.width, height: height(rows[index])) }
+    fileprivate func frame(_ index: Int) -> NSRect { NSRect(x: 0, y: offsets[index], width: bounds.width, height: height(rows[index])) }
 
     private func index(at point: NSPoint) -> Int? {
         var low = 0, high = offsets.count
@@ -167,16 +200,33 @@ final class CleanList: BitmapView {
         return NSRect(x: frame.maxX - 26, y: frame.midY - 13, width: 26, height: 26)
     }
 
-    private var checkable: Bool { rows.contains { $0.check != nil } }
-    private func opens(_ row: Row) -> Bool { onOpen != nil && row.kind == .item && row.check == nil }
+    /// Where a heading's row starts, for scrolling to it.
+    func offset(of id: String) -> CGFloat? { rows.firstIndex { $0.id == id }.map { offsets[$0] } }
+
+    private var checkable: Bool { rows.contains { $0.check != nil } || (rows.isEmpty && pending != nil) }
+    fileprivate func opens(_ row: Row) -> Bool { onOpen != nil && row.kind == .item && row.check == nil }
+
+    /// Where the size bars start, or nil when no row has one or the list is too narrow for them.
+    private func meterX(rightEdge: CGFloat) -> CGFloat? {
+        guard rows.contains(where: { $0.fraction != nil }) || pending != nil, bounds.width >= 520 else { return nil }
+        return rightEdge - valueWidth - 20 - Self.meterWidth
+    }
+
+    private var rightEdge: CGFloat {
+        let reveals = rows.contains { $0.item?.paths.isEmpty == false && $0.check != nil } || (rows.isEmpty && pending != nil)
+        return bounds.width - (reveals || rows.contains(where: opens) ? 34 : 0)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
+        drawPending(dirtyRect)
         guard !rows.isEmpty else { return }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         let reveals = rows.contains { $0.item?.paths.isEmpty == false && $0.check != nil }
-        let rightEdge = bounds.width - (reveals || rows.contains(where: opens) ? 34 : 0)
-        let valueWidth: CGFloat = 132
+        let rightEdge = rightEdge
+        let valueWidth = valueWidth
+        let meterX = meterX(rightEdge: rightEdge)
+        let textRight = (meterX ?? rightEdge - valueWidth) - 16
         for index in rows.indices {
             let frame = frame(index)
             guard frame.maxY >= dirtyRect.minY else { continue }
@@ -195,10 +245,19 @@ final class CleanList: BitmapView {
             }
             switch row.kind {
             case .heading:
-                (row.title as NSString).draw(with: NSRect(x: x, y: frame.midY - 9, width: rightEdge - x - valueWidth, height: 18),
-                                             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                             attributes: [.font: Theme.sans(13, .semibold), .foregroundColor: Theme.ink, .paragraphStyle: paragraph])
-                let attributes: [NSAttributedString.Key: Any] = [.font: Theme.figure(12.5, .medium), .foregroundColor: Theme.inkSecondary]
+                if let color = row.color {
+                    color.setFill()
+                    NSBezierPath(ovalIn: NSRect(x: x + 7, y: frame.midY - 4, width: 8, height: 8)).fill()
+                    x += 22 + 12 - 7
+                }
+                let titleFont = Theme.sans(13, .semibold)
+                let titleWidth = min(A2.width(row.title, titleFont), max(0, textRight - x))
+                A2.drawTruncated(row.title, in: NSRect(x: x, y: frame.minY, width: titleWidth, height: frame.height), font: titleFont, color: A2.primary)
+                if !row.count.isEmpty, x + titleWidth + 8 < textRight {
+                    A2.drawTruncated(row.count, in: NSRect(x: x + titleWidth + 8, y: frame.minY, width: textRight - x - titleWidth - 8, height: frame.height),
+                                     font: Theme.sans(12), color: A2.tertiary)
+                }
+                let attributes: [NSAttributedString.Key: Any] = [.font: Theme.digits(12.5, .semibold), .foregroundColor: A2.secondary]
                 let size = (row.value as NSString).size(withAttributes: attributes)
                 (row.value as NSString).draw(at: NSPoint(x: rightEdge - size.width, y: frame.midY - size.height / 2), withAttributes: attributes)
             case .item:
@@ -218,14 +277,18 @@ final class CleanList: BitmapView {
                 let titleLine = titleFont.ascender - titleFont.descender, detailLine = detailFont.ascender - detailFont.descender
                 let top = (frame.midY - (titleLine + 3 + detailLine) / 2).rounded()
                 let detailTop = top + titleLine + 3
-                let textWidth = max(40, rightEdge - x - valueWidth - 12)
+                let textWidth = max(40, textRight - x)
                 (row.title as NSString).draw(with: NSRect(x: x, y: top, width: textWidth, height: ceil(titleLine)),
                                              options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
                                              attributes: [.font: titleFont, .foregroundColor: A2.primary, .paragraphStyle: paragraph])
                 (row.detail as NSString).draw(with: NSRect(x: x, y: detailTop, width: textWidth, height: ceil(detailLine)),
                                               options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
                                               attributes: [.font: detailFont, .foregroundColor: A2.secondary, .paragraphStyle: paragraph])
-                let valueFont = Theme.digits(13, .medium)
+                if let meterX, let fraction = row.fraction {
+                    A2.meter(NSRect(x: meterX, y: frame.midY - 2.5, width: Self.meterWidth, height: 5), fraction: max(0.02, fraction),
+                             color: row.color ?? A2.labelTint(.disk))
+                }
+                let valueFont = Theme.digits(13, .semibold)
                 let valueAttributes: [NSAttributedString.Key: Any] = [.font: valueFont, .foregroundColor: A2.primary]
                 let valueSize = (row.value as NSString).size(withAttributes: valueAttributes)
                 (row.value as NSString).draw(at: NSPoint(x: rightEdge - valueSize.width, y: top + titleFont.ascender - valueFont.ascender),
@@ -253,6 +316,44 @@ final class CleanList: BitmapView {
                     NSRect(x: x, y: frame.maxY - 0.5, width: bounds.width - x, height: 0.5).fill()
                 }
             }
+        }
+    }
+
+    /// Grey rows in the item grammar, after the real ones, under a quiet heading that says what is still coming.
+    private func drawPending(_ dirtyRect: NSRect) {
+        guard let pending, pending.rows > 0 else { return }
+        var y = total + (rows.isEmpty ? 0 : Self.headingGap)
+        guard y + pendingHeight >= dirtyRect.minY, y <= dirtyRect.maxY else { return }
+        let rightEdge = rightEdge
+        let meterX = meterX(rightEdge: rightEdge)
+        let checks = checkable
+        let x: CGFloat = checks ? 28 : 0
+        A2.drawTruncated(pending.title, in: NSRect(x: x, y: y, width: max(0, rightEdge - x), height: Self.headingHeight),
+                         font: Theme.sans(12.5, .medium), color: A2.secondary)
+        y += Self.headingHeight
+        for index in 0..<pending.rows {
+            let frame = NSRect(x: 0, y: y, width: bounds.width, height: itemHeight)
+            y += itemHeight
+            // Fainter as they go down, so the list reads as still filling in.
+            let alpha = max(0.35, 1 - CGFloat(index) * 0.12)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current?.cgContext.setAlpha(alpha)
+            if checks {
+                Ghost.fill.setFill()
+                NSBezierPath(roundedRect: NSRect(x: 0, y: frame.midY - 8, width: 16, height: 16), xRadius: 4.5, yRadius: 4.5).fill()
+            }
+            Ghost.tile(NSRect(x: x, y: frame.midY - CleanIcons.size / 2, width: CleanIcons.size, height: CleanIcons.size))
+            let textX = x + CleanIcons.size + 12
+            Ghost.bar(NSRect(x: textX, y: frame.midY - 12, width: Ghost.width(index, base: 110, spread: 120), height: 10))
+            Ghost.bar(NSRect(x: textX, y: frame.midY + 4, width: Ghost.width(index + 2, base: 180, spread: 160), height: 8))
+            if let meterX { Ghost.bar(NSRect(x: meterX, y: frame.midY - 2.5, width: Self.meterWidth, height: 5)) }
+            Ghost.bar(NSRect(x: rightEdge - 46, y: frame.midY - 12, width: 46, height: 10))
+            Ghost.bar(NSRect(x: rightEdge - 64, y: frame.midY + 4, width: 64, height: 8))
+            if index + 1 < pending.rows {
+                A2.hairline.setFill()
+                NSRect(x: x, y: frame.maxY - 0.5, width: bounds.width - x, height: 0.5).fill()
+            }
+            NSGraphicsContext.restoreGraphicsState()
         }
     }
 
@@ -296,6 +397,7 @@ final class CleanList: BitmapView {
             revealHovered = overReveal
             setNeedsDisplay(frame(index))
         }
+        if index != hovered { toolTip = index.map { tip(rows[$0]) } ?? nil }
         hovered = index
     }
 
@@ -314,6 +416,16 @@ final class CleanList: BitmapView {
             return reveal(item)
         }
         onToggle?(row.kind == .heading ? row.ids : [row.id], check != .on)
+    }
+
+    /// The row's whole text, and where it is on disk.
+    private func tip(_ row: Row) -> String? {
+        guard row.kind == .item else { return nil }
+        if !row.tip.isEmpty { return row.tip }
+        let paths = row.item?.paths ?? []
+        let place = paths.isEmpty ? "" : "\n" + paths.prefix(3).map { $0.replacingOccurrences(of: NSHomeDirectory(), with: "~") }.joined(separator: "\n")
+            + (paths.count > 3 ? "\nand \(paths.count - 3) more" : "")
+        return [row.title, row.detail].filter { !$0.isEmpty }.joined(separator: "\n") + place
     }
 
     private func reveal(_ item: CleanItem) {
@@ -336,10 +448,72 @@ final class CleanList: BitmapView {
         return menu
     }
 
+    // MARK: Accessibility
+
+    // The rows are drawn in one view; each is an element here so VoiceOver can tick it,
+    // open it and reach what the context menu and the hover offer.
+    private final class Element: NSAccessibilityElement {
+        weak var owner: CleanList?
+        var index = 0
+        override func accessibilityPerformPress() -> Bool {
+            guard let owner, owner.rows.indices.contains(index) else { return false }
+            let row = owner.rows[index]
+            if owner.opens(row) {
+                owner.onOpen?(row)
+                return true
+            }
+            guard let check = row.check, let onToggle = owner.onToggle else { return false }
+            onToggle(row.kind == .heading ? row.ids : [row.id], check != .on)
+            return true
+        }
+        override func accessibilityFrameInParentSpace() -> NSRect {
+            guard let owner, owner.rows.indices.contains(index), owner.offsets.indices.contains(index) else { return .zero }
+            let rect = owner.frame(index)
+            return NSRect(x: rect.minX, y: owner.bounds.height - rect.maxY, width: rect.width, height: rect.height)
+        }
+    }
+    private var elementCache: [String: Element] = [:]
+
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .list }
     override func accessibilityValue() -> Any? {
-        rows.prefix(16).map { "\($0.title) \($0.value)" + ($0.check == .on ? " selected" : "") }.joined(separator: "; ")
+        if rows.isEmpty { return pending.map { $0.title } }
+        return rows.count == 1 ? "1 row" : "\(rows.count) rows"
+    }
+    override func accessibilityChildren() -> [Any]? {
+        var used: [String: Element] = [:]
+        let elements = rows.enumerated().map { index, row -> Element in
+            let key = (row.kind == .heading ? "heading " : "item ") + row.id
+            let element = elementCache[key] ?? {
+                let element = Element()
+                element.owner = self
+                element.setAccessibilityParent(self)
+                return element
+            }()
+            used[key] = element
+            element.index = index
+            if let check = row.check {
+                element.setAccessibilityRole(.checkBox)
+                element.setAccessibilityValue(NSNumber(value: check == .on ? 1 : check == .mixed ? 2 : 0))
+            } else {
+                element.setAccessibilityRole(opens(row) ? .button : .staticText)
+                element.setAccessibilityValue(nil)
+            }
+            let words = [row.count, row.detail, row.value, row.label].filter { !$0.isEmpty }
+            element.setAccessibilityLabel(([row.title] + words).joined(separator: ", "))
+            element.setAccessibilityHelp(tip(row))
+            var actions: [NSAccessibilityCustomAction] = []
+            if let item = row.item, !item.paths.isEmpty {
+                actions.append(NSAccessibilityCustomAction(name: "Reveal in Finder") { [weak self] in self?.reveal(item); return true })
+                if row.check != nil, let onExclude {
+                    actions.append(NSAccessibilityCustomAction(name: "Exclude from Scans") { onExclude(item); return true })
+                }
+            }
+            element.setAccessibilityCustomActions(actions.isEmpty ? nil : actions)
+            return element
+        }
+        elementCache = used
+        return elements
     }
 }
 
@@ -386,6 +560,9 @@ final class CleanReview: NSView {
     private var running = false
     var onCancel: (() -> Void)?
     var onConfirm: (() -> Void)?
+    /// Stop while a clean runs: what is already gone stays gone, nothing further goes.
+    var onStop: (() -> Void)?
+    private var stopping = false
 
     init(items: [CleanItem]) {
         cancelButton = ActionButton(title: "Cancel", target: nil, action: nil)
@@ -469,23 +646,35 @@ final class CleanReview: NSView {
 
     /// While the clean runs: the buttons go and a line says how far it is.
     func progress(done: Int, of total: Int) {
+        let first = !running
         running = true
-        cancelButton.isHidden = true
         goButton.isHidden = true
-        summary.stringValue = "Working through \(done) of \(total)…"
+        cancelButton.isHidden = false
+        cancelButton.isEnabled = !stopping
+        if first || stopping {
+            cancelButton.title = stopping ? "Stopping…" : "Stop"
+            cancelButton.invalidateIntrinsicContentSize()
+        }
+        summary.stringValue = stopping ? "Stopping after the item in hand…" : "Working through \(done) of \(total)…"
         needsLayout = true
     }
 
     /// The outcome, with each item that stayed and why.
-    func finish(_ report: CleanReport, permanent: Bool) {
+    func finish(_ report: CleanReport) {
         running = false
+        stopping = false
+        cancelButton.isEnabled = true
         let freed = Format.bytes(UInt64(report.bytesFreed))
         let moved = report.removed.count
-        setTitle(moved == 0 ? "Nothing was removed" : permanent ? "Freed \(freed)" : "Moved \(freed) to the Trash")
+        // A clean can mix both: some items gone for good, some only in the Trash until it is emptied.
+        let trashed = report.removed.contains { !$0.item.removal.isPermanent }
+        let gone = report.removed.contains { $0.item.removal.isPermanent }
+        setTitle(moved == 0 ? "Nothing was removed" : trashed && !gone ? "Moved \(freed) to the Trash" : "Freed \(freed)")
+        let trashNote = trashed ? " Empty the Trash in Finder to get the space back." : ""
         let left = report.notRemoved
         summary.stringValue = left.isEmpty
-            ? "\(moved == 1 ? "1 item" : "\(moved) items") cleaned." + (permanent ? "" : " Empty the Trash in Finder to get the space back.")
-            : "\(moved) cleaned, \(left.count) left in place:"
+            ? "\(moved == 1 ? "1 item" : "\(moved) items") cleaned." + trashNote
+            : "\(moved) cleaned, \(left.count) left in place." + trashNote
         list.rows = left.map { result in
             CleanList.Row(kind: .item, id: result.item.id, title: result.item.name, detail: result.outcome.summary,
                           value: Format.bytes(UInt64(result.item.bytes)), item: result.item)
@@ -498,7 +687,20 @@ final class CleanReview: NSView {
         needsLayout = true
     }
 
-    @objc private func cancel() { onCancel?() }
+    @objc private func cancel() {
+        guard running else {
+            onCancel?()
+            return
+        }
+        guard !stopping else { return }
+        stopping = true
+        onStop?()
+        cancelButton.title = "Stopping…"
+        cancelButton.isEnabled = false
+        cancelButton.invalidateIntrinsicContentSize()
+        summary.stringValue = "Stopping after the item in hand…"
+        needsLayout = true
+    }
     @objc private func confirm() { onConfirm?() }
 
     override func keyDown(with event: NSEvent) {

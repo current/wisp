@@ -14,24 +14,24 @@ import WispCore
 /// Colours and type the Developer pages share, from their mockups.
 enum A2Dev {
     /// The label and icon colour of each Developer page.
-    static func tint(_ page: PageID) -> NSColor {
-        switch page {
-        case .ports: return Theme.dynamic(0x007AFF, 0x3D9BFF)
-        case .docker: return Theme.dynamic(0x0F8A9F, 0x40C8E0)
-        case .agents: return Theme.dynamic(0x9B45CF, 0xBF5AF2)
-        case .startup: return Theme.dynamic(0x0E7F93, 0x40C8E0)
-        default: return A2.labelTint(page)
-        }
-    }
+    static func tint(_ page: PageID) -> NSColor { tints[page] ?? A2.labelTint(page) }
+
+    private static let tints: [PageID: NSColor] = [
+        .ports: Theme.dynamic(0x007AFF, 0x3D9BFF), .docker: Theme.dynamic(0x0F8A9F, 0x40C8E0),
+        .agents: Theme.dynamic(0x9B45CF, 0xBF5AF2), .startup: Theme.dynamic(0x0E7F93, 0x40C8E0),
+    ]
 
     /// The two ends of a meter's fill on each page.
     static func meter(_ page: PageID) -> (NSColor, NSColor) {
         switch page {
-        case .agents: return (Theme.dynamic(0xAF52DE, 0xBF5AF2), Theme.dynamic(0xD08AF0, 0xDA8FFF))
-        case .docker: return (Theme.dynamic(0x30B0C7, 0x30B0C7), Theme.dynamic(0x5AC8FA, 0x64D2FF))
+        case .agents: return agentsMeter
+        case .docker: return dockerMeter
         default: return (A2.cpu, A2.cpuLight)
         }
     }
+
+    private static let agentsMeter = (Theme.dynamic(0xAF52DE, 0xBF5AF2), Theme.dynamic(0xD08AF0, 0xDA8FFF))
+    private static let dockerMeter = (Theme.dynamic(0x30B0C7, 0x30B0C7), Theme.dynamic(0x5AC8FA, 0x64D2FF))
 
     /// The quiet square behind a glyph that stands in for an icon.
     static let tile = A2.dynamic(NSColor(white: 0, alpha: 0.05), NSColor(white: 1, alpha: 0.08))
@@ -87,11 +87,9 @@ enum A2Dev {
     }
 
     /// Draws one line of text centred on `mid`, cut to `width` with an ellipsis.
-    /// Returns the width it took.
-    @discardableResult
     static func text(_ text: String, x: CGFloat, mid: CGFloat, width: CGFloat, font: NSFont, color: NSColor,
-                     right: Bool = false, kern: CGFloat = 0) -> CGFloat {
-        guard width > 4, !text.isEmpty else { return 0 }
+                     right: Bool = false, kern: CGFloat = 0) {
+        guard width > 4, !text.isEmpty else { return }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         paragraph.alignment = right ? .right : .left
@@ -100,6 +98,13 @@ enum A2Dev {
         let line = ceil(font.ascender - font.descender)
         (text as NSString).draw(with: NSRect(x: x, y: mid - line / 2, width: width, height: line + 2),
                                 options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attributes)
+    }
+
+    /// Draws as `text` does and returns the width it took.
+    static func measuredText(_ text: String, x: CGFloat, mid: CGFloat, width: CGFloat, font: NSFont, color: NSColor,
+                             right: Bool = false, kern: CGFloat = 0) -> CGFloat {
+        guard width > 4, !text.isEmpty else { return 0 }
+        Self.text(text, x: x, mid: mid, width: width, font: font, color: color, right: right, kern: kern)
         return min(width, Self.width(text, font, kern: kern))
     }
 
@@ -123,9 +128,16 @@ final class A2MiniMeter: BitmapView {
     var fraction: Double = 0 { didSet { if Int(fraction * 200) != Int(oldValue * 200) { needsDisplay = true } } }
     var color: NSColor = A2.good { didSet { needsDisplay = true } }
 
+    /// What the colour says, in words ("Near its limit"), when it says more than the figure.
+    var state = ""
+
     override func draw(_ dirtyRect: NSRect) {
         A2Dev.drawMeter(bounds, fraction: fraction, colors: (color, color))
     }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .levelIndicator }
+    override func accessibilityValue() -> Any? { [Format.percent(fraction), state].filter { !$0.isEmpty }.joined(separator: ", ") }
 }
 
 /// A top tile on a Developer page: label, a 34 pt figure and a sub line, 110 pt tall
@@ -346,7 +358,7 @@ final class A2Table: BitmapView {
             }
             let room = nameRight - x
             let nameMid = row.detail.isEmpty ? mid : mid - 8.5
-            let used = A2Dev.text(row.name, x: x, mid: nameMid, width: room, font: A2Dev.nameFont, color: A2.primary)
+            let used = A2Dev.measuredText(row.name, x: x, mid: nameMid, width: room, font: A2Dev.nameFont, color: A2.primary)
             if !row.note.isEmpty, used + 30 < room {
                 // On the name's baseline.
                 let shift = (A2Dev.nameFont.ascender - A2Dev.noteFont.ascender) / 2 + 0.5
@@ -367,7 +379,7 @@ final class A2Table: BitmapView {
     private func drawHeader(nameRight: CGFloat, xs: [CGFloat?]) {
         let mid = headerRule ? headerHeight / 2 : 8
         if let heading {
-            let used = A2Dev.text(heading.title, x: 0, mid: mid, width: nameRight, font: A2.titleFont, color: A2.primary)
+            let used = A2Dev.measuredText(heading.title, x: 0, mid: mid, width: nameRight, font: A2.titleFont, color: A2.primary)
             if !heading.count.isEmpty {
                 A2Dev.text(heading.count, x: used + 6, mid: mid, width: nameRight - used - 6, font: Theme.sans(13, .medium), color: A2.tertiary)
             }
@@ -468,11 +480,111 @@ final class A2Table: BitmapView {
         onSelect?(id)
     }
 
+    // MARK: Accessibility
+
+    // The table draws its rows, column titles and pill buttons in one pass; each becomes
+    // an element here so VoiceOver can read a row, open it, press its buttons and sort.
+    private final class Element: NSAccessibilityElement {
+        weak var owner: A2Table?
+        /// A row's index, or nil for a column title (`column`, 0 being the name).
+        var row: Int?
+        var column = 0
+        override func accessibilityPerformPress() -> Bool {
+            guard let owner else { return false }
+            if let row {
+                guard let onSelect = owner.onSelect, owner.rows.indices.contains(row) else { return false }
+                onSelect(owner.rows[row].id)
+            } else {
+                guard let onSort = owner.onSort else { return false }
+                onSort(column)
+            }
+            return true
+        }
+        override func accessibilityFrameInParentSpace() -> NSRect {
+            guard let owner else { return .zero }
+            let rect: NSRect
+            if let row {
+                guard owner.rows.indices.contains(row) else { return .zero }
+                rect = NSRect(x: 0, y: owner.rowTop(row), width: owner.bounds.width, height: owner.shownRowHeight)
+            } else {
+                let (nameRight, xs) = owner.columnXs()
+                if column == 0 {
+                    rect = NSRect(x: 0, y: 0, width: nameRight, height: owner.headerHeight)
+                } else if owner.columns.indices.contains(column - 1), let x = xs[column - 1] {
+                    rect = NSRect(x: x, y: 0, width: owner.columns[column - 1].width, height: owner.headerHeight)
+                } else {
+                    return .zero
+                }
+            }
+            return NSRect(x: rect.minX, y: owner.bounds.height - rect.maxY, width: rect.width, height: rect.height)
+        }
+    }
+
+    /// A row in words: its note, detail and each cell under its column's title.
+    private func spoken(_ row: Row) -> String {
+        var parts = [row.note, row.detail]
+        for (index, column) in columns.enumerated() {
+            if case .buttons = column.kind { continue }
+            if case .status = column.kind, let tag = row.tag { parts.append(tag); continue }
+            let cell = index < row.cells.count ? row.cells[index] : ""
+            guard !cell.isEmpty, cell != "–" else { continue }
+            parts.append(column.title.isEmpty ? cell : column.title + " " + cell)
+        }
+        if row.faint { parts.append("dimmed") }
+        return parts.filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .list }
     override func accessibilityLabel() -> String? { heading?.title ?? nameTitle }
-    override func accessibilityValue() -> Any? {
-        rows.map { ([$0.name] + $0.cells.filter { !$0.isEmpty }).joined(separator: " ") }.joined(separator: "; ")
+    override func accessibilityValue() -> Any? { rows.isEmpty ? emptyText : (rows.count == 1 ? "1 row" : "\(rows.count) rows") }
+    /// Kept between calls so VoiceOver keeps its place while the figures change.
+    private var elementCache: [String: Element] = [:]
+
+    private func element(_ key: String) -> Element {
+        if let cached = elementCache[key] { return cached }
+        let element = Element()
+        element.owner = self
+        element.setAccessibilityParent(self)
+        elementCache[key] = element
+        return element
+    }
+
+    override func accessibilityChildren() -> [Any]? {
+        var elements: [Element] = []
+        if onSort != nil {
+            let (_, xs) = columnXs()
+            let titles = [(0, heading == nil ? nameTitle : "Name")] + columns.enumerated()
+                .filter { xs[$0.offset] != nil && !$0.element.title.isEmpty }.map { ($0.offset + 1, $0.element.title) }
+            for (column, title) in titles where !title.isEmpty {
+                let element = element("column \(column)")
+                element.column = column
+                element.setAccessibilityRole(.button)
+                element.setAccessibilityLabel("Sort by " + title)
+                elements.append(element)
+            }
+        }
+        for (index, row) in rows.enumerated() {
+            let element = element("row " + row.id)
+            element.row = index
+            element.setAccessibilityRole(onSelect == nil ? .staticText : .button)
+            element.setAccessibilityLabel(row.name)
+            element.setAccessibilityValue(spoken(row))
+            let id = row.id
+            let buttons = columns.flatMap { column -> [String] in
+                if case .buttons(let titles) = column.kind { return titles }
+                return []
+            }
+            if let onButton, !buttons.isEmpty {
+                element.setAccessibilityCustomActions(buttons.enumerated().map { hit, title in
+                    NSAccessibilityCustomAction(name: title) { onButton(id, hit); return true }
+                })
+            }
+            elements.append(element)
+        }
+        let used = Set(elements.map(ObjectIdentifier.init))
+        elementCache = elementCache.filter { used.contains(ObjectIdentifier($0.value)) }
+        return elements
     }
 }
 

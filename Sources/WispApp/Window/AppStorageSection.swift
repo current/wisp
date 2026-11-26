@@ -11,6 +11,7 @@ final class AppStorageSection: CardView {
     private let bar = StackBar()
     private var rows: [PartRow] = []
     private let footnote = TextLine()
+    private let ghosts = AppsGhostRows()
     private lazy var clearButton: ActionButton = {
         let button = ActionButton(title: "Clear Cache…", target: self, action: #selector(clearCache))
         button.secondary = true
@@ -38,8 +39,8 @@ final class AppStorageSection: CardView {
     override init() {
         super.init()
         radius = 14
-        for view in [title, headline, bar, footnote, clearButton] as [NSView] { addSubview(view) }
-        title.text = NSAttributedString(string: "Storage", attributes: [.font: Theme.sans(13, .semibold), .foregroundColor: Theme.ink])
+        for view in [title, headline, bar, footnote, clearButton, ghosts] as [NSView] { addSubview(view) }
+        title.text = Theme.header("Storage", symbol: PageID.disk.symbol, tint: A2.labelTint(.disk))
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -59,7 +60,8 @@ final class AppStorageSection: CardView {
 
     private var shownRows: Int { storage?.parts.count ?? 0 }
     private var wantedHeight: CGFloat {
-        guard storage != nil else { return 76 }
+        // While measuring, the card already takes the shape of a short list.
+        guard storage != nil else { return 98 + CGFloat(ghosts.count) * AppsGhostRows.rowHeight + 30 }
         return 104 + CGFloat(shownRows) * 40 + 30 + ((storage?.cacheSize ?? 0) > 0 ? 44 : 0)
     }
 
@@ -107,11 +109,14 @@ final class AppStorageSection: CardView {
             headline.text = NSAttributedString(string: "Measuring…", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.inkSecondary])
             bar.segments = []
             rows.forEach { $0.isHidden = true }
-            footnote.isHidden = true
+            ghosts.isHidden = false
+            footnote.isHidden = false
+            footnote.text = Theme.caption("Adding up the app and the folders in Library named after it", size: 9)
             clearButton.isHidden = true
             needsLayout = true
             return
         }
+        ghosts.isHidden = true
         let total = storage.total
         let text = NSMutableAttributedString(string: Format.bytes(total), attributes: [.font: Theme.figure(15, .semibold), .foregroundColor: Theme.ink])
         text.append(NSAttributedString(string: " on disk", attributes: [.font: Theme.sans(15, .medium), .foregroundColor: Theme.ink]))
@@ -151,6 +156,10 @@ final class AppStorageSection: CardView {
         headline.frame = NSRect(x: 18, y: 44, width: width, height: 22)
         bar.frame = NSRect(x: 18, y: 76, width: width, height: 10)
         var y: CGFloat = 98
+        if !ghosts.isHidden {
+            ghosts.frame = NSRect(x: 18, y: y, width: width, height: CGFloat(ghosts.count) * AppsGhostRows.rowHeight)
+            y = ghosts.frame.maxY
+        }
         for row in rows where !row.isHidden {
             row.frame = NSRect(x: 18, y: y, width: width, height: 40)
             y += 40

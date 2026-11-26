@@ -47,7 +47,6 @@ final class GlassPill: NSView {
         wantsLayer = true
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
-        setAccessibilityLabel(title.isEmpty ? symbol : title)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -82,6 +81,19 @@ final class GlassPill: NSView {
     }
 
     override func accessibilityPerformPress() -> Bool { onPress?(); return true }
+    // A symbol-only pill says what its tooltip says, not the symbol's name; the glyph
+    // and the label inside are the button's own face, not elements of their own.
+    override func accessibilityLabel() -> String? {
+        title.isEmpty ? toolTip?.replacingOccurrences(of: " (Esc)", with: "") ?? symbol : title
+    }
+    override func accessibilityChildren() -> [Any]? { [] }
+    override var acceptsFirstResponder: Bool { KeyPress.reachable }
+    override var canBecomeKeyView: Bool { acceptsFirstResponder }
+    override func keyDown(with event: NSEvent) {
+        if KeyPress.presses(event) { onPress?() } else { super.keyDown(with: event) }
+    }
+    override var focusRingMaskBounds: NSRect { bounds }
+    override func drawFocusRingMask() { KeyPress.capsule(bounds) }
 
     /// A small squeeze while held, the way glass controls give under a finger.
     private func press(_ down: Bool) {
@@ -216,7 +228,9 @@ final class InsideCard: CardView {
         radius = 14
         for view in [title, headline, toggle, bar, footnote] as [NSView] { addSubview(view) }
         toggle.onChange = { [weak self] _ in self?.refresh() }
+        toggle.setAccessibilityLabel("Split by")
         footnote.text = Theme.caption("Browsers do not say which tab each process draws, so tabs count together", size: 9)
+        footnote.isHidden = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -227,7 +241,7 @@ final class InsideCard: CardView {
         let byCPU = toggle.selected == 1
         let total = parts.reduce(0.0) { $0 + (byCPU ? $1.cpu : Double($1.memory)) }
         let sorted = parts.sorted { byCPU ? $0.cpu > $1.cpu : $0.memory > $1.memory }
-        title.text = NSAttributedString(string: "Inside \(appName)", attributes: [.font: Theme.sans(13, .semibold), .foregroundColor: Theme.ink])
+        title.text = Theme.header("Inside \(appName)", symbol: "square.stack.3d.up", tint: A2.labelTint(byCPU ? .cpu : .memory))
         if let top = sorted.first, total > 0 {
             let share = (byCPU ? top.cpu : Double(top.memory)) / total
             let what = byCPU ? "its CPU" : "its memory"
@@ -358,6 +372,11 @@ final class PartRow: DrawnView, SelfAuditing {
                                     attributes: [.font: Theme.sans(11), .foregroundColor: Theme.inkSecondary, .paragraphStyle: paragraph])
         }
     }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
+    override func accessibilityLabel() -> String? { name }
+    override func accessibilityValue() -> Any? { [value, share == "–" ? "" : share + " of the app", note].filter { !$0.isEmpty }.joined(separator: ", ") }
 }
 
 /// The drawer that slides in from the right when an app or process is selected:
@@ -386,11 +405,12 @@ final class AppDrawer: NSView {
     private let network = FigureTile("Network", symbol: "globe", tint: PageID.network.tint, big: false)
     private let strip = ColumnsCard()
     private let inside = InsideCard()
-    private let historyCard = CardView()
-    private let historyTitle = TextLine()
-    private let historyToggle = Segmented(["CPU", "Memory"])
-    private let chart = TimeChart()
+    private let historyCard = AppHistoryCard()
+    /// What the selection used at each process pass since the drawer opened on it, for
+    /// the chart until the minute history has more to show.
+    private var readings: [AppHistoryCard.Reading] = []
     private let factsCard = CardView()
+    private let factsTitle = TextLine()
     private let storageSection = AppStorageSection()
     private var factRows: [FactRow] = []
     private let commandCard = CardView()
@@ -398,6 +418,7 @@ final class AppDrawer: NSView {
     private let commandLine = NSTextField(wrappingLabelWithString: "")
 
     private let footer = Content()
+    private let footerFade = FooterFade()
     private var buttons: [GlassPill] = []
 
     private let gpuClients = GPUClients()
@@ -445,20 +466,18 @@ final class AppDrawer: NSView {
         // No title bar to keep clear of; insets would start the page scrolled.
         scroll.automaticallyAdjustsContentInsets = false
         scroll.autohidesScrollers = true
-        for view in [header, rule, scroll, footer] as [NSView] { body.addSubview(view) }
+        for view in [header, rule, scroll, footerFade, footer] as [NSView] { body.addSubview(view) }
         for view in [memory, cpu, strip, inside, historyCard, factsCard, commandCard] as [NSView] { content.addSubview(view) }
         for view in [power, gpu, disk, network] as [NSView] { strip.addSubview(view) }
         memory.showsMeter = true
         cpu.showsMeter = true
 
-        historyTitle.text = NSAttributedString(string: "Last Hour", attributes: [.font: Theme.sans(13, .semibold), .foregroundColor: Theme.ink])
-        historyCard.radius = 14
-        for view in [historyTitle, historyToggle, chart] as [NSView] { historyCard.addSubview(view) }
-        historyToggle.onChange = { [weak self] _ in self?.fillChart() }
-        chart.step = 60
+        historyCard.toggle.onChange = { [weak self] _ in self?.fillChart() }
         factsCard.radius = 14
+        factsTitle.text = Theme.header("Details", symbol: "info.circle", tint: A2.secondary)
+        factsCard.addSubview(factsTitle)
         commandCard.radius = 14
-        commandTitle.text = Theme.caption("Command")
+        commandTitle.text = Theme.header("Command", symbol: "terminal", tint: A2.secondary)
         commandLine.font = Theme.mono(10.5, .regular)
         commandLine.textColor = Theme.inkSecondary
         commandLine.isSelectable = true
@@ -486,6 +505,9 @@ final class AppDrawer: NSView {
         rule.isHidden = true
         let footerHeight: CGFloat = buttons.isEmpty ? 0 : 68
         footer.frame = NSRect(x: 0, y: bounds.height - footerHeight, width: width, height: footerHeight)
+        footerFade.isHidden = buttons.isEmpty
+        // Half a point in from the edges so the drawer's hairline stays on top.
+        footerFade.frame = NSRect(x: 0.5, y: bounds.height - footerHeight - 24, width: width - 1, height: footerHeight + 23.5)
         layoutFooter()
         // The content runs under the footer; the buttons float over it on their glass.
         scroll.frame = NSRect(x: 0, y: 85, width: width, height: bounds.height - 85)
@@ -510,27 +532,27 @@ final class AppDrawer: NSView {
             inside.frame = NSRect(x: 16, y: y, width: inner, height: inside.wantedHeight)
             y = inside.frame.maxY + 10
         }
-        historyCard.frame = NSRect(x: 16, y: y, width: inner, height: 150)
-        historyTitle.frame = NSRect(x: 18, y: 18, width: 120, height: 18)
-        let toggleWidth = historyToggle.naturalWidth
-        historyToggle.frame = NSRect(x: inner - 18 - toggleWidth, y: 14, width: toggleWidth, height: 26)
-        chart.frame = NSRect(x: 18, y: 50, width: inner - 36, height: 88)
+        historyCard.frame = NSRect(x: 16, y: y, width: inner, height: AppHistoryCard.height)
         y = historyCard.frame.maxY + 10
         y = AppNetworkSection.attach(to: content).arrange(top: y, width: inner)
         y = storageSection.place(in: content, selection: selection, at: y, width: inner)
         let facts = factRows.filter { !$0.isHidden }
         factsCard.isHidden = facts.isEmpty
         if !facts.isEmpty {
-            factsCard.frame = NSRect(x: 16, y: y, width: inner, height: CGFloat(facts.count) * 24 + 20)
-            for (index, row) in facts.enumerated() { row.frame = NSRect(x: 18, y: 10 + CGFloat(index) * 24, width: inner - 36, height: 24) }
+            factsCard.frame = NSRect(x: 16, y: y, width: inner, height: CGFloat(facts.count) * 26 + 58)
+            factsTitle.frame = NSRect(x: 18, y: 17, width: inner - 36, height: 18)
+            for (index, row) in facts.enumerated() {
+                row.frame = NSRect(x: 18, y: 46 + CGFloat(index) * 26, width: inner - 36, height: 26)
+                row.showsRule = index < facts.count - 1
+            }
             y = factsCard.frame.maxY + 10
         }
         commandCard.isHidden = commandLine.stringValue.isEmpty
         if !commandCard.isHidden {
             let height = min(140, ceil(commandLine.sizeThatFits(NSSize(width: inner - 36, height: 1000)).height))
-            commandCard.frame = NSRect(x: 16, y: y, width: inner, height: height + 50)
-            commandTitle.frame = NSRect(x: 18, y: 16, width: inner - 36, height: 14)
-            commandLine.frame = NSRect(x: 18, y: 36, width: inner - 36, height: height)
+            commandCard.frame = NSRect(x: 16, y: y, width: inner, height: height + 62)
+            commandTitle.frame = NSRect(x: 18, y: 17, width: inner - 36, height: 18)
+            commandLine.frame = NSRect(x: 18, y: 46, width: inner - 36, height: height)
             y = commandCard.frame.maxY + 10
         }
         let height = max(y + 6, scroll.contentSize.height)
@@ -563,6 +585,7 @@ final class AppDrawer: NSView {
             setFacts([])
             commandLine.stringValue = ""
             inside.parts = []
+            readings = []
             buildButtons()
             gpuShares = [:]
             if case .app(let id) = selection, let app = delegate.table.app(id) { loadAppFacts(app) }
@@ -580,7 +603,14 @@ final class AppDrawer: NSView {
         switch selection {
         case .app(let id):
             guard let app = table.app(id) else {
+                if name.text.length == 0 {
+                    let fallback = ((id as NSString).lastPathComponent as NSString).deletingPathExtension
+                    name.text = NSAttributedString(string: fallback.isEmpty ? id : fallback, attributes: [.font: Theme.sans(17, .bold), .foregroundColor: Theme.ink])
+                }
                 kind.text = Theme.caption("Not running", size: 9.5)
+                inside.isHidden = true
+                fillChart()
+                needsLayout = true
                 return
             }
             pids = app.pids
@@ -605,6 +635,7 @@ final class AppDrawer: NSView {
                  net: table.networkMeasured ? row.networkInPerSecond + row.networkOutPerSecond : nil)
             inside.isHidden = true
         }
+        record(table: table)
         let share = pids.reduce(0.0) { $0 + (gpuShares[$1] ?? 0) }
         gpu.figure.show(gpuShares.isEmpty ? "–" : String(format: "%.0f", share * 100), unit: gpuShares.isEmpty ? "" : "%")
         sampleGPU()
@@ -683,28 +714,42 @@ final class AppDrawer: NSView {
         }
     }
 
-    private func fillChart() {
-        let history = delegate.monitor.history
-        var id: String?
+    /// The app the chart follows: the selected one, or the app a selected process belongs to,
+    /// since Wisp keeps history per app. Nil for an app that is not running now.
+    private var chartApp: AppGroup? {
+        chartAppID.flatMap { delegate.table.app($0) }
+    }
+
+    private var chartAppID: String? {
         switch selection {
-        case .app(let appID): id = appID
-        case .process(let pid): id = delegate.table.processes.first { $0.pid == pid }?.groupID
-        case nil: break
+        case .app(let id): return id
+        case .process(let pid): return delegate.table.processes.first { $0.pid == pid }?.groupID
+        case nil: return nil
         }
-        guard let id else { return }
-        if historyToggle.selected == 0 {
-            chart.primaryColor = PageID.cpu.tint
-            chart.names = ("CPU", "")
-            chart.format = { [weak self] value in
+    }
+
+    private func record(table: ProcessTable) {
+        guard let app = chartApp, readings.last?.date != table.date else { return }
+        readings.append(.init(date: table.date, cpu: Float(app.cpu), memory: Float(app.memory)))
+        // Ten minutes of passes; by then the minute history covers more.
+        if readings.count > 300 { readings.removeFirst(readings.count - 300) }
+    }
+
+    private func fillChart() {
+        guard let id = chartAppID else { return }
+        let byCPU = historyCard.toggle.selected == 0
+        let format: (Float) -> String
+        if byCPU {
+            format = { [weak self] value in
                 Style.appCPU(Double(value), machine: self?.delegate.settings.cpuOfMachine ?? false, coreCount: self?.delegate.table.coreCount ?? 1)
             }
-            chart.primary = history.app(id, .cpu, minutes: 60)
         } else {
-            chart.primaryColor = PageID.memory.tint
-            chart.names = ("Memory", "")
-            chart.format = { Format.memory(Double($0)) }
-            chart.primary = history.app(id, .memory, minutes: 60)
+            format = { Format.memory(Double($0)) }
         }
+        var scope: String?
+        if case .process = selection { scope = chartApp?.name }
+        historyCard.show(minutes: delegate.monitor.history.app(id, byCPU ? .cpu : .memory, minutes: 60), readings: readings,
+                         byCPU: byCPU, label: scope, running: chartApp != nil, format: format)
     }
 
     // MARK: Facts
@@ -848,6 +893,7 @@ final class AppDrawer: NSView {
 /// end of a path stays readable. The full value is in the tooltip.
 final class FactRow: DrawnView {
     private var pair = ("", "")
+    var showsRule = false { didSet { if showsRule != oldValue { needsDisplay = true } } }
 
     func set(_ pair: (String, String)) {
         guard pair != self.pair else { return }
@@ -857,6 +903,10 @@ final class FactRow: DrawnView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        if showsRule {
+            Theme.rule.setFill()
+            NSRect(x: 0, y: bounds.height - 0.5, width: bounds.width, height: 0.5).fill()
+        }
         let key = NSAttributedString(string: pair.0, attributes: [.font: Theme.sans(12), .foregroundColor: Theme.inkSecondary])
         key.draw(at: NSPoint(x: 0, y: (bounds.height - key.size().height) / 2))
         let paragraph = NSMutableParagraphStyle()

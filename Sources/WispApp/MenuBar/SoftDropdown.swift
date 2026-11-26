@@ -20,6 +20,12 @@ class SoftDropdown: DrawnView {
     static let sectionRadius: CGFloat = 18
     static let sectionTitle: CGFloat = 36
     static let inset: CGFloat = 7
+    /// Below the last card: a little more than at the sides, as in the reference, so the
+    /// card's shadow does not make it look as if it sits on the section's edge.
+    static let bottomInset: CGFloat = 8.5
+    /// The footer's text sits this far above the middle of its band, so the space over its
+    /// capitals matches the space under its baseline.
+    static let footerLift: CGFloat = 1
     static let cardGap: CGFloat = 7
     static let padX: CGFloat = 14
     static let emptyHeight: CGFloat = 104
@@ -72,6 +78,98 @@ class SoftDropdown: DrawnView {
     /// Items above Settings and Quit in the ⋯ menu.
     func menuItems() -> [NSMenuItem] { [] }
 
+    // MARK: Reordering
+
+    /// Set by a dropdown whose cards can be dragged into another order. It gets the
+    /// cards in their new order once one is dropped somewhere else.
+    var onReorder: (([SoftCard]) -> Void)?
+    /// After a drag, whether or not the order changed. Updates that came during it wait for this.
+    func dragEnded() {}
+    var isDragging: Bool { drag != nil }
+    private var arranged: [SoftCard] = []
+    private var cardsTop: CGFloat = 0
+    private var drag: (card: SoftCard, grab: CGFloat, order: [SoftCard])?
+
+    /// Where each card's top goes, stacked in this order.
+    private func tops(_ order: [SoftCard]) -> [CGFloat] {
+        var y = cardsTop
+        return order.map { card in
+            defer { y += card.frame.height + Self.cardGap }
+            return y
+        }
+    }
+
+    func beginDrag(_ card: SoftCard, event: NSEvent) {
+        guard arranged.contains(where: { $0 === card }) else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        drag = (card, point.y - card.frame.minY, arranged)
+        card.lifted = true
+        NSCursor.closedHand.push()
+    }
+
+    /// The card follows the pointer; the others make room where it would land.
+    func moveDrag(_ card: SoftCard, event: NSEvent) {
+        guard let drag, drag.card === card else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let ends = tops(drag.order)
+        let last = (ends.last ?? cardsTop) + (drag.order.last?.frame.height ?? 0) - card.frame.height
+        // A little past either end, then it stops.
+        let y = min(max(point.y - drag.grab, cardsTop - 8), max(cardsTop, last) + 8)
+        card.setFrameOrigin(NSPoint(x: card.frame.minX, y: y.rounded()))
+
+        let others = drag.order.filter { $0 !== card }
+        var best = 0, nearest = CGFloat.infinity
+        for index in 0...others.count {
+            var order = others
+            order.insert(card, at: index)
+            let distance = abs(tops(order)[index] - y)
+            if distance < nearest { (best, nearest) = (index, distance) }
+        }
+        var order = others
+        order.insert(card, at: best)
+        guard !zip(order, drag.order).allSatisfy({ $0 === $1 }) else { return }
+        self.drag?.order = order
+        let places = tops(order)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.22
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+            for (other, top) in zip(order, places) where other !== card {
+                other.animator().setFrameOrigin(NSPoint(x: other.frame.minX, y: top))
+            }
+        }
+    }
+
+    func endDrag(_ card: SoftCard) {
+        guard let drag, drag.card === card else { return }
+        self.drag = nil
+        NSCursor.pop()
+        let place = tops(drag.order)[drag.order.firstIndex { $0 === card } ?? 0]
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+            card.animator().setFrameOrigin(NSPoint(x: card.frame.minX, y: place))
+        }
+        card.lifted = false
+        let moved = !zip(drag.order, arranged).allSatisfy { $0 === $1 }
+        arranged = drag.order
+        if moved { onReorder?(drag.order) }
+        dragEnded()
+    }
+
+    /// Moves a card one place up or down without a drag, for VoiceOver's actions.
+    func move(_ card: SoftCard, by offset: Int) -> Bool {
+        guard drag == nil, let index = arranged.firstIndex(where: { $0 === card }) else { return false }
+        let target = index + offset
+        guard arranged.indices.contains(target) else { return false }
+        var order = arranged
+        order.swapAt(index, target)
+        arranged = order
+        onReorder?(order)
+        dragEnded()
+        needsLayout = true
+        return true
+    }
+
     /// The empty card: a line saying why, and a button that does something about it.
     func showEmpty(_ message: String?, button: String = "") {
         emptyText.text = NSAttributedString(string: message ?? "", attributes: [.font: Look.body, .foregroundColor: Look.secondary])
@@ -84,6 +182,8 @@ class SoftDropdown: DrawnView {
     /// and sizes the view to fit. Every card's lines share one label column and one bar
     /// length, so the bars line up down the whole dropdown.
     func arrange(_ cards: [SoftCard]) {
+        // A drag owns the cards' places until it ends; `dragEnded` arranges them again.
+        guard drag == nil else { return }
         let width = Self.width
         head.frame = NSRect(x: 0, y: 0, width: width, height: Self.headHeight)
         let button: CGFloat = 30
@@ -104,13 +204,25 @@ class SoftDropdown: DrawnView {
         let detailed = readings.filter { $0.detailNeed > 0 }
         let sharedDetail = detailed.map(\.detailNeed).max() ?? 0
         let sharedFigure = detailed.map(\.figureNeed).max() ?? 0
+        // Fixed cards at the top (a summary) stay put; only the cards after them move.
+        let fixed = cards.prefix { $0.fixed }
+        let movableCards = Array(cards.dropFirst(fixed.count))
+        let movable = onReorder != nil && movableCards.count > 1
         for card in cards {
+            if card === movableCards.first {
+                arranged = movableCards
+                cardsTop = y
+            }
             card.column = card.listsApps ? SoftCard.column(labels: card.labelWidth) : column
             card.shared = card.listsApps || card.detailNeed == 0 ? (0, 0) : (sharedFigure, sharedDetail)
+            card.dragHost = movable && !card.fixed ? self : nil
             let rect = NSRect(x: cardX, y: y, width: cardWidth, height: card.height)
-            plates.append(rect)
             card.frame = rect
             y = rect.maxY + Self.cardGap
+        }
+        if movableCards.isEmpty {
+            arranged = []
+            cardsTop = y
         }
         if !emptyText.isHidden {
             let rect = NSRect(x: cardX, y: y, width: cardWidth, height: Self.emptyHeight)
@@ -121,15 +233,14 @@ class SoftDropdown: DrawnView {
             y = rect.maxY + Self.cardGap
         }
         var sectionRect = section
-        sectionRect.size.height = y - Self.cardGap + Self.inset - section.minY
+        sectionRect.size.height = y - Self.cardGap + Self.bottomInset - section.minY
         let height = sectionRect.maxY + Self.footerHeight
         plate.section = sectionRect
         plate.cards = plates
         plate.frame = NSRect(x: 0, y: 0, width: width, height: height)
-        plate.needsDisplay = true
 
         let link = footerLink.intrinsicContentSize
-        footerLink.frame = NSRect(x: width - 18 - link.width, y: (sectionRect.maxY + (Self.footerHeight - link.height) / 2).rounded(),
+        footerLink.frame = NSRect(x: width - 18 - link.width, y: (sectionRect.maxY + (Self.footerHeight - link.height) / 2 - Self.footerLift).rounded(),
                                   width: link.width, height: link.height)
         plate.footerRight = footerLink.frame.minX - 12
         let shown = NSSize(width: (width * Self.scale).rounded(), height: (height * Self.scale).rounded())
@@ -221,6 +332,8 @@ extension SoftDropdown {
         static let card = Theme.dynamic(0xFFFFFF, 0x323236)
         static let cardLine = A2.dynamic(NSColor(white: 0, alpha: 0.095), NSColor(white: 1, alpha: 0.08))
         static let cardShadow = A2.dynamic(NSColor(white: 0, alpha: 0.07), NSColor(white: 0, alpha: 0.3))
+        /// Under a card picked up to move.
+        static let liftShadow = A2.dynamic(NSColor(white: 0, alpha: 0.16), NSColor(white: 0, alpha: 0.5))
         static let primary = A2.dynamic(NSColor(white: 0, alpha: 0.97), NSColor(white: 1, alpha: 0.96))
         static let heading = A2.dynamic(NSColor(white: 0, alpha: 0.83), NSColor(white: 1, alpha: 0.85))
         static let secondary = A2.dynamic(NSColor(white: 0, alpha: 0.63), NSColor(white: 1, alpha: 0.6))
@@ -238,8 +351,7 @@ extension SoftDropdown {
         static let tag = A2.dynamic(NSColor(white: 0, alpha: 0.05), NSColor(white: 1, alpha: 0.08))
         static let buttonHover = Theme.dynamic(0xF4F4F7, 0x3A3A40)
 
-        @discardableResult
-        static func text(_ text: String, x: CGFloat, mid: CGFloat, width: CGFloat, font: NSFont, color: NSColor, right: Bool = false) -> CGFloat {
+        static func text(_ text: String, x: CGFloat, mid: CGFloat, width: CGFloat, font: NSFont, color: NSColor, right: Bool = false) {
             A2Dev.text(text, x: x, mid: mid, width: width, font: font, color: color, right: right)
         }
 
@@ -262,6 +374,13 @@ extension SoftDropdown {
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+        /// Below its corners the panel is the same all the way down. A continuous corner
+        /// curves over about 1.3 times its radius.
+        override var stretchCaps: (top: CGFloat, bottom: CGFloat)? {
+            let cap = SoftDropdown.panelRadius * 1.5 + 2
+            return (cap, cap)
+        }
+
         override func draw(_ dirtyRect: NSRect) {
             let radius = SoftDropdown.panelRadius
             (solid ? Look.panel : Look.panelWash).setFill()
@@ -282,6 +401,13 @@ extension SoftDropdown {
         private static let near = A2.dynamic(NSColor(white: 0, alpha: 0.06), NSColor(white: 0, alpha: 0.3))
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        /// Clear of the corners and of the far shadow's blur and drop, the sides fall off
+        /// the same way on every row.
+        override var stretchCaps: (top: CGFloat, bottom: CGFloat)? {
+            let cap = margin + SoftDropdown.panelRadius * 1.5 + 22 * 2 + 9
+            return (cap, cap)
+        }
 
         override func draw(_ dirtyRect: NSRect) {
             let panel = bounds.insetBy(dx: margin, dy: margin)
@@ -308,12 +434,22 @@ extension SoftDropdown {
     /// section with its heading and count, each card's plate and shadow, and the footer
     /// note. One bitmap, so the shadows cost nothing to composite.
     final class Plate: BitmapView {
-        var section = NSRect.zero
-        var cards: [NSRect] = []
+        var section = NSRect.zero { didSet { if section != oldValue { needsDisplay = true } } }
+        /// Card shapes the plate draws itself: only the empty card's. A SoftCard draws its own,
+        /// so it can move when dragged.
+        var cards: [NSRect] = [] { didSet { if cards != oldValue { needsDisplay = true } } }
         var title = "" { didSet { if title != oldValue { needsDisplay = true } } }
         var count = "" { didSet { if count != oldValue { needsDisplay = true } } }
         var footer = "" { didSet { if footer != oldValue { needsDisplay = true } } }
-        var footerRight: CGFloat = 0
+        var footerRight: CGFloat = 0 { didSet { if footerRight != oldValue { needsDisplay = true } } }
+
+        /// Between the heading and the section's bottom corners the plate is the section's
+        /// sides on every row, unless it draws an empty card there.
+        override var stretchCaps: (top: CGFloat, bottom: CGFloat)? {
+            guard cards.isEmpty, section.height > 0 else { return nil }
+            let corner = SoftDropdown.sectionRadius * 1.5 + 2
+            return (section.minY + SoftDropdown.sectionTitle + corner, bounds.height - section.maxY + corner)
+        }
 
         override func draw(_ dirtyRect: NSRect) {
             Look.thin()
@@ -351,7 +487,7 @@ extension SoftDropdown {
             }
 
             if !footer.isEmpty {
-                let footerMid = section.maxY + SoftDropdown.footerHeight / 2
+                let footerMid = section.maxY + SoftDropdown.footerHeight / 2 - SoftDropdown.footerLift
                 let x = section.minX + 8
                 Look.text(footer, x: x, mid: footerMid, width: max(0, footerRight - x), font: Look.body, color: Look.secondary)
             }
@@ -411,6 +547,9 @@ extension SoftDropdown {
             title = ""
             toolTip = label
             setAccessibilityLabel(label)
+            // An image-only button's cell is what VoiceOver reads; without this it is
+            // a nameless button with only a tooltip.
+            cell?.setAccessibilityLabel(label)
         }
 
         required init?(coder: NSCoder) { fatalError() }
@@ -531,15 +670,42 @@ final class SoftCard: BitmapView {
         var warns = false
         /// An icon before the label, such as an app's.
         var icon: NSImage?
+        /// Where even use would have the bar by now, 0 to 1: a plan limit's pace mark.
+        var pace: Double?
+        /// Before the first reading: the line's shape in a quiet fill where its figure (and,
+        /// without a label, its icon and name) will go.
+        var ghost = false
 
         static func == (a: Line, b: Line) -> Bool {
             a.label == b.label && a.fraction == b.fraction && a.color == b.color && a.figure == b.figure && a.detail == b.detail
-                && a.hover == b.hover && a.warns == b.warns && a.icon === b.icon
+                && a.hover == b.hover && a.warns == b.warns && a.icon === b.icon && a.pace == b.pace && a.ghost == b.ghost
+        }
+
+        /// A line waiting for its first reading.
+        static func waiting(_ label: String = "") -> Line {
+            var line = Line(label: label, fraction: 0, color: .clear, figure: "", detail: "")
+            line.ghost = true
+            return line
         }
     }
 
     /// Clicking a line, when set; the line under the pointer is the argument.
     var onClick: ((Int) -> Void)?
+    /// The dropdown, while this card can be dragged into another place.
+    weak var dragHost: SoftDropdown?
+    /// What the card stands for when its place is saved, such as an account's id.
+    var dragID = ""
+    private var pressedAt: NSPoint?
+    private var dragging = false
+    /// Picked up: a deeper shadow while it moves.
+    var lifted = false {
+        didSet {
+            guard lifted != oldValue else { return }
+            if lifted { hoverLine = nil }
+            layer?.zPosition = lifted ? 1 : 0
+            applyShadow(animated: true)
+        }
+    }
     /// What each line stands for, such as an app's id, for `onClick`.
     var ids: [String] = []
     private static let iconSize: CGFloat = 16
@@ -560,7 +726,17 @@ final class SoftCard: BitmapView {
             needsLayout = true
         }
     }
+    /// A drawn graphic along the bottom edge in place of a chart, such as a limit's pace.
+    var graphic: NSView? {
+        didSet {
+            oldValue?.removeFromSuperview()
+            if let graphic { addSubview(graphic) }
+            needsLayout = true
+        }
+    }
     var chartHeight: CGFloat = 110
+    /// Stays where it is, above the cards that can be dragged.
+    var fixed = false
 
     /// The shape a chart along the bottom is cut to: the card's own corners, just inside
     /// its hairline.
@@ -652,12 +828,12 @@ final class SoftCard: BitmapView {
     var height: CGFloat {
         let count = lines.count + (note == nil ? 0 : 1)
         var height = count == 0 ? 46 : Self.firstLine + CGFloat(count - 1) * Self.pitch + Self.bottom
-        if chart != nil { height = (count == 0 ? 40 : height - 6) + chartHeight }
+        if chart != nil || graphic != nil { height = (count == 0 ? 40 : height - 6) + chartHeight }
         return height
     }
 
     func show(mark: Mark, title: String, meta: String, metaHover: String? = nil, tag: String? = nil, note: String? = nil, lines: [Line]) {
-        let changed = mark != self.mark || title != self.title || pill != self.pill || note != self.note || lines != self.lines
+        let changed = mark != self.mark || title != self.title || tag != self.pill || note != self.note || lines != self.lines
         self.mark = mark
         self.title = title
         self.pill = tag
@@ -673,6 +849,12 @@ final class SoftCard: BitmapView {
     }
 
     private var tagWidth: CGFloat { pill.map { ceil(Look.width($0, Look.strong)) + 18 } ?? 0 }
+
+    /// Where a card this wide draws a tag reading `text`, so a view can sit over it.
+    static func tagRect(_ text: String, in bounds: NSRect) -> NSRect {
+        let width = ceil(Look.width(text, Look.strong)) + 18
+        return NSRect(x: bounds.width - padX - width, y: titleMid - 11, width: width, height: 22)
+    }
     private var titleLeft: CGFloat { Self.padX + 20 + 9 }
     /// Where the first line's text ends: before the tag, if there is one.
     private var tail: CGFloat { bounds.width - Self.padX - (pill == nil ? 0 : tagWidth + 10) }
@@ -680,15 +862,56 @@ final class SoftCard: BitmapView {
 
     override func layout() {
         super.layout()
+        applyShadow(animated: false)
         let left = titleLeft + titleWidth + 12
         meta.frame = NSRect(x: left, y: Self.titleMid - 12, width: max(0, tail - left), height: 24)
         chart?.frame = NSRect(x: 0, y: bounds.height - chartHeight, width: bounds.width, height: chartHeight)
+        graphic?.frame = NSRect(x: 0, y: bounds.height - chartHeight, width: bounds.width, height: chartHeight)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyShadow(animated: false)
+    }
+
+    /// The shadow is the layer's, outside the bitmap, so the card can move without the
+    /// plate under it drawing again. In points of the dropdown's scaled bounds: the plate
+    /// used to draw it 6 pixels soft and 2 down.
+    private func applyShadow(animated: Bool) {
+        guard let layer else { return }
+        var color: CGColor?
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            color = (lifted ? Look.liftShadow : Look.cardShadow).cgColor
+        }
+        let radius: CGFloat = lifted ? 10 : 1.8
+        let offset = CGSize(width: 0, height: lifted ? 6 : 1.4)
+        if animated {
+            for (key, from, to) in [("shadowColor", layer.shadowColor as Any?, color as Any?), ("shadowRadius", layer.shadowRadius as Any?, radius as Any?),
+                                    ("shadowOffset", NSValue(size: layer.shadowOffset) as Any?, NSValue(size: offset) as Any?)] {
+                let animation = CABasicAnimation(keyPath: key)
+                animation.fromValue = from
+                animation.toValue = to
+                animation.duration = 0.18
+                animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                layer.add(animation, forKey: key)
+            }
+        }
+        layer.shadowColor = color
+        layer.shadowOpacity = 1
+        layer.shadowRadius = radius
+        layer.shadowOffset = offset
+        layer.shadowPath = CGPath.continuous(bounds, radius: SoftDropdown.cardRadius)
     }
 
     // MARK: Drawing
 
     override func draw(_ dirtyRect: NSRect) {
         Look.thin()
+        let cardRadius = SoftDropdown.cardRadius
+        Look.card.setFill()
+        Look.rounded(bounds, radius: cardRadius).fill()
+        Look.cardLine.setStroke()
+        Look.rounded(bounds.insetBy(dx: 0.25, dy: 0.25), radius: cardRadius - 0.25).stroke(width: 0.5)
         let right = bounds.width - Self.padX
         let mid = Self.titleMid
         let markRect = NSRect(x: Self.padX, y: mid - 10, width: 20, height: 20)
@@ -719,6 +942,11 @@ final class SoftCard: BitmapView {
         let column = Self.padX + self.column
         let (barWidth, figureColumn, detailColumn) = widths
         for (index, line) in lines.enumerated() {
+            if line.ghost {
+                drawGhost(line, index: index, mid: y, column: column, bar: barWidth, figure: figureColumn)
+                y += Self.pitch
+                continue
+            }
             var labelLeft = Self.padX
             if let icon = line.icon {
                 icon.draw(in: NSRect(x: labelLeft, y: (y - Self.iconSize / 2).rounded(), width: Self.iconSize, height: Self.iconSize),
@@ -735,6 +963,12 @@ final class SoftCard: BitmapView {
                 line.color.setFill()
                 NSBezierPath(roundedRect: NSRect(x: bar.minX, y: bar.minY, width: max(Self.barHeight, bar.width * fraction), height: bar.height),
                              xRadius: radius, yRadius: radius).fill()
+            }
+            // Where even use would be by now: a bar past it runs out before the reset.
+            if let pace = line.pace, pace > 0.01, pace < 0.99 {
+                let x = (bar.minX + bar.width * CGFloat(pace)).rounded()
+                Look.secondary.setFill()
+                NSBezierPath(roundedRect: NSRect(x: x - 0.75, y: bar.midY - 5, width: 1.5, height: 10), xRadius: 0.75, yRadius: 0.75).fill()
             }
             // Right-aligned in the card's figure column, so the details line up down the card.
             let figureLeft = bar.maxX + 8
@@ -754,6 +988,28 @@ final class SoftCard: BitmapView {
         }
     }
 
+    /// A line before its first reading, in the same columns as the real one: the label (or
+    /// an icon and a name of varying length), an empty track and a figure.
+    private func drawGhost(_ line: Line, index: Int, mid y: CGFloat, column: CGFloat, bar: CGFloat, figure: CGFloat) {
+        let fill = Look.track
+        if line.label.isEmpty {
+            fill.setFill()
+            NSBezierPath(roundedRect: NSRect(x: Self.padX, y: (y - Self.iconSize / 2).rounded(), width: Self.iconSize, height: Self.iconSize),
+                         xRadius: 4, yRadius: 4).fill()
+            let room = column - Self.padX - Self.iconSize - Self.iconGap - 12
+            let width = max(24, room * [0.8, 0.55, 0.7, 0.45, 0.62][index % 5])
+            NSBezierPath(roundedRect: NSRect(x: Self.padX + Self.iconSize + Self.iconGap, y: y - 4.5, width: width, height: 9),
+                         xRadius: 4.5, yRadius: 4.5).fill()
+        } else {
+            Look.text(line.label, x: Self.padX, mid: y, width: column - Self.padX - 8, font: Look.body, color: Look.secondary)
+        }
+        let track = NSRect(x: column, y: (y - Self.barHeight / 2).rounded(), width: bar, height: Self.barHeight)
+        fill.setFill()
+        NSBezierPath(roundedRect: track, xRadius: Self.barHeight / 2, yRadius: Self.barHeight / 2).fill()
+        let width = min(figure, 34)
+        NSBezierPath(roundedRect: NSRect(x: track.maxX + 8 + figure - width, y: y - 4.5, width: width, height: 9), xRadius: 4.5, yRadius: 4.5).fill()
+    }
+
     // MARK: Hover
 
     override func updateTrackingAreas() {
@@ -766,11 +1022,32 @@ final class SoftCard: BitmapView {
     override func mouseEntered(with event: NSEvent) { track(convert(event.locationInWindow, from: nil)) }
     override func mouseExited(with event: NSEvent) { hoverLine = nil }
 
+    /// The dropdown is a panel that is rarely key; the first press should already pick a card up.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { dragHost != nil || onClick != nil }
+
     override func mouseDown(with event: NSEvent) {
-        if onClick == nil { super.mouseDown(with: event) }
+        pressedAt = dragHost == nil ? nil : event.locationInWindow
+        if onClick == nil, pressedAt == nil { super.mouseDown(with: event) }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let host = dragHost, let start = pressedAt else { return super.mouseDragged(with: event) }
+        if !dragging {
+            let moved = event.locationInWindow
+            guard hypot(moved.x - start.x, moved.y - start.y) >= 3 else { return }
+            dragging = true
+            host.beginDrag(self, event: event)
+        }
+        host.moveDrag(self, event: event)
     }
 
     override func mouseUp(with event: NSEvent) {
+        pressedAt = nil
+        if dragging {
+            dragging = false
+            dragHost?.endDrag(self)
+            return
+        }
         guard let onClick else { return super.mouseUp(with: event) }
         track(convert(event.locationInWindow, from: nil))
         if let hoverLine { onClick(hoverLine) }
@@ -787,12 +1064,77 @@ final class SoftCard: BitmapView {
         hoverLine = point.y >= first - Self.pitch / 2 && lines.indices.contains(index) ? index : nil
     }
 
+    // MARK: Accessibility
+
+    /// A line in words, with what its hover, its warning colour and its pace mark show.
+    private static func spoken(_ line: Line, named: Bool = true) -> String {
+        guard !line.ghost else { return [named ? line.label : "", "waiting for the first reading"].filter { !$0.isEmpty }.joined(separator: ", ") }
+        var words = [(named ? line.label + " " : "") + line.figure, line.detail]
+        if let hover = line.hover, hover != line.detail { words.append(line.warns ? "warning: " + hover : hover) }
+        if let pace = line.pace, pace > 0.01, pace < 0.99 { words.append("even pace would be " + Format.percent(pace)) }
+        return words.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.joined(separator: ", ")
+    }
+
+    // Clickable lines are buttons of their own; the AppKit calls arrive on the main thread.
+    private final class LineElement: NSAccessibilityElement {
+        weak var owner: SoftCard?
+        var index = 0
+        override func accessibilityPerformPress() -> Bool {
+            MainActor.assumeIsolated {
+                guard let owner, let onClick = owner.onClick, owner.lines.indices.contains(index) else { return false }
+                onClick(index)
+                return true
+            }
+        }
+        override func accessibilityFrameInParentSpace() -> NSRect {
+            MainActor.assumeIsolated {
+                guard let owner else { return .zero }
+                let first = SoftCard.firstLine + (owner.note == nil ? 0 : SoftCard.pitch)
+                let top = first - SoftCard.pitch / 2 + CGFloat(index) * SoftCard.pitch
+                return NSRect(x: 0, y: owner.bounds.height - top - SoftCard.pitch, width: owner.bounds.width, height: SoftCard.pitch)
+            }
+        }
+    }
+    private var lineElements: [LineElement] = []
+
     override func isAccessibilityElement() -> Bool { true }
-    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
+    override func accessibilityRole() -> NSAccessibility.Role? { onClick == nil ? .staticText : .group }
+    override func accessibilityLabel() -> String? { onClick == nil ? nil : title }
     override func accessibilityValue() -> Any? {
-        ([title, pill ?? "", meta.hoverText ?? meta.text, note ?? ""]
-            + lines.map { "\($0.label) \($0.figure), \($0.detail)" + ($0.hover.map { ", " + $0 } ?? "") })
-            .filter { !$0.isEmpty }.joined(separator: ", ")
+        var parts: [String] = onClick == nil ? [title] : []
+        parts += [pill ?? "", meta.hoverText ?? meta.text, note ?? ""]
+        if onClick == nil { parts += lines.map { Self.spoken($0) } }
+        return parts.filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+    // A card that can be dragged into another place can be moved from VoiceOver too.
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        guard dragHost != nil else { return nil }
+        return [("Move Up", -1), ("Move Down", 1)].map { name, offset in
+            NSAccessibilityCustomAction(name: name) { [weak self] in
+                guard let self, let host = self.dragHost else { return false }
+                return host.move(self, by: offset)
+            }
+        }
+    }
+    override func accessibilityChildren() -> [Any]? {
+        var children = super.accessibilityChildren() ?? []
+        guard onClick != nil else { return children }
+        let shown = lines.indices.filter { !lines[$0].ghost }
+        while lineElements.count < shown.count {
+            let element = LineElement()
+            element.owner = self
+            element.setAccessibilityParent(self)
+            element.setAccessibilityRole(.button)
+            lineElements.append(element)
+        }
+        for (slot, index) in shown.enumerated() {
+            let element = lineElements[slot]
+            element.index = index
+            element.setAccessibilityLabel(lines[index].label)
+            element.setAccessibilityValue(Self.spoken(lines[index], named: false))
+            children.append(element)
+        }
+        return children
     }
 }
 

@@ -36,11 +36,12 @@ final class PlanCard: CardView {
         }
         let meter = TickMeter()
 
+        /// The name line, then the bar with the percentage beside it.
+        static let height: CGFloat = 32
+        private static let figureWidth: CGFloat = 56
+
         override init(frame: NSRect) {
             super.init(frame: frame)
-            meter.ticks = true
-            meter.tickWidth = 3
-            meter.pitch = 5
             addSubview(meter)
         }
 
@@ -48,7 +49,7 @@ final class PlanCard: CardView {
 
         override func layout() {
             super.layout()
-            meter.frame = NSRect(x: 0, y: bounds.height - 8, width: bounds.width - 64, height: 8)
+            meter.frame = NSRect(x: 0, y: bounds.height - 9, width: bounds.width - Self.figureWidth, height: 6)
         }
 
         override func updateTrackingAreas() {
@@ -66,20 +67,20 @@ final class PlanCard: CardView {
         }
 
         override func draw(_ dirtyRect: NSRect) {
-            let right = bounds.width - 64
-            let used = A2Dev.text(name, x: 0, mid: 7, width: right, font: Theme.sans(12), color: A2.secondary)
+            let right = bounds.width - Self.figureWidth
+            let used = A2Dev.measuredText(PlanCard.title(name), x: 0, mid: 8, width: right, font: Theme.sans(12, .medium), color: A2.secondary)
             let showReset = hovering && resets != nil
             let room = right - used - 12
-            A2Dev.text(PlanCard.fitted(showReset ? resets ?? "" : detail, room: room, font: Theme.sans(11)), x: used + 12, mid: 7,
+            A2Dev.text(PlanCard.fitted(showReset ? resets ?? "" : detail, room: room, font: Theme.sans(11)), x: used + 12, mid: 8,
                        width: room, font: Theme.sans(11), color: short && showReset ? A2.warn : A2.tertiary, right: true)
             let font = Theme.digits(15, .semibold)
-            A2Dev.text(Format.percent(self.used), x: right, mid: bounds.height - 6, width: 64, font: font, color: A2.primary, right: true)
+            A2Dev.text(Format.percent(self.used), x: right, mid: bounds.height - 6, width: Self.figureWidth, font: font, color: A2.primary, right: true)
         }
 
         override func isAccessibilityElement() -> Bool { true }
         override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
         override func accessibilityValue() -> Any? {
-            "\(name) \(Format.percent(used)), \(detail)" + (resets.map { $0 == detail ? "" : ", " + $0 } ?? "")
+            "\(PlanCard.title(name)) \(Format.percent(used)), \(detail)" + (resets.map { $0 == detail ? "" : ", " + $0 } ?? "")
         }
     }
 
@@ -88,7 +89,7 @@ final class PlanCard: CardView {
     final class Header: BitmapView {
         var provider = ""
         /// Shown in place of the provider's name, as T3 Code labels its accounts.
-        var title: String?
+        var title: String? { didSet { showDetail() } }
         /// When the figures were reported ("4m ago"); hovering it shows `account` instead.
         var updated = "" { didSet { showDetail() } }
         var account = "" { didSet { showDetail() } }
@@ -106,9 +107,11 @@ final class PlanCard: CardView {
 
         required init?(coder: NSCoder) { fatalError() }
 
+        /// The figures' age once they are old enough to matter, otherwise the account
+        /// when the title does not already name it. Hovering shows the account.
         private func showDetail() {
-            detail.text = updated.isEmpty ? account : updated
-            detail.hoverText = updated.isEmpty || account.isEmpty ? nil : account
+            detail.text = !updated.isEmpty ? updated : title == nil ? account : ""
+            detail.hoverText = account.isEmpty || detail.text == account ? nil : account
         }
 
         private var planWidth: CGFloat { plan.map { A2Dev.width($0, Self.planFont) + 16 } ?? 0 }
@@ -147,18 +150,45 @@ final class PlanCard: CardView {
         override func accessibilityValue() -> Any? { [title ?? provider, plan ?? "", account].joined(separator: ", ") }
     }
 
-    let header = Header()
-    private(set) var rows: [WindowRow] = []
-    /// The mockup's card, with two windows.
-    static let height: CGFloat = 170
+    /// The window page's card: the account, its fullest limit as the figure, then every
+    /// limit as a line (name, bar with a pace mark, percentage, when it resets), laid out
+    /// like the dropdowns' cards. The dashboard's AI usage block keeps `Header` and
+    /// `WindowRow`.
+    private let face = Face()
+    private let figure = A2.figure()
+    private let state = Pill()
+    private let meta = MarqueeLabel()
 
-    /// Why an account has no figures yet, under its header.
-    private let note = TextLine()
+    static let figureBaseline: CGFloat = 76
+    static let captionMid: CGFloat = 97
+    static let firstLine: CGFloat = 132
+    static let pitch: CGFloat = 26
+    static let bottom: CGFloat = 20
+
+    /// A card's height for `windows` limits, or for its one-line note when it has none.
+    static func height(windows: Int) -> CGFloat {
+        firstLine + CGFloat(max(windows, 1) - 1) * pitch + bottom
+    }
+
+    /// A limit's name, scope first: "Gemini · 5-hour", "Fable · Weekly", or just
+    /// "5-hour" and "Weekly" for an account's own limits.
+    static func title(_ name: String) -> String {
+        if name == "5-hour session" { return "5-hour" }
+        if name == "This week" { return "Weekly" }
+        if name == "This month" { return "Monthly" }
+        if name.hasPrefix("5-hour ") { return String(name.dropFirst(7)) + " · 5-hour" }
+        if name.hasSuffix(" this week") { return String(name.dropLast(10)) + " · Weekly" }
+        return name
+    }
 
     override init() {
         super.init()
-        addSubview(header)
-        addSubview(note)
+        for view in [face, figure, state, meta] as [NSView] { addSubview(view) }
+        figure.color = A2.primary
+        meta.font = A2Dev.detailFont
+        meta.color = A2.tertiary
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
     }
 
     static func problemText(_ problem: String) -> NSAttributedString {
@@ -167,35 +197,231 @@ final class PlanCard: CardView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The limit the figure shows: the fullest, or the week while nothing is used.
+    static func headline(_ windows: [PlanUsage.Window]) -> PlanUsage.Window? {
+        let fullest = windows.max { $0.used < $1.used }
+        if let fullest, fullest.used > 0 { return fullest }
+        return windows.first { !$0.name.hasPrefix("5-hour") } ?? windows.first
+    }
+
+    /// How far through its window a limit is: where even use would have the bar now.
+    static func elapsed(_ window: PlanUsage.Window, now: Date) -> Double? {
+        guard let resets = window.resets, resets > now else { return nil }
+        let length: Double = window.name.hasPrefix("5-hour") ? 5 * 3600 : window.name.hasSuffix("month") ? 30 * 86_400 : 7 * 86_400
+        return min(1, max(0, 1 - resets.timeIntervalSince(now) / length))
+    }
+
     func show(_ usage: PlanUsage, now: Date) {
-        header.provider = usage.provider
-        header.title = usage.label
-        header.updated = Self.updated(usage, now: now)
-        header.account = usage.account
-        header.plan = usage.plan
-        note.text = Self.problemText(usage.problem ?? "")
-        note.isHidden = usage.problem == nil
-        header.needsDisplay = true
-        while rows.count < usage.windows.count {
-            let row = WindowRow()
-            addSubview(row)
-            rows.append(row)
-        }
-        for (index, row) in rows.enumerated() {
-            row.isHidden = index >= usage.windows.count
-            guard index < usage.windows.count else { continue }
-            let window = usage.windows[index]
+        face.provider = usage.provider
+        face.name = usage.label ?? usage.provider
+        face.plan = usage.plan
+        let age = Self.updated(usage, now: now)
+        meta.text = !age.isEmpty ? age : usage.label == nil ? usage.account : ""
+        meta.hoverText = usage.account.isEmpty || meta.text == usage.account ? nil : usage.account
+
+        var lines: [Face.Line] = []
+        var anyShort = false
+        for window in usage.windows {
             let pace = Self.pace(window, now: now)
-            row.name = window.name
-            row.used = window.used
-            row.detail = pace.text
-            row.short = pace.short
-            row.resets = pace.resets
-            row.meter.fraction = window.used
-            row.meter.color = Self.meterColor(window, short: pace.short)
-            row.needsDisplay = true
+            anyShort = anyShort || (pace.short && window.used < 1)
+            lines.append(.init(label: Self.title(window.name), fraction: window.used, pace: Self.elapsed(window, now: now),
+                               color: Self.meterColor(window, short: pace.short), figure: Format.percent(window.used),
+                               detail: Self.shortDetail(pace.text), hover: pace.resets, warns: pace.short))
         }
+        face.lines = lines
+        face.note = usage.problem
+
+        if let headline = Self.headline(usage.windows) {
+            let (number, unit) = A2Dev.parts(Format.percent(headline.used))
+            figure.show(number, unit: unit)
+            let pace = Self.pace(headline, now: now)
+            face.caption = (Self.title(headline.name), Self.outlook(headline, pace: pace, now: now))
+            face.captionWarns = pace.short
+        } else {
+            figure.show("–", unit: "")
+            face.caption = nil
+        }
+        let used = usage.windows.map(\.used).max() ?? 0
+        if used >= 1 {
+            (state.text, state.tone) = ("Used up", .bad)
+        } else if used >= 0.9 {
+            (state.text, state.tone) = ("Near limit", .bad)
+        } else if anyShort {
+            (state.text, state.tone) = ("Ahead of pace", .warn)
+        } else {
+            state.text = ""
+        }
+        state.isHidden = state.text.isEmpty
+        setAccessibilityLabel((usage.label ?? usage.provider) + (usage.plan.map { ", " + $0 } ?? ""))
+        // The face draws its lines and their pace marks in one pass, so the card says
+        // what they show, including what the hover and the mark would add.
+        let outlook = face.caption.map { $0.detail.isEmpty ? "" : $0.title + " " + $0.detail } ?? ""
+        let spoken = lines.map { line -> String in
+            var text = "\(line.label) \(line.figure), \(line.detail)"
+            if let pace = line.pace, pace > 0.01, pace < 0.99 { text += ", even pace would be \(Format.percent(pace))" }
+            if let hover = line.hover, hover != line.detail { text += ", " + hover }
+            return text
+        }
+        setAccessibilityValue(([state.text, outlook, usage.problem ?? ""] + spoken).filter { !$0.isEmpty }.joined(separator: "; "))
+        face.needsDisplay = true
         needsLayout = true
+    }
+
+    /// Where the headline limit is going: "Heading for 31% by reset · 5d 3h" once a tenth
+    /// of its window has passed, "Runs out in 2h at this rate" when it would run out first.
+    static func outlook(_ window: PlanUsage.Window, pace: (text: String, short: Bool, resets: String?), now: Date) -> String {
+        guard !pace.short, window.used > 0, window.used < 1, let elapsed = elapsed(window, now: now), elapsed >= 0.1,
+              let resets = window.resets else { return pace.text }
+        let projected = Format.percent(min(1, window.used / elapsed))
+        return "Heading for \(projected) by reset · " + Format.duration(resets.timeIntervalSince(now))
+    }
+
+    /// A line's detail, short enough for its column: "5d 4h" for "Resets in 5d 4h".
+    static func shortDetail(_ text: String) -> String {
+        if text.hasPrefix("Resets in ") { return String(text.dropFirst("Resets in ".count)) }
+        if text.hasPrefix("Runs out in ") { return "Out in " + text.dropFirst("Runs out in ".count).replacingOccurrences(of: " at this rate", with: "") }
+        return text.replacingOccurrences(of: "Used up · Resets in ", with: "Back in ")
+    }
+
+    /// Everything but the figure, the state and the meta line, drawn in one pass.
+    final class Face: BitmapView {
+        struct Line: Equatable {
+            var label: String
+            var fraction: Double
+            /// Where even use would have the bar now, 0 to 1.
+            var pace: Double?
+            var color: NSColor
+            var figure: String
+            var detail: String
+            /// Shown in place of `detail` while hovered: the reset's clock time, or when
+            /// the pace would use the limit up.
+            var hover: String?
+            var warns: Bool
+        }
+
+        var provider = ""
+        var name = ""
+        var plan: String?
+        var caption: (title: String, detail: String)?
+        var captionWarns = false
+        var note: String?
+        var lines: [Line] = []
+        private var hovered: Int? {
+            didSet {
+                guard hovered != oldValue else { return }
+                crossfade()
+                needsDisplay = true
+            }
+        }
+
+        static let titleFont = Theme.sans(13, .semibold)
+        static let planFont = Theme.sans(11, .semibold)
+        static let body = Theme.sans(12)
+        static let strong = Theme.sans(12, .semibold)
+        static let figureFont = Theme.digits(12.5, .semibold)
+        static let markSize: CGFloat = 20
+        static let titleMid: CGFloat = 24
+        private static let barHeight: CGFloat = 6
+
+        /// Where the title, plan and meta end, for the card to place its meta after.
+        var titleEnd: CGFloat {
+            let title = A2.padSide + Self.markSize + 9 + ceil(A2Dev.width(name, Self.titleFont))
+            return title + (plan.map { 8 + ceil(A2Dev.width($0, Self.planFont)) + 14 } ?? 0)
+        }
+
+        private var columns: (label: CGFloat, figure: CGFloat, detail: CGFloat) {
+            let label = ceil(lines.map { A2Dev.width($0.label, Self.body) }.max() ?? 0)
+            let figure = ceil(max(A2Dev.width("100%", Self.figureFont), lines.map { A2Dev.width($0.figure, Self.figureFont) }.max() ?? 0))
+            let detail = ceil(min(96, max(46, lines.map { A2Dev.width($0.detail, Self.body) }.max() ?? 0)))
+            return (min(label + 18, bounds.width * 0.42), figure, detail)
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            let left = A2.padSide, right = bounds.width - A2.padSide
+            let mid = Self.titleMid
+            let markRect = NSRect(x: left, y: mid - Self.markSize / 2, width: Self.markSize, height: Self.markSize)
+            let look = AgentLook.mark(provider, size: Self.markSize, appearance: effectiveAppearance)
+            if let icon = look.icon {
+                icon.draw(in: markRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            } else {
+                A2Dev.drawGlyphTile(look.glyph, tint: look.tint, in: markRect, appearance: effectiveAppearance)
+            }
+            let titleLeft = markRect.maxX + 9
+            let titleWidth = min(ceil(A2Dev.width(name, Self.titleFont)), right - titleLeft - 60)
+            A2Dev.text(name, x: titleLeft, mid: mid, width: titleWidth + 1, font: Self.titleFont, color: A2.primary)
+            if let plan {
+                let width = ceil(A2Dev.width(plan, Self.planFont)) + 14
+                let pill = NSRect(x: titleLeft + titleWidth + 8, y: mid - 9, width: width, height: 18)
+                A2Dev.tile.setFill()
+                NSBezierPath(roundedRect: pill, xRadius: 9, yRadius: 9).fill()
+                A2Dev.text(plan, x: pill.minX + 7, mid: pill.midY, width: width, font: Self.planFont, color: A2.secondary)
+            }
+
+            if let caption {
+                let titleWidth = ceil(A2Dev.width(caption.title, Self.strong))
+                A2Dev.text(caption.title, x: left, mid: PlanCard.captionMid, width: titleWidth + 1, font: Self.strong, color: A2.secondary)
+                if !caption.detail.isEmpty {
+                    let x = left + titleWidth + 6
+                    A2Dev.text("· " + caption.detail, x: x, mid: PlanCard.captionMid, width: right - x, font: Self.body,
+                               color: captionWarns ? A2.warn : A2.tertiary)
+                }
+            }
+
+            var y = PlanCard.firstLine
+            if let note {
+                A2Dev.text(note, x: left, mid: y, width: right - left, font: Self.body, color: A2.warn)
+                y += PlanCard.pitch
+            }
+            let (labelColumn, figureColumn, detailColumn) = columns
+            let barLeft = left + labelColumn
+            let detailLeft = right - detailColumn
+            let figureRight = detailLeft - 14
+            let barRight = figureRight - figureColumn - 12
+            for (index, line) in lines.enumerated() {
+                A2Dev.text(line.label, x: left, mid: y, width: labelColumn - 10, font: Self.body, color: A2.secondary)
+                let bar = NSRect(x: barLeft, y: (y - Self.barHeight / 2).rounded(), width: max(40, barRight - barLeft), height: Self.barHeight)
+                let radius = Self.barHeight / 2
+                A2.track.setFill()
+                NSBezierPath(roundedRect: bar, xRadius: radius, yRadius: radius).fill()
+                if line.fraction > 0 {
+                    line.color.setFill()
+                    NSBezierPath(roundedRect: NSRect(x: bar.minX, y: bar.minY, width: max(Self.barHeight, bar.width * CGFloat(min(1, line.fraction))),
+                                                     height: bar.height), xRadius: radius, yRadius: radius).fill()
+                }
+                // Where even use would be by now: past it, the limit runs out early.
+                if let pace = line.pace, pace > 0.01, pace < 0.99 {
+                    let x = (bar.minX + bar.width * CGFloat(pace)).rounded()
+                    A2.tertiary.setFill()
+                    NSBezierPath(roundedRect: NSRect(x: x - 0.75, y: bar.midY - 5, width: 1.5, height: 10), xRadius: 0.75, yRadius: 0.75).fill()
+                }
+                A2Dev.text(line.figure, x: figureRight - figureColumn, mid: y, width: figureColumn, font: Self.figureFont, color: A2.primary, right: true)
+                let hover = hovered == index ? line.hover : nil
+                let detail = PlanCard.fitted(hover ?? line.detail, room: right - detailLeft + 30, font: Self.body)
+                A2Dev.text(detail, x: detailLeft - (hover == nil ? 0 : 30), mid: y, width: right - detailLeft + (hover == nil ? 0 : 30),
+                           font: Self.body, color: hover != nil && line.warns ? A2.warn : A2.tertiary, right: true)
+                y += PlanCard.pitch
+            }
+        }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        }
+
+        override func mouseMoved(with event: NSEvent) {
+            let point = convert(event.locationInWindow, from: nil)
+            let first = PlanCard.firstLine + (note == nil ? 0 : PlanCard.pitch)
+            let index = Int(((point.y - first + PlanCard.pitch / 2) / PlanCard.pitch).rounded(.down))
+            hovered = lines.indices.contains(index) && lines[index].hover != nil ? index : nil
+        }
+
+        override func mouseExited(with event: NSEvent) { hovered = nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { hovered = nil }
+        }
     }
 
     /// The account, after how old the figures are once they are a while old, so the
@@ -204,7 +430,8 @@ final class PlanCard: CardView {
     static func updated(_ usage: PlanUsage, now: Date) -> String {
         guard let updated = usage.updated else { return "" }
         let minutes = max(0, Int(now.timeIntervalSince(updated) / 60))
-        if minutes < 1 { return "Updated just now" }
+        // Fresh figures say nothing; Wisp checks every few minutes.
+        if minutes < 10 { return "" }
         return "Updated " + (minutes < 60 ? "\(minutes)m" : (minutes < 1440 ? "\(minutes / 60)h" : "\(minutes / 1440)d")) + " ago"
     }
 
@@ -261,10 +488,10 @@ final class PlanCard: CardView {
     }
 
     private static func paceText(_ window: PlanUsage.Window, now: Date) -> (String, Bool) {
-        guard let resets = window.resets else { return (window.used == 0 ? "Not used since it reset" : "", false) }
+        guard let resets = window.resets else { return (window.used == 0 ? "Not started" : "", false) }
         let left = resets.timeIntervalSince(now)
         guard left > 0 else { return ("Resetting", false) }
-        let length: Double = window.name.hasPrefix("5-hour") ? 5 * 3600 : 7 * 86_400
+        let length: Double = window.name.hasPrefix("5-hour") ? 5 * 3600 : window.name.hasSuffix("month") ? 30 * 86_400 : 7 * 86_400
         let elapsed = max(60, length - left)
         if window.used == 0, left > length - 120 { return ("Not started", false) }
         let resetText = "Resets in " + Format.duration(left)
@@ -276,17 +503,13 @@ final class PlanCard: CardView {
 
     override func layout() {
         super.layout()
-        let inner = bounds.width - A2.padSide * 2
-        header.frame = NSRect(x: A2.padSide, y: A2.padTop, width: inner, height: Header.height)
-        note.frame = NSRect(x: A2.padSide, y: A2.padTop + Header.height + 14, width: inner, height: 16)
-        let shown = rows.filter { !$0.isHidden }
-        // Spread evenly over what is left, as the mockup's windows are.
-        let top = A2.padTop + Header.height + 8, bottom = bounds.height - A2.padTop - 4
-        let rowHeight: CGFloat = 29
-        let space = (bottom - top - rowHeight * CGFloat(shown.count)) / CGFloat(shown.count + 1)
-        for (index, row) in shown.enumerated() {
-            row.frame = NSRect(x: A2.padSide, y: (top + space + CGFloat(index) * (rowHeight + space)).rounded(), width: inner, height: rowHeight)
-        }
+        face.frame = bounds
+        figure.frame = A2.figureFrame(x: A2.padSide, baseline: Self.figureBaseline, width: bounds.width / 2)
+        let width = state.naturalWidth
+        state.frame = NSRect(x: bounds.width - A2.padSide - width, y: Self.figureBaseline - 26, width: width, height: 22)
+        let left = face.titleEnd + 12
+        let right = bounds.width - A2.padSide
+        meta.frame = NSRect(x: left, y: Face.titleMid - 12, width: max(0, right - left), height: 24)
     }
 }
 
@@ -302,16 +525,12 @@ final class AgentsPage: CardPage {
     private let memory: A2Tile
     private let tokens: A2Tile
     private let planOff = A2NoticeCard()
-    /// Claude folders whose status line does not send limits to Wisp yet; checked with the limits.
-    private var unconnected: [String] = []
     private var planCards: [PlanCard] = []
     private var plans: [PlanUsage] = []
     private var plansAt = Date.distantPast
-    private var plansBusy = false
     private let listCard = CardView()
     private let list = A2Table()
     private let finder = AgentFinder()
-    private let counter = TokenCounter()
     private var tokensAt = Date.distantPast
     private var tokensBusy = false
     private var findBusy = false
@@ -355,7 +574,7 @@ final class AgentsPage: CardPage {
     override func arrange(width: CGFloat) -> CGFloat {
         let inner = width - margin * 2
         var y = grid([running, cpu, memory, tokens], top: margin, width: width, columns: 4, height: 110) + gap
-        let offered = !plansOn || !unconnected.isEmpty
+        let offered = !plansOn
         planOff.isHidden = !offered
         if offered {
             planOff.frame = NSRect(x: margin, y: y, width: inner, height: A2NoticeCard.height)
@@ -363,8 +582,17 @@ final class AgentsPage: CardPage {
         }
         let visible = plansOn ? Array(planCards.prefix(plans.count)) : []
         if !visible.isEmpty {
-            let windows = plans.prefix(visible.count).map(\.windows.count).max() ?? 2
-            y = grid(visible, top: y, width: width, columns: 2, height: PlanCard.height + CGFloat(max(0, windows - 2)) * 40) + gap
+            // Two to a row where they fit; each row is as tall as its taller card.
+            let columns = inner >= 2 * 300 + gap ? 2 : 1
+            for start in stride(from: 0, to: visible.count, by: columns) {
+                let cards = Array(visible[start..<min(start + columns, visible.count)])
+                let height = (start..<start + cards.count).map { PlanCard.height(windows: plans[$0].windows.count) }.max() ?? 0
+                let cell = (inner - gap * CGFloat(cards.count - 1)) / CGFloat(cards.count)
+                for (index, card) in cards.enumerated() {
+                    card.frame = NSRect(x: margin + CGFloat(index) * (cell + gap), y: y, width: cell, height: height).integral
+                }
+                y += height + gap
+            }
         }
         // The list runs to the window's bottom margin when its rows fit, as in the mockup.
         let natural = list.naturalHeight + A2.padTop * 2
@@ -388,30 +616,19 @@ final class AgentsPage: CardPage {
             }
         }
         guard plansOn else { return }
-        // Limits are small local files that change after each reply: once a minute.
-        if Date().timeIntervalSince(plansAt) > 60, !plansBusy {
-            plansBusy = true
-            let helper = PlanLimitsSetup.helper
-            let hosts = T3RemoteLimits.hosts(delegate.settings.remoteLimitHosts)
-            DispatchQueue.global(qos: .utility).async {
-                CodexLive.refresh(maxAge: 300)
-                T3RemoteLimits.refresh(hosts: hosts, maxAge: 300)
-                let result = PlanUsageReader.readAll(remoteHosts: hosts)
-                let unconnected = helper.map { ClaudeStatusLine.unconnected(helper: $0) } ?? []
-                DispatchQueue.main.async { [weak self] in
-                    self?.plansBusy = false
-                    self?.plansAt = Date()
-                    self?.unconnected = unconnected
-                    self?.show(result)
-                }
-            }
+        // The menu bar's feed reads the limits, at most once a minute; the page shows what
+        // it has, and again each minute so the figures' ages move on.
+        let feed = delegate.plans
+        feed.refresh(maxAge: plansAt == .distantPast ? 0 : 60)
+        if feed.plans != plans || Date().timeIntervalSince(plansAt) > 60 {
+            plansAt = Date()
+            show(feed.plans)
         }
         // The token count reads only what the session logs gained since last time.
         if Date().timeIntervalSince(tokensAt) > 30, !tokensBusy {
             tokensBusy = true
-            let counter = self.counter
             DispatchQueue.global(qos: .utility).async {
-                let total = counter.today()
+                let total = TokenCounter.shared.today()
                 DispatchQueue.main.async { [weak self] in
                     self?.tokensBusy = false
                     self?.tokensAt = Date()
@@ -477,7 +694,7 @@ final class AgentsPage: CardPage {
             card.isHidden = index >= result.count
             if index < result.count { card.show(result[index], now: now) }
         }
-        if result.isEmpty, unconnected.isEmpty { caption.text = Toolbar.subtitle("No Claude Code or Codex limits on this Mac yet") }
+        if result.isEmpty { caption.text = Toolbar.subtitle("No signed-in Claude Code, Codex or Antigravity account on this Mac") }
         showPlanState()
         relayout()
     }
@@ -488,12 +705,6 @@ final class AgentsPage: CardPage {
             tokens.set(sub: "Turn on with plan limits")
             planOff.row.set(symbol: "gauge.with.needle", tint: tint, title: "Plan limits", detail: PlanLimitsSetup.offDetail,
                             button: "Show Limits") { [weak self] in self?.turnOnPlans() }
-        } else if !unconnected.isEmpty {
-            let count = unconnected.count
-            planOff.row.set(symbol: "gauge.with.needle", tint: tint, title: "Claude Code limits",
-                            detail: count == 1 ? "One Claude Code setup does not send its limits to Wisp yet"
-                                : "\(count) Claude Code setups do not send their limits to Wisp yet",
-                            button: "Connect") { [weak self] in self?.turnOnPlans() }
         }
     }
 
@@ -505,7 +716,6 @@ final class AgentsPage: CardPage {
     private func turnOnPlans() {
         delegate.change { $0.planUsage = true }
         PlanLimitsSetup.apply(on: true)
-        unconnected = []
         showPlanState()
         plansAt = .distantPast
         tokensAt = .distantPast
@@ -515,24 +725,14 @@ final class AgentsPage: CardPage {
     }
 }
 
-/// Turning plan limits on adds Wisp to each Claude Code status line; turning them off
-/// puts the old status lines back. Codex needs nothing: it writes its limits to its logs.
+/// Plan limits need no setup: each agent's own program is asked. Turning them off puts
+/// back any Claude Code status line that earlier versions of Wisp added themselves to.
 @MainActor
 enum PlanLimitsSetup {
-    static let offDetail = "Adds Wisp to Claude Code's status line and reads Codex's logs. No sign-ins, nothing sent"
-
-    /// The `wisp` helper inside this copy of the app; nil when running outside a bundle.
-    static var helper: String? {
-        let path = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/wisp").path
-        return FileManager.default.isExecutableFile(atPath: path) ? path : nil
-    }
+    static let offDetail = "Asks Claude Code, Codex and Antigravity for each signed-in account's limits. No sign-ins read"
+    static let detail = "Every few minutes Wisp asks Claude Code, Codex and the Antigravity CLI for each signed-in account's limits. They answer with their own sign-in, use no tokens and keep no conversation. Wisp reads no sign-in and sends nothing itself."
 
     static func apply(on: Bool) {
-        if on {
-            guard let helper else { return }
-            ClaudeStatusLine.connectAll(helper: helper)
-        } else {
-            ClaudeStatusLine.disconnectAll()
-        }
+        if !on { DispatchQueue.global(qos: .utility).async { ClaudeStatusLine.disconnectAll() } }
     }
 }

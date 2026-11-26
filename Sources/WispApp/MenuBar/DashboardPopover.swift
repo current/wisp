@@ -72,12 +72,12 @@ final class DashboardPopover: NSObject {
         } else {
             let view = content ?? DashboardView(delegate: delegate)
             content = view
-            panel = self.panel ?? DashboardPanel(content: view)
+            panel = self.panel ?? DashboardPanel(content: view, soft: true)
             self.panel = panel
             view.onHeightChange = { [weak panel] in panel?.fit() }
             view.show(focus: focus)
             delegate.dashboardLayout = view.layout
-            if view.layout.contains(.usage) { delegate.plans.refresh(maxAge: 20, liveAge: 60) }
+            if view.layout.contains(.usage) { delegate.plans.refresh(maxAge: 20, liveAge: 180) }
             view.update(delegate.system, history: delegate.monitor.history)
             view.update(delegate.table)
         }
@@ -168,7 +168,7 @@ final class DashboardPopover: NSObject {
         let focus = ProcessInfo.processInfo.environment["WISP_POPOVER_FOCUS"].flatMap(MenuMetric.init(rawValue:))
         let view = DashboardView(delegate: delegate)
         let softView = focus.flatMap { Self.makeSoft($0, delegate: delegate) }
-        let panel = softView.map { DashboardPanel(content: $0, soft: true) } ?? DashboardPanel(content: view)
+        let panel = softView.map { DashboardPanel(content: $0, soft: true) } ?? DashboardPanel(content: view, soft: true)
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1)
@@ -177,16 +177,19 @@ final class DashboardPopover: NSObject {
         panel.fit()
         panel.setFrameOrigin(NSPoint(x: -30000, y: -30000))
         panel.orderBack(nil)
-        if let focus { delegate.dashboardLayout = Self.softBlocks(focus) }
+        // The monitor samples only what the open blocks show, as it does for the real dropdown.
+        delegate.dashboardLayout = focus.map(Self.softBlocks) ?? view.layout
         delegate.dashboardOpen = true
-        if focus == .usage { delegate.plans.refresh(maxAge: 0, liveAge: 60) }
+        if focus == .usage || (focus == nil && view.layout.contains(.usage)) { delegate.plans.refresh(maxAge: 0, liveAge: 180) }
         softView?.prepare()
+        // The dashboard view goes once a soft dropdown takes the panel; only one is drawn.
         let refresh = { [weak self, weak view] in
-            guard let self, let view else { return }
+            guard let self else { return }
             if let softView {
                 softView.update(self.delegate.system, history: self.delegate.monitor.history)
                 return softView.update(self.delegate.table)
             }
+            guard let view else { return }
             view.update(self.delegate.system, history: self.delegate.monitor.history)
             view.update(self.delegate.table)
         }
@@ -196,6 +199,9 @@ final class DashboardPopover: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             panel.fit()
             Self.write(panel, to: URL(fileURLWithPath: path))
+            if let root = panel.contentView {
+                AccessibilityDump.write(root, to: URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("ax.txt"))
+            }
             NSApp.terminate(nil)
         }
     }
@@ -225,7 +231,6 @@ final class DashboardPopover: NSObject {
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
         current.orderOut(nil)
-        content?.hideTooltip()
         delegate.dashboardOpen = false
     }
 }
@@ -261,6 +266,8 @@ final class DashboardPanel: NSPanel {
         level = .popUpMenu
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         isReleasedWhenClosed = false
+        // Blocks come and go as the dashboard fills; Tab follows whatever is shown.
+        autorecalculatesKeyViewLoop = true
         frameView.fill = Theme.ground
         frameView.radius = Theme.panelRadius
         if soft {
@@ -337,35 +344,54 @@ final class DashboardPanel: NSPanel {
     }
 }
 
-/// The dashboard: a header, the blocks chosen in Settings in their order, and a
-/// footer. The same view, scaled down and not clickable, is the builder's preview.
+/// The dashboard: the blocks chosen in Settings, in their order, in the soft dropdowns'
+/// style. Wisp's icon with a title and a line summing up the blocks; a section titled
+/// This Mac with the machine's chip, holding a card per block; and a footer with a hint
+/// and a link into Wisp. The same view, unscaled and not clickable, is the builder's
+/// preview.
 @MainActor
 final class DashboardView: DrawnView {
     private unowned let delegate: AppDelegate
-    static let width: CGFloat = 384
-    static let outer: CGFloat = 10
-    static let spacing: CGFloat = 8
-    static let blocksTop: CGFloat = 52
+    /// Laid out in the dropdowns' 400-point space; the menu bar panel shows it at their
+    /// scale, the builder at its own.
+    static let width: CGFloat = SoftDropdown.width
+    /// Where the cards start from the edge: the section's margin plus its inset.
+    static let outer: CGFloat = SoftDropdown.sectionX + SoftDropdown.inset
+    static let spacing: CGFloat = SoftDropdown.cardGap
+    static let blocksTop: CGFloat = SoftDropdown.headHeight + SoftDropdown.sectionTitle
     /// The builder's copy: drawn the same, but the builder takes every click.
     let preview: Bool
 
     // Header
-    private let title = TextLine(Toolbar.title("Wisp"))
+    private let face: DashboardFace?
+    private let plate = SoftDropdown.Plate()
+    private let head = SoftDropdown.Head()
     private let chip = MachineChip()
-    private lazy var settingsButton = SymbolButton(symbol: "slider.horizontal.3", label: "Settings", target: self, action: #selector(openSettings))
-    private lazy var closeButton = SymbolButton(symbol: "xmark", label: "Close", target: self, action: #selector(closeDashboard))
+    private lazy var moreButton = SoftDropdown.RoundButton(symbol: "ellipsis", label: "More", target: self, action: #selector(showMore(_:)))
+    private lazy var settingsButton = SoftDropdown.RoundButton(symbol: "slider.horizontal.3", label: "Settings", target: self,
+                                                               action: #selector(openSettings))
+    private lazy var closeButton = SoftDropdown.RoundButton(symbol: "xmark", label: "Close", target: self, action: #selector(closeDashboard))
 
     // Blocks
     private(set) var layout: [DashboardBlock] = []
     private var views: [DashboardBlock: DashboardBlockView] = [:]
-    private let emptyNote = TextLine(Theme.caption("No blocks yet. Add some in Settings, Menu Bar."), alignment: .center)
+    private let emptyNote = SoftText()
+    private lazy var emptyButton: ActionButton = {
+        let button = ActionButton(title: "Choose Blocks", target: self, action: #selector(customize))
+        button.secondary = true
+        button.font = SoftLook.strong
+        return button
+    }()
+    /// A block changed height while the stack was being laid out; it is placed then anyway.
+    private var applying = false
+    /// The section's smaller size, waiting for the blocks to finish sliding up into it.
+    private var pendingSection: NSRect?
 
     // Footer, one view so it moves as one when blocks come and go.
     private let footer = DrawnView()
-    private lazy var moreButton = SymbolButton(symbol: "ellipsis", label: "More", target: self, action: #selector(showMore(_:)))
-    private lazy var openButton = ActionButton(title: "Open Wisp", target: self, action: #selector(openWindow))
+    private let hint = SoftText()
+    private lazy var openLink = SoftDropdown.LinkButton(title: "Open Wisp", target: self, action: #selector(openWindow))
 
-    private let tooltip = Tooltip()
     private var lastSystem: SystemSnapshot?
     private var lastTable: ProcessTable?
     var onHeightChange: (() -> Void)?
@@ -373,42 +399,50 @@ final class DashboardView: DrawnView {
     init(delegate: AppDelegate, preview: Bool = false) {
         self.delegate = delegate
         self.preview = preview
+        face = preview ? DashboardFace() : nil
         super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: 400))
         wantsLayer = true
-        for view in [title, chip, settingsButton, closeButton, emptyNote, footer] as [NSView] { addSubview(view) }
-        for view in [moreButton, openButton] as [NSView] { footer.addSubview(view) }
+        if let face { addSubview(face) }
+        plate.title = "This Mac"
+        head.title = "Wisp"
+        for view in [plate, head, chip, moreButton, settingsButton, closeButton, emptyNote, emptyButton, footer] as [NSView] { addSubview(view) }
+        for view in [hint, openLink] as [NSView] { footer.addSubview(view) }
         footer.wantsLayer = true
-        tooltip.isHidden = true
-        addSubview(tooltip)
+        emptyNote.centered = true
 
-        title.frame = NSRect(x: 20, y: 16, width: 160, height: 20)
-        closeButton.frame = NSRect(x: Self.width - 14 - 26, y: 13, width: 26, height: 26)
-        settingsButton.frame = NSRect(x: closeButton.frame.minX - 30, y: 13, width: 26, height: 26)
-        placeChip()
-        moreButton.frame = NSRect(x: 12, y: 14, width: 26, height: 26)
-        let openSize = openButton.intrinsicContentSize
-        openButton.frame = NSRect(x: Self.width - Self.outer - 4 - openSize.width, y: 12, width: openSize.width, height: openSize.height)
+        let width = Self.width, button: CGFloat = 30
+        head.frame = NSRect(x: 0, y: 0, width: width, height: SoftDropdown.headHeight)
+        closeButton.frame = NSRect(x: width - 16 - button, y: (SoftDropdown.headHeight - button) / 2 + 1, width: button, height: button)
+        settingsButton.frame = closeButton.frame.offsetBy(dx: -(button + 8), dy: 0)
+        moreButton.frame = settingsButton.frame.offsetBy(dx: -(button + 8), dy: 0)
+        head.textRight = moreButton.frame.minX - 12
+        let chipWidth = chip.naturalWidth
+        let titleMid = SoftDropdown.headHeight + SoftDropdown.sectionTitle / 2 + 1
+        chip.frame = NSRect(x: width - SoftDropdown.sectionX - SoftDropdown.padX + 3 - chipWidth, y: titleMid - 12, width: chipWidth, height: 24)
+        let link = openLink.intrinsicContentSize
+        openLink.frame = NSRect(x: width - 18 - link.width, y: ((SoftDropdown.footerHeight - link.height) / 2 - SoftDropdown.footerLift).rounded(),
+                                width: link.width, height: link.height)
+        let hintLeft = SoftDropdown.sectionX + 8
+        hint.frame = NSRect(x: hintLeft, y: (SoftDropdown.footerHeight / 2 - SoftDropdown.footerLift - 10).rounded(),
+                            width: openLink.frame.minX - 12 - hintLeft, height: 20)
         apply(delegate.settings.dashboard, animated: false)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Wisp dashboard")
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func hitTest(_ point: NSPoint) -> NSView? { preview ? nil : super.hitTest(point) }
 
-    /// The whole dashboard (nil), or the blocks about one menu bar reading under its name,
-    /// with the apps sorted by that reading.
+    /// The whole dashboard (nil), or the blocks about one menu bar reading, with the apps
+    /// sorted by that reading.
     func show(focus: MenuMetric?) {
-        title.text = Toolbar.title(focus?.title ?? "Wisp")
-        title.frame.size.width = max(60, chip.frame.minX - 8 - title.frame.minX)
-        chip.isHidden = focus == .usage
+        head.title = focus?.title ?? "Wisp"
         guard let focus else { return apply(delegate.settings.dashboard, animated: false) }
         let dropdown = focus.dropdown
         apply(dropdown.blocks, animated: false)
         (views[.apps] as? AppsBlock)?.tabs.select(dropdown.appsTab, animated: false)
-    }
-
-    private func placeChip() {
-        chip.frame = NSRect(x: settingsButton.frame.minX - 8 - chip.naturalWidth, y: 12, width: chip.naturalWidth, height: 28)
     }
 
     // MARK: Blocks
@@ -444,6 +478,8 @@ final class DashboardView: DrawnView {
     /// Shows `layout` top to bottom. With a gap, the blocks from that index down
     /// sit lower to leave room. Animated, every block slides from where it is now.
     func apply(_ newLayout: [DashboardBlock], gap: Gap? = nil, animated: Bool) {
+        applying = true
+        defer { applying = false }
         for block in layout where !newLayout.contains(block) {
             views[block]?.removeFromSuperview()
         }
@@ -460,7 +496,7 @@ final class DashboardView: DrawnView {
             var fresh = false
             if view.superview !== self {
                 fresh = true
-                addSubview(view, positioned: .below, relativeTo: tooltip)
+                addSubview(view, positioned: .below, relativeTo: footer)
                 view.isHidden = false
                 if let lastSystem { view.update(lastSystem, history: delegate.monitor.history) }
                 if let lastTable { view.update(lastTable) }
@@ -473,32 +509,85 @@ final class DashboardView: DrawnView {
             gapRect = NSRect(x: Self.outer, y: y, width: width, height: gap.height)
             y += gap.height + Self.spacing
         }
-        emptyNote.isHidden = !newLayout.isEmpty || gap != nil
-        if newLayout.isEmpty, gap == nil {
-            emptyNote.frame = NSRect(x: Self.outer, y: y + 8, width: width, height: 16)
-            y += 40
+        let empty = newLayout.isEmpty && gap == nil
+        emptyNote.isHidden = !empty
+        emptyButton.isHidden = !empty || preview
+        if empty {
+            let rect = NSRect(x: Self.outer, y: y, width: width, height: preview ? 64 : SoftDropdown.emptyHeight)
+            plate.cards = [rect]
+            emptyNote.text = "No blocks yet. Pick some in Settings, Menu Bar."
+            emptyNote.frame = NSRect(x: rect.minX + 16, y: rect.minY + 22, width: rect.width - 32, height: 20)
+            let size = emptyButton.intrinsicContentSize
+            emptyButton.frame = NSRect(x: (rect.midX - size.width / 2).rounded(), y: rect.minY + 54, width: size.width, height: size.height)
+            y = rect.maxY + Self.spacing
+        } else {
+            plate.cards = []
         }
-        let bottom = y - (newLayout.isEmpty && gap == nil ? 0 : Self.spacing)
-        place(footer, NSRect(x: 0, y: bottom, width: Self.width, height: 54), animated: animated)
-        let height = bottom + 54
-        if frame.height != height {
-            setFrameSize(NSSize(width: Self.width, height: height))
-            onHeightChange?()
+        // A hint for what the blocks shown can do.
+        hint.text = empty ? "" : newLayout.contains(.apps) ? "Click an app to see it in Wisp."
+            : newLayout.contains(.usage) ? "Hover a limit for its reset time."
+            : newLayout.contains(.cores) ? "Hover a core for its reading." : "Click a card to open its page."
+        let section = NSRect(x: SoftDropdown.sectionX, y: SoftDropdown.headHeight, width: Self.width - SoftDropdown.sectionX * 2,
+                             height: y - Self.spacing + SoftDropdown.bottomInset - SoftDropdown.headHeight)
+        place(footer, NSRect(x: 0, y: section.maxY, width: Self.width, height: SoftDropdown.footerHeight), animated: animated)
+        placeSection(section, animated: animated)
+        resize(section.maxY + SoftDropdown.footerHeight)
+        alignColumns()
+    }
+
+    /// The section follows the blocks. Growing, it makes room at once; shrinking while the
+    /// blocks slide, it waits for them so the last card never hangs below its edge.
+    private func placeSection(_ section: NSRect, animated: Bool) {
+        if animated, !Theme.reduceMotion, section.height < plate.section.height {
+            pendingSection = section
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self, self.pendingSection == section else { return }
+                self.pendingSection = nil
+                self.plate.section = section
+                self.plate.frame = NSRect(x: 0, y: 0, width: Self.width, height: self.bounds.height)
+            }
+            return
+        }
+        pendingSection = nil
+        plate.section = section
+    }
+
+    /// Sizes the view to its content: in the menu bar, shown at the dropdowns' scale with
+    /// its bounds kept at full size, as `SoftDropdown.arrange` does.
+    private func resize(_ height: CGFloat) {
+        let full = NSSize(width: Self.width, height: height)
+        let plateHeight = pendingSection == nil ? height : max(height, plate.section.maxY + SoftDropdown.footerHeight)
+        plate.frame = NSRect(x: 0, y: 0, width: Self.width, height: plateHeight)
+        face?.frame = NSRect(origin: .zero, size: full)
+        let shown = preview ? full : NSSize(width: (Self.width * SoftDropdown.scale).rounded(), height: (height * SoftDropdown.scale).rounded())
+        guard frame.size != shown || bounds.size != full else { return }
+        setFrameSize(shown)
+        setBoundsSize(full)
+        onHeightChange?()
+    }
+
+    /// Every card's lines share one label column, and the cards of readings one figure and
+    /// detail column, so the bars line up down the whole dashboard. Lists of apps keep
+    /// their own, as in the dropdowns.
+    private func alignColumns() {
+        let cards = layout.compactMap { views[$0] }.flatMap(\.cards)
+        let readings = cards.filter { !$0.listsApps }
+        let column = SoftCard.column(labels: readings.map(\.labelWidth).max() ?? 0)
+        let detailed = readings.filter { $0.detailNeed > 0 }
+        let sharedDetail = detailed.map(\.detailNeed).max() ?? 0
+        let sharedFigure = detailed.map(\.figureNeed).max() ?? 0
+        for card in cards {
+            card.column = card.listsApps ? SoftCard.column(labels: card.labelWidth) : column
+            card.shared = card.listsApps || card.detailNeed == 0 ? (0, 0) : (sharedFigure, sharedDetail)
         }
     }
 
     private func configure(_ view: DashboardBlockView) {
         view.onResize = { [weak self] in
-            guard let self else { return }
+            guard let self, !self.applying else { return }
             self.apply(self.layout, animated: false)
         }
         if let apps = view as? AppsBlock { apps.interactive = !preview }
-        if let cores = view as? CoresBlock, !preview {
-            cores.onHover = { [weak self, weak cores] hover in
-                guard let self, let cores else { return }
-                self.hoverCore(hover, in: cores)
-            }
-        }
     }
 
     /// Moves a view to its new frame. Animated, the layer runs from where it shows
@@ -543,30 +632,22 @@ final class DashboardView: DrawnView {
     func update(_ s: SystemSnapshot, history: HistoryStore) {
         lastSystem = s
         for block in layout { views[block]?.update(s, history: history) }
+        alignColumns()
+        showStatus()
+    }
+
+    private func showStatus() {
+        head.status = DashboardStatus.make(layout, lastSystem, table: lastTable,
+                                           agents: (views[.agents] as? AgentsBlock)?.running, plans: delegate.plans.plans,
+                                           hidden: Set(delegate.settings.hiddenUsageAccounts))
     }
 
     func update(_ table: ProcessTable) {
         lastTable = table
         for block in layout { views[block]?.update(table) }
+        alignColumns()
+        showStatus()
     }
-
-    // MARK: Hover
-
-    private func hoverCore(_ hover: (Int, Int, NSRect)?, in block: CoresBlock) {
-        let heatmap = block.heatmap
-        guard let (row, column, rect) = hover, heatmap.rows.indices.contains(row) else { return hideTooltip() }
-        let values = heatmap.rows[row].values
-        let index = values.count - 1 - column
-        guard index >= 0 else { return hideTooltip() }
-        let seconds = Double(column) * max(delegate.settings.interval, 1)
-        tooltip.title = "Core \(heatmap.rows[row].label)"
-        tooltip.detail = column == 0 ? "Now" : Format.duration(seconds) + " ago"
-        tooltip.lines = [Tooltip.Line(color: Theme.heat(values[index], appearance: effectiveAppearance),
-                                      name: "Busy", value: String(format: "%.0f%%", values[index] * 100))]
-        tooltip.show(in: self, above: convert(rect, from: heatmap))
-    }
-
-    func hideTooltip() { tooltip.hide() }
 
     // MARK: Actions
 
@@ -578,9 +659,14 @@ final class DashboardView: DrawnView {
         let menu = NSMenu()
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Customize Dashboard…", action: #selector(customize), keyEquivalent: "").target = self
+        if layout.contains(.usage), let usage = views[.usage] as? UsageBlock {
+            let items = usage.menuItems()
+            if !items.isEmpty { menu.addItem(.separator()) }
+            items.forEach(menu.addItem)
+        }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Wisp", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 6), in: sender)
     }
 
     @objc private func customize() { delegate.showSettings(section: .menuBar) }
@@ -590,102 +676,6 @@ final class DashboardView: DrawnView {
     static func split(_ text: String) -> (String, String) {
         let parts = text.split(separator: " ", maxSplits: 1)
         return parts.count == 2 ? (String(parts[0]), String(parts[1])) : (text, "")
-    }
-
-    static func titleText(_ name: String, _ count: String) -> NSAttributedString {
-        let text = NSMutableAttributedString(string: name, attributes: [.font: Theme.sans(14), .foregroundColor: Theme.ink])
-        if !count.isEmpty {
-            text.append(NSAttributedString(string: " · " + count, attributes: [.font: Theme.sans(14), .foregroundColor: Theme.inkTertiary]))
-        }
-        return text
-    }
-}
-
-/// Caption, figure with unit, and a tick meter, stacked.
-final class Meter: DrawnView {
-    var caption = "" { didSet { if caption != oldValue { needsDisplay = true } } }
-    private var value = ""
-    private var unit = ""
-    private let ticks = TickMeter()
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        addSubview(ticks)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func set(value newValue: String, unit newUnit: String, fraction: Double, color: NSColor) {
-        if newValue != value || newUnit != unit {
-            value = newValue
-            unit = newUnit
-            needsDisplay = true
-        }
-        ticks.fraction = fraction.isFinite ? fraction : 0
-        if ticks.color != color { ticks.color = color }
-    }
-
-    override func layout() {
-        super.layout()
-        ticks.frame = NSRect(x: 0, y: bounds.height - 12, width: bounds.width, height: 12)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        Theme.caption(caption, size: 9.5).draw(at: .zero)
-        let text = NSMutableAttributedString(string: value, attributes: [.font: Theme.figure(13, .medium), .foregroundColor: Theme.ink])
-        if !unit.isEmpty {
-            text.append(NSAttributedString(string: " " + unit, attributes: [.font: Theme.sans(11), .foregroundColor: Theme.inkTertiary]))
-        }
-        text.draw(at: NSPoint(x: 0, y: 13))
-    }
-
-    override func isAccessibilityElement() -> Bool { true }
-    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
-    override func accessibilityLabel() -> String? { caption }
-    override func accessibilityValue() -> Any? { value + " " + unit }
-}
-
-/// The chip in the header naming this Mac's chip and memory.
-final class MachineChip: DrawnView {
-    private(set) var chipName: String = {
-        var size = 0
-        sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
-        var buffer = [CChar](repeating: 0, count: max(size, 1))
-        sysctlbyname("machdep.cpu.brand_string", &buffer, &size, nil, 0)
-        let name = String(cString: buffer)
-        return name.isEmpty ? "This Mac" : name
-    }()
-    /// Installed memory; read once, so the header needs no memory sampling.
-    private let memory = Format.memory(ProcessInfo.processInfo.physicalMemory)
-
-    private var text: String {
-        let short = chipName.replacingOccurrences(of: "Apple ", with: "")
-        return memory.isEmpty ? short : "\(short) · \(memory)"
-    }
-
-    var naturalWidth: CGFloat {
-        ceil((text as NSString).size(withAttributes: [.font: Theme.sans(12)]).width) + 40
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
-        Theme.card.setFill()
-        shape.fill()
-        Theme.cardBorder.setStroke()
-        shape.stroke()
-        if let symbol = NSImage(systemSymbolName: "cpu", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 11, weight: .regular)) {
-            let tinted = NSImage(size: symbol.size, flipped: false) { rect in
-                symbol.draw(in: rect)
-                Theme.inkSecondary.set()
-                rect.fill(using: .sourceAtop)
-                return true
-            }
-            tinted.draw(in: NSRect(x: 10, y: (bounds.height - symbol.size.height) / 2, width: symbol.size.width, height: symbol.size.height),
-                        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-        }
-        (text as NSString).draw(at: NSPoint(x: 28, y: (bounds.height - 15) / 2),
-                                withAttributes: [.font: Theme.sans(12), .foregroundColor: Theme.ink])
     }
 }
 

@@ -18,7 +18,7 @@ final class MarqueeLabel: NSView {
     var alignRight = true
     /// Extra space between letters, and whether AppKit thickens the strokes: the menu bar
     /// dropdown sets its text looser and thinner.
-    var kern: CGFloat = 0 { didSet { needsDisplay = true } }
+    var kern: CGFloat = 0 { didSet { measuredWidth = nil; needsDisplay = true } }
     var smoothsFonts = true
 
     private var offset: CGFloat = 0
@@ -41,9 +41,20 @@ final class MarqueeLabel: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override func accessibilityValue() -> Any? { hoverText.map { text + ", " + $0 } ?? text }
+    deinit { timer?.invalidate() }
 
-    private var textWidth: CGFloat { A2Dev.width(shown, font, kern: kern) }
+    // The hover text is part of what the label says; an empty label says nothing at all.
+    override func isAccessibilityElement() -> Bool { !text.isEmpty || !(hoverText ?? "").isEmpty }
+    override func accessibilityValue() -> Any? { [text, hoverText ?? ""].filter { !$0.isEmpty }.joined(separator: ", ") }
+
+    /// The shown text's width, measured once per change rather than on every frame.
+    private var measuredWidth: CGFloat?
+    private var textWidth: CGFloat {
+        if let measuredWidth { return measuredWidth }
+        let width = A2Dev.width(shown, font, kern: kern)
+        measuredWidth = width
+        return width
+    }
     private var overflow: CGFloat { max(0, textWidth - bounds.width) }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -100,6 +111,7 @@ final class MarqueeLabel: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         hovering = true
+        measuredWidth = nil
         if hoverText != nil || overflow > 0 { crossfade() }
         needsDisplay = true
         startScrolling()
@@ -140,6 +152,11 @@ final class MarqueeLabel: NSView {
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                // A dropdown closes with orderOut, which sends no mouseExited.
+                guard self.window?.isVisible == true else {
+                    self.hovering = false
+                    return self.reset()
+                }
                 let next = self.position(CACurrentMediaTime() - self.started)
                 if abs(next - self.offset) > 0.01 {
                     self.offset = next
@@ -150,6 +167,14 @@ final class MarqueeLabel: NSView {
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         needsDisplay = true
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        if timer != nil {
+            hovering = false
+            reset()
+        }
     }
 
     override func viewDidMoveToWindow() {
@@ -163,6 +188,7 @@ final class MarqueeLabel: NSView {
     private func reset() {
         timer?.invalidate()
         timer = nil
+        measuredWidth = nil
         offset = 0
         needsDisplay = true
     }

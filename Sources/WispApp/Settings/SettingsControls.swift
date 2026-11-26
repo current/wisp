@@ -37,8 +37,9 @@ enum SettingsControls {
         let field = SettingsField(limit: limit, body)
         field.stringValue = text
         field.placeholderString = placeholder
-        field.frame.size = NSSize(width: 96, height: 24)
-        return field
+        let capsule = SettingsFieldCapsule(field: field)
+        capsule.frame.size = NSSize(width: 96, height: SettingsPopUp.height)
+        return capsule
     }
 
     static func pill(_ title: String, _ body: @escaping () -> Void) -> NSView {
@@ -145,6 +146,13 @@ final class SettingsPopUp: DrawnView {
 
     override func accessibilityValue() -> Any? { title }
     override func accessibilityPerformPress() -> Bool { showMenu(); return true }
+    override var acceptsFirstResponder: Bool { KeyPress.reachable }
+    override var canBecomeKeyView: Bool { acceptsFirstResponder }
+    override func keyDown(with event: NSEvent) {
+        if KeyPress.presses(event) { showMenu() } else { super.keyDown(with: event) }
+    }
+    override var focusRingMaskBounds: NSRect { bounds }
+    override func drawFocusRingMask() { KeyPress.capsule(NSRect(x: 0, y: 1, width: bounds.width, height: bounds.height - 2)) }
 
     private func showMenu() {
         guard !titles.isEmpty else { return }
@@ -259,16 +267,51 @@ final class SettingsField: NSTextField, NSTextFieldDelegate {
         self.body = body
         super.init(frame: .zero)
         font = Theme.sans(12.5, .medium)
-        bezelStyle = .roundedBezel
-        isBezeled = true
+        isBezeled = false
+        isBordered = false
+        drawsBackground = false
+        focusRingType = .none
         alignment = .center
         delegate = self
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    func controlTextDidBeginEditing(_ notification: Notification) { superview?.needsDisplay = true }
+    func controlTextDidEndEditing(_ notification: Notification) { superview?.needsDisplay = true }
+
     func controlTextDidChange(_ notification: Notification) {
         if stringValue.count > limit { stringValue = String(stringValue.prefix(limit)) }
         body(stringValue.trimmingCharacters(in: .whitespaces))
+    }
+}
+
+/// The text field on the pop-up's capsule, so a field and a pop-up in one column match.
+final class SettingsFieldCapsule: DrawnView {
+    let field: SettingsField
+
+    init(field: SettingsField) {
+        self.field = field
+        super.init(frame: .zero)
+        addSubview(field)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        let height = ceil(field.fittingSize.height)
+        field.frame = NSRect(x: 10, y: ((bounds.height - height) / 2).rounded(), width: bounds.width - 20, height: height)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let capsule = NSRect(x: 0, y: 1, width: bounds.width, height: bounds.height - 2)
+        let shape = NSBezierPath(roundedRect: capsule, xRadius: capsule.height / 2, yRadius: capsule.height / 2)
+        A2.dynamic(.white, NSColor(white: 1, alpha: 0.1)).setFill()
+        shape.fill()
+        let editing = window?.firstResponder === field.currentEditor()
+        shape.lineWidth = editing ? 1.5 : 0.5
+        (editing ? Theme.accent : A2.dynamic(NSColor(white: 0, alpha: 0.12), NSColor(white: 1, alpha: 0.08))).setStroke()
+        shape.stroke()
     }
 }

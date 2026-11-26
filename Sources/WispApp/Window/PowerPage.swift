@@ -724,8 +724,8 @@ final class ChargeBands: BitmapView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard charging.count > 1, charging.contains(true) else { return }
-        // TimeChart's plot: the label column on the right, the time axis below.
-        let plot = NSRect(x: 0, y: 6, width: bounds.width - 40 - 6, height: bounds.height - 30)
+        // The card places the view over the chart's plot exactly.
+        let plot = bounds
         let dx = plot.width / CGFloat(charging.count - 1)
         Theme.good.withAlphaComponent(0.16).setFill()
         var index = 0
@@ -738,4 +738,13 @@ final class ChargeBands: BitmapView {
             NSRect(x: from, y: plot.minY, width: max(1, to - from), height: plot.height).fill()
         }
     }
+
+    /// What a band means ("Playing"), so VoiceOver can say what the colour shows. Unset,
+    /// the bands stay hidden from it.
+    var title = ""
+
+    override func isAccessibilityElement() -> Bool { !title.isEmpty }
+    override func accessibilityRole() -> NSAccessibility.Role? { .image }
+    override func accessibilityLabel() -> String? { title + " bands" }
+    override func accessibilityValue() -> Any? { UseStrip.spoken(charging, on: title, off: "Not " + title.lowercased()) }
 }

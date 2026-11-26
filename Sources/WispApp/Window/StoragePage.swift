@@ -31,7 +31,9 @@ final class StoragePage: DiskPage {
     private var expanded = false
 
     private let barCard = CardView(), barStatus = TextLine(), barFigure = TextLine()
-    private let barLabel = A2CardLabel("Startup disk", symbol: PageID.disk.symbol, tint: A2.labelTint(.disk))
+    /// Made once, so the rows it tints compare equal across refreshes and the lists skip redrawing.
+    private static let tint = A2.labelTint(.disk)
+    private let barLabel = A2CardLabel("Startup disk", symbol: PageID.disk.symbol, tint: StoragePage.tint)
     private let bar = DiskBar(), legend = DiskLegend(), tooltip = Tooltip()
     private var canMeasure = false
     private let measureButton = A2ToolbarButton("Measure Again", symbol: "arrow.clockwise", tint: A2.secondary)
@@ -100,6 +102,9 @@ final class StoragePage: DiskPage {
         healthTitle.title = "Drive health"
         healthKeys.arrangement = .columns(5)
         healthCard.isHidden = true
+        accessNote.isHidden = true
+        accessButton.isHidden = true
+        showReading()
 
         index.onChange = { [weak self] state in MainActor.assumeIsolated { self?.received(state) } }
     }
@@ -135,7 +140,19 @@ final class StoragePage: DiskPage {
         state.roots = [:]
     }
 
-    private func received(_ new: StorageState) {
+    /// WISP_STORAGE_HOLD=reading keeps the page as it is before the saved measurement loads,
+    /// and =measuring as on a first scan with nothing measured yet, for screenshots.
+    private static let hold = ProcessInfo.processInfo.environment["WISP_STORAGE_HOLD"]
+
+    private func received(_ incoming: StorageState) {
+        var new = incoming
+        if Self.hold == "reading" { return }
+        if Self.hold == "measuring" {
+            new.roots = [:]
+            new.scanning = home
+            new.scannedAt = nil
+            new.summary?.reclaimable = []
+        }
         let hadSummary = state.summary != nil
         let finished = state.scanning != nil && new.scanning == nil
         state = new
@@ -158,29 +175,70 @@ final class StoragePage: DiskPage {
 
     // MARK: Filling in
 
+    /// The startup disk's free space from the live reading, for the headline before the measurement is in.
+    private var liveDisk: DiskReading?
+
+    /// Before the saved measurement loads: the headline from the live reading, the bar striped
+    /// for space not sorted yet, and grey rows where the folders and what could go will be.
+    private func showReading() {
+        guard state.summary == nil else { return }
+        if let disk = liveDisk, disk.volumeTotal > 0 {
+            showSubtitle(capacity: disk.volumeTotal)
+            barFigure.text = headline(free: disk.volumeFree, capacity: disk.volumeTotal, note: "")
+            let used = disk.volumeTotal > disk.volumeFree ? disk.volumeTotal - disk.volumeFree : 0
+            bar.slices = [DiskBar.Slice(category: .system, size: used), DiskBar.Slice(category: .free, size: disk.volumeFree)]
+        } else {
+            barFigure.text = NSAttributedString(string: "Reading the startup disk…", attributes: [.font: A2.unitFont, .foregroundColor: A2.secondary])
+            bar.slices = [DiskBar.Slice(category: .system, size: 1)]
+        }
+        bar.unsorted = [.system]
+        legend.items = StorageCategory.allCases.map { category in
+            DiskLegend.Item(category: category, value: category == .free ? liveDisk.map { Format.bytes($0.volumeFree) } ?? "" : "")
+        }
+        barStatus.text = NSAttributedString(string: "Reading the last measurement…", attributes: [.font: A2.legendFont, .foregroundColor: A2.tertiary])
+        crumbs.parts = stack.map(name)
+        revealButton.isHidden = true
+        list.rows = []
+        list.ghostRows = Self.shortList
+        detailNote.text = A2.plain("Reading folder sizes from the last measurement…")
+        reclaimList.rows = []
+        reclaimList.ghostRows = 4
+        reclaimNote.text = A2.plain("Appears once folder sizes are read")
+        if isViewLoaded { relayoutIfNeeded() }
+    }
+
+    private func headline(free: UInt64, capacity: UInt64, note: String) -> NSAttributedString {
+        let (number, unit) = DashboardView.split(Format.bytes(free))
+        let figure = NSMutableAttributedString(string: number, attributes: [.font: Theme.figure(30, .semibold), .foregroundColor: A2.primary, .kern: -1.2])
+        figure.append(NSAttributedString(string: " " + unit, attributes: [.font: A2.unitFont, .foregroundColor: A2.secondary]))
+        figure.append(NSAttributedString(string: "  free of \(Format.bytes(capacity))", attributes: [.font: A2.unitFont, .foregroundColor: A2.secondary]))
+        if !note.isEmpty {
+            figure.append(NSAttributedString(string: "  · " + note, attributes: [.font: Theme.sans(12), .foregroundColor: A2.tertiary]))
+        }
+        return figure
+    }
+
     private func refreshStorage() {
         guard let summary = state.summary else { return }
         let volume = summary.volume
-        let (number, unit) = DashboardView.split(Format.bytes(volume.available))
-        let figure = NSMutableAttributedString(string: number, attributes: [.font: Theme.figure(30, .semibold), .foregroundColor: A2.primary, .kern: -1.2])
-        figure.append(NSAttributedString(string: " " + unit, attributes: [.font: A2.unitFont, .foregroundColor: A2.secondary]))
-        figure.append(NSAttributedString(string: "  free of \(Format.bytes(volume.capacity))", attributes: [.font: A2.unitFont, .foregroundColor: A2.secondary]))
-        if volume.purgeable > 0 {
-            figure.append(NSAttributedString(string: "  · \(Format.bytes(volume.availableForImportant)) once macOS clears purgeable space",
-                                             attributes: [.font: Theme.sans(12), .foregroundColor: A2.tertiary]))
-        }
-        barFigure.text = figure
+        barFigure.text = headline(free: volume.available, capacity: volume.capacity,
+                                  note: volume.purgeable > 0 ? "\(Format.bytes(volume.availableForImportant)) once macOS clears purgeable space" : "")
         updateStatus()
         let scanned = !state.roots.isEmpty
-        bar.slices = summary.segments.map { DiskBar.Slice(category: $0.category, size: scanned || [.free, .purgeable].contains($0.category) ? $0.size : 0) }
-            + (scanned ? [] : [DiskBar.Slice(category: .system, size: volume.used > volume.purgeable ? volume.used - volume.purgeable : 0)])
+        bar.unsorted = scanned ? [] : [.system]
+        // Until folders are measured, all the used space stands in the system slice, striped, with free space after it.
+        let unsortedUsed = volume.used > volume.purgeable ? volume.used - volume.purgeable : 0
+        bar.slices = summary.segments.map { segment in
+            DiskBar.Slice(category: segment.category, size: scanned || [.free, .purgeable].contains(segment.category) ? segment.size
+                                                       : segment.category == .system ? unsortedUsed : 0)
+        }
         legend.items = summary.segments.map { segment in
             let value: String
             switch segment.category {
             case .snapshots: value = summary.snapshots.isEmpty ? "None" : "\(summary.snapshots.count) · size not reported"
             case .free, .purgeable: value = Format.bytes(segment.size)
             case .mail where !summary.fullDiskAccess && segment.size == 0: value = "Locked"
-            default: value = scanned ? Format.bytes(segment.size) : "Measuring"
+            default: value = scanned ? Format.bytes(segment.size) : ""
             }
             return DiskLegend.Item(category: segment.category, value: value)
         }
@@ -198,7 +256,7 @@ final class StoragePage: DiskPage {
     private func updateStatus() {
         var text = ""
         if let scanning = state.scanning {
-            text = "Measuring \(displayName(scanning))…"
+            text = state.roots.isEmpty ? "Measuring \(displayName(scanning)) for the first time…" : "Measuring \(displayName(scanning))…"
         } else if let date = state.scannedAt {
             text = "Measured " + Self.ago(date)
         }
@@ -209,6 +267,10 @@ final class StoragePage: DiskPage {
 
     override func update(system: SystemSnapshot) {
         super.update(system: system)
+        if state.summary == nil, let disk = system.disk, liveDisk == nil {
+            liveDisk = disk
+            showReading()
+        }
         if visible, state.summary != nil { updateStatus() }
     }
 
@@ -308,7 +370,7 @@ final class StoragePage: DiskPage {
         var rows: [A2List.Row] = []
         var note = ""
         var size: UInt64?
-        let tint = A2.labelTint(.disk)
+        let tint = Self.tint
         revealButton.isHidden = true
         switch stack.last ?? .mac {
         case .mac:
@@ -357,6 +419,15 @@ final class StoragePage: DiskPage {
         default: list.meterColors = (A2.up, nil)
         }
         list.rows = rows
+        // Rows still to come are grey placeholders, with a line that says what is being read.
+        let waiting = rows.isEmpty && (note == "Measuring…" || state.roots.isEmpty)
+        list.ghostRows = waiting ? Self.shortList : 0
+        if waiting {
+            let place = stack.last.map(name) ?? "Home"
+            note = state.roots.isEmpty || state.scanning != nil
+                ? "Measuring \(place) for the first time · folders appear as they are read"
+                : "Measuring \(place)…"
+        }
         detailNote.text = A2.plain(note)
         detailSize.text = NSAttributedString(string: size.map { Format.bytes($0) } ?? "", attributes: [.font: Theme.digits(12), .foregroundColor: A2.tertiary])
     }
@@ -378,7 +449,7 @@ final class StoragePage: DiskPage {
         if onDemand[path] == nil, folder.otherCount > 0, folder.files < 200_000, state.scanning == nil { measure(path) }
         note = "\(Format.bytes(folder.size)) · \(Format.count(Int(folder.files))) files"
             + (folder.modified > 0 ? " · changed " + Self.ago(Date(timeIntervalSince1970: folder.modified)) : "")
-        let tint = A2.labelTint(.disk)
+        let tint = Self.tint
         var rows = folder.children.prefix(60).map { child -> A2List.Row in
             let childPath = path + "/" + child.name
             let changed = child.modified > 0 ? "changed " + Self.ago(Date(timeIntervalSince1970: child.modified)) : ""
@@ -480,7 +551,7 @@ final class StoragePage: DiskPage {
 
     private func fillReclaim(_ summary: StorageSummary) {
         let items = summary.reclaimable
-        let tint = A2.labelTint(.disk)
+        let tint = Self.tint
         var rows = items.map { item in
             A2List.Row(id: item.id, name: item.name, note: item.detail, value: Format.bytes(item.size), symbol: "trash", tint: tint, opens: true)
         }
@@ -489,7 +560,9 @@ final class StoragePage: DiskPage {
         let trashValue = trashLocked ? "–" : summary.row("trash").map { Format.bytes($0.size ?? 0) } ?? (state.roots.isEmpty ? "–" : "Under 1 MB")
         rows.append(A2List.Row(id: "#trash", name: "Trash", note: trashLocked ? "Its size needs Full Disk Access" : "Empty it in Finder",
                                value: trashValue, symbol: "trash", opens: true, faint: true))
-        reclaimList.rows = rows
+        // Before any folder is measured there is nothing to weigh; grey rows hold the place.
+        reclaimList.rows = state.roots.isEmpty ? [] : rows
+        reclaimList.ghostRows = state.roots.isEmpty ? 4 : 0
         let total = items.reduce(UInt64(0)) { $0 + $1.size }
         reclaimNote.text = A2.plain(state.roots.isEmpty ? "Appears once folders are measured"
                                     : total > 0 ? "\(Format.bytes(total)) in all · check each one before it goes to the Trash"
@@ -605,8 +678,8 @@ final class StoragePage: DiskPage {
     private func naturalHeights(inner: CGFloat) -> [CGFloat] {
         let legendHeight = legend.naturalHeight(width: inner - A2.padSide * 2)
         let bar = 111 + legendHeight + (accessNote.isHidden ? 11 : 46)
-        let detail = Self.listTop + CGFloat(max(1, list.rows.count)) * 40 + A2.padTop
-        let reclaim = 78 + CGFloat(reclaimList.rows.count) * Self.reclaimRow
+        let detail = Self.listTop + CGFloat(max(1, list.rows.count + list.ghostRows)) * 40 + A2.padTop
+        let reclaim = 78 + CGFloat(reclaimList.rows.count + reclaimList.ghostRows) * Self.reclaimRow
         return [bar, detail, reclaim, grewCard.isHidden ? 0 : 1, healthCard.isHidden ? 0 : 1]
     }
 
@@ -695,7 +768,7 @@ final class StoragePage: DiskPage {
         detailNote.frame = NSRect(x: A2.padSide, y: 36, width: inner, height: 15)
         let listRoom = detailCard.bounds.height - Self.listTop - A2.padTop
         // Rows share the card's height; a short list keeps rows no taller than 48 pt.
-        list.rowHeight = min(48, max(40, (listRoom / CGFloat(max(1, list.rows.count))).rounded(.down)))
+        list.rowHeight = min(48, max(40, (listRoom / CGFloat(max(1, list.rows.count + list.ghostRows))).rounded(.down)))
         list.frame = NSRect(x: A2.padSide, y: Self.listTop, width: inner, height: max(1, listRoom))
 
         inner = reclaimCard.bounds.width - A2.padSide * 2

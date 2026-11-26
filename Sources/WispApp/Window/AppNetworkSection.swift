@@ -31,6 +31,8 @@ final class AppNetworkSection: NSView {
     private let moreLine = TextLine()
     private let emptyLine = TextLine()
     private var shownHosts = 0
+    /// Down and up for today, this week and this month, as the notes under the figures.
+    private var usageNotes: [String] = []
     private var shownListening = 0
     private var hasMore = false
 
@@ -50,7 +52,7 @@ final class AppNetworkSection: NSView {
             card.radius = 14
             addSubview(card)
         }
-        usageTitle.text = Self.title("Data used")
+        usageTitle.text = Theme.header("Data used", symbol: "arrow.up.arrow.down", tint: A2.labelTint(.network))
         for view in [usageTitle, usageNote] as [NSView] { usageCard.addSubview(view) }
         for name in ["Today", "This week", "This month"] {
             let label = TextLine(), figure = BigNumber(), note = TextLine()
@@ -61,17 +63,13 @@ final class AppNetworkSection: NSView {
             for view in [label, figure, note] as [NSView] { usageCard.addSubview(view) }
             usageColumns.append((label, figure, note))
         }
-        connectionsTitle.text = Self.title("Connections")
+        connectionsTitle.text = Theme.header("Connections", symbol: "point.3.connected.trianglepath.dotted", tint: A2.labelTint(.network))
         connectionsMeta.alignment = .right
         listeningLabel.text = NSAttributedString(string: "Listening", attributes: [.font: Theme.sans(11, .medium), .foregroundColor: Theme.inkSecondary])
         for view in [connectionsTitle, connectionsMeta, listeningLabel, moreLine, emptyLine] as [NSView] { connectionsCard.addSubview(view) }
     }
 
     required init?(coder: NSCoder) { fatalError() }
-
-    private static func title(_ text: String) -> NSAttributedString {
-        NSAttributedString(string: text, attributes: [.font: Theme.sans(13, .semibold), .foregroundColor: Theme.ink])
-    }
 
     // MARK: Layout
 
@@ -80,7 +78,11 @@ final class AppNetworkSection: NSView {
     /// Lays the cards out from `top` in the drawer's content; returns the next free y.
     func arrange(top: CGFloat, width inner: CGFloat) -> CGFloat {
         guard !isHidden else { return top }
-        let usageHeight: CGFloat = 112
+        // Down and up share a line while it fits its third of the card, and stack once the
+        // figures grow too wide for it.
+        let column = (inner - 36) / 3
+        let stacked = usageNotes.contains { A2Dev.width($0, Theme.sans(9.5)) > column - 8 }
+        let usageHeight: CGFloat = stacked ? 124 : 112
         let hostRows = CGFloat(shownHosts), listenRows = CGFloat(shownListening)
         var connectionsHeight: CGFloat = 52 + max(1, hostRows) * Self.rowHeight
         if shownListening > 0 { connectionsHeight += 26 + listenRows * Self.rowHeight }
@@ -91,18 +93,20 @@ final class AppNetworkSection: NSView {
         connectionsCard.frame = NSRect(x: 0, y: usageHeight + 10, width: inner, height: connectionsHeight)
 
         let width = inner - 36
-        usageTitle.frame = NSRect(x: 18, y: 18, width: 120, height: 18)
+        usageTitle.frame = NSRect(x: 18, y: 18, width: 104, height: 18)
         usageNote.frame = NSRect(x: 18 + 110, y: 20, width: width - 110, height: 15)
         usageNote.alignment = .right
-        let column = width / 3
         for (index, parts) in usageColumns.enumerated() {
             let x = 18 + CGFloat(index) * column
             parts.label.frame = NSRect(x: x, y: 48, width: column - 8, height: 15)
             parts.figure.frame = NSRect(x: x, y: 64, width: column - 8, height: 22)
-            parts.note.frame = NSRect(x: x, y: 88, width: column - 8, height: 14)
+            parts.note.frame = NSRect(x: x, y: 88, width: column - 8, height: stacked ? 26 : 14)
+            let note = usageNotes.indices.contains(index) ? usageNotes[index] : ""
+            parts.note.text = note.isEmpty ? NSAttributedString()
+                : Theme.caption(stacked ? note.replacingOccurrences(of: " ↑", with: "\n↑") : note, size: 9.5)
         }
 
-        connectionsTitle.frame = NSRect(x: 18, y: 18, width: 120, height: 18)
+        connectionsTitle.frame = NSRect(x: 18, y: 18, width: 104, height: 18)
         connectionsMeta.frame = NSRect(x: 18 + 110, y: 20, width: width - 110, height: 15)
         var y: CGFloat = 48
         for (index, row) in rows.enumerated() {
@@ -201,19 +205,24 @@ final class AppNetworkSection: NSView {
         let usage = delegate.monitor.dataUsage
         let now = Date()
         let (today, week, month) = usage.usage(of: appID, now: now)
+        var notes: [String] = []
         for (index, entry) in [today, week, month].enumerated() {
             let column = usageColumns[index]
             if let entry, entry.bytes >= 1 {
                 let (value, unit) = DashboardView.split(Format.bytes(entry.bytes))
                 column.figure.show(value, unit: unit)
-                column.note.text = Theme.caption("↓ \(Format.bytes(entry.received)) ↑ \(Format.bytes(entry.sent))", size: 9.5)
+                notes.append("↓ \(Format.bytes(entry.received)) ↑ \(Format.bytes(entry.sent))")
             } else {
                 column.figure.show(usage.since == nil ? "–" : "0", unit: usage.since == nil ? "" : "KB")
-                column.note.text = NSAttributedString()
+                notes.append("")
             }
         }
         usageNote.text = Theme.caption(Self.sinceNote(usage.since, background: delegate.settings.trackAppNetwork,
                                                       monthStart: usage.startOfMonth(now)), size: 9.5)
+        if notes != usageNotes {
+            usageNotes = notes
+            drawer?.needsLayout = true
+        }
     }
 
     /// Says what the totals cover: counting starts when Wisp first measured, and
@@ -274,9 +283,11 @@ final class AppNetworkSection: NSView {
         guard !scrolledForScreenshot, let points = ProcessInfo.processInfo.environment["WISP_DRAWER_SCROLL"].flatMap(Double.init),
               let scroll = enclosingScrollView else { return }
         scrolledForScreenshot = true
-        DispatchQueue.main.async {
+        // A few seconds on, so the storage and signature cards have come in and the drawer has its full height.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             scroll.layoutSubtreeIfNeeded()
-            scroll.contentView.scroll(to: NSPoint(x: 0, y: points))
+            let bottom = (scroll.documentView?.frame.height ?? 0) - scroll.contentView.bounds.height + scroll.contentInsets.bottom
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, min(points, bottom))))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
     }

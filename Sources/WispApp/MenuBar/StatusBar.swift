@@ -55,9 +55,12 @@ final class StatusBar {
 
         // Status items are laid out right to left in creation order, so create the
         // last one first to keep the order the user picked.
-        for setting in settings.reversed() where setting.enabled {
+        let enabled = settings.filter(\.enabled)
+        for (index, setting) in enabled.enumerated().reversed() {
             let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            statusItem.autosaveName = "wisp." + setting.metric.rawValue
+            // macOS remembers where each name sits; a second AI usage item needs its own.
+            let repeats = enabled[..<index].filter { $0.metric == setting.metric }.count
+            if !Wisp.readOnly { statusItem.autosaveName = "wisp." + setting.metric.rawValue + (repeats == 0 ? "" : ".\(repeats + 1)") }
             configure(statusItem.button)
             items.insert(Item(setting: setting, statusItem: statusItem), at: 0)
         }
@@ -132,8 +135,19 @@ final class StatusBar {
             // One bitmap per change: the menu bar re-snapshots a button whenever any part
             // of it changes, so a symbol plus an attributed title costs two passes.
             button.image = Self.image(setting, reading: reading, graph: graph, appearance: button.effectiveAppearance, template: true)
-            let tip = setting.metric.title + (reading.text.isEmpty ? "" : ": " + reading.text)
+            let tip = (reading.name.map { setting.metric.title + ", " + $0 } ?? setting.metric.title) + (reading.text.isEmpty ? "" : ": " + reading.text)
             if button.toolTip != tip { button.toolTip = tip }
+        }
+    }
+
+    /// The widest reading an item can show, for a steady width.
+    static func widest(_ setting: MenuItemSetting) -> String {
+        guard setting.metric == .usage else { return setting.metric.widestReading }
+        if !setting.usageLimit.isEmpty { return "100%" }
+        switch setting.usageWindow {
+        case .session, .week: return "100%"
+        case .both: return "100% 100%"
+        case .sideBySide: return "5h 100% · wk 100%"
         }
     }
 
@@ -158,7 +172,7 @@ final class StatusBar {
             // Network's two lines carry their own arrows.
             if !wantsGraph, metric != .network { content.symbol = symbols[metric] }
         case .above, .before:
-            content.caption = setting.shownCaption
+            content.caption = setting.caption.isEmpty ? reading.caption ?? metric.caption : setting.caption
             content.captionAbove = setting.label == .above
         case .none:
             break
@@ -169,7 +183,7 @@ final class StatusBar {
             } else {
                 content.text = reading.text
             }
-            if setting.steady { content.steadySample = content.lines == nil ? metric.widestReading : metric.widestLine }
+            if setting.steady { content.steadySample = content.lines == nil ? Self.widest(setting) : metric.widestLine }
         }
 
         var lead: NSColor?
@@ -201,6 +215,10 @@ final class StatusBar {
         var lines: (String, String)?
         /// Set for a share with no history (plan usage); its graph is a bar.
         var fraction: Double?
+        /// The label text when the item's own is empty: an AI usage item's account.
+        var caption: String?
+        /// What the item reads, for its tooltip, when the metric's name is not enough.
+        var name: String?
     }
 
     static func reading(_ setting: MenuItemSetting, _ s: SystemSnapshot, plans: [PlanUsage]) -> Reading {
@@ -209,16 +227,28 @@ final class StatusBar {
             guard let usage = PlanUsageFeed.pick(plans, account: setting.usageAccount, window: setting.usageWindow) else {
                 return Reading(text: "–", strained: false, ceiling: 1)
             }
+            // An item that follows one account is labelled with it; one that follows the
+            // fullest says which it is in its tooltip.
+            let caption = setting.usageAccount.isEmpty ? nil : PlanUsageFeed.shortName(usage)
+            let name = PlanUsageFeed.name(usage)
+            if !setting.usageLimit.isEmpty, let window = usage.windows.first(where: { $0.name == setting.usageLimit }) {
+                return Reading(text: Format.percent(window.used), strained: window.used >= 0.9, ceiling: 1, fraction: window.used,
+                               caption: caption, name: name + ", " + PlanUsageFeed.limitTitle(window.name))
+            }
             let session = PlanUsageFeed.session(usage)?.used ?? 0
             let week = PlanUsageFeed.week(usage)?.used ?? 0
             switch setting.usageWindow {
             case .session:
-                return Reading(text: Format.percent(session), strained: session >= 0.9, ceiling: 1, fraction: session)
+                return Reading(text: Format.percent(session), strained: session >= 0.9, ceiling: 1, fraction: session, caption: caption, name: name)
             case .week:
-                return Reading(text: Format.percent(week), strained: week >= 0.9, ceiling: 1, fraction: week)
+                return Reading(text: Format.percent(week), strained: week >= 0.9, ceiling: 1, fraction: week, caption: caption, name: name)
             case .both:
                 return Reading(text: Format.percent(session) + " " + Format.percent(week), strained: max(session, week) >= 0.9, ceiling: 1,
-                               lines: ("5h " + Format.percent(session), "wk " + Format.percent(week)), fraction: max(session, week))
+                               lines: ("5h " + Format.percent(session), "wk " + Format.percent(week)), fraction: max(session, week),
+                               caption: caption, name: name)
+            case .sideBySide:
+                return Reading(text: "5h " + Format.percent(session) + " · wk " + Format.percent(week), strained: max(session, week) >= 0.9,
+                               ceiling: 1, fraction: max(session, week), caption: caption, name: name)
             }
         case .cpu:
             return Reading(text: s.cpu.map { Format.percent($0.total) } ?? "–", strained: Strain.cpu(s.cpu), ceiling: 1)

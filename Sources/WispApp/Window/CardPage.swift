@@ -258,10 +258,12 @@ final class ChartCard: CardView {
         super.init()
         header.title = name
         header.symbol = Theme.symbol(for: name)
+        chart.title = name
         state.isHidden = true
         chart.edgeToEdge = true
         legend.alignment = .right
         range.onChange = { [weak self] index in self?.onRange?(index) }
+        range.setAccessibilityLabel("Range")
         for view in [header, state, figure, meta, legend, range, chart] as [NSView] { addSubview(view) }
     }
 
@@ -298,7 +300,7 @@ final class ChartCard: CardView {
         chart.frame = NSRect(x: 0, y: chartTop, width: bounds.width, height: max(40, bounds.height - chartTop))
         for case let bands as ChargeBands in subviews {
             let plot = chart.plotRect
-            let wanted = NSRect(x: chart.frame.minX + plot.minX, y: chart.frame.minY + plot.minY - 6, width: plot.width + 46, height: plot.height + 30)
+            let wanted = NSRect(x: chart.frame.minX + plot.minX, y: chart.frame.minY + plot.minY, width: plot.width, height: plot.height)
             if bands.frame != wanted { bands.frame = wanted }
         }
     }
@@ -325,20 +327,20 @@ enum A2Restyle {
 /// of the scale, one label for the top, and every series filled. Otherwise it keeps a
 /// label column on the right and a time axis under the plot.
 final class TimeChart: BitmapView {
-    var primary: [Float] = [] { didSet { needsDisplay = true } }
-    var secondary: [Float] = [] { didSet { needsDisplay = true } }
-    var tertiary: [Float] = [] { didSet { needsDisplay = true } }
-    var primaryColor: NSColor = Theme.accent
-    var secondaryColor: NSColor = Theme.series[1]
-    var tertiaryColor: NSColor = Theme.series[2]
+    var primary: [Float] = [] { didSet { if !A2.same(primary, oldValue) { needsDisplay = true } } }
+    var secondary: [Float] = [] { didSet { if !A2.same(secondary, oldValue) { needsDisplay = true } } }
+    var tertiary: [Float] = [] { didSet { if !A2.same(tertiary, oldValue) { needsDisplay = true } } }
+    var primaryColor: NSColor = Theme.accent { didSet { if primaryColor != oldValue { needsDisplay = true } } }
+    var secondaryColor: NSColor = Theme.series[1] { didSet { if secondaryColor != oldValue { needsDisplay = true } } }
+    var tertiaryColor: NSColor = Theme.series[2] { didSet { if tertiaryColor != oldValue { needsDisplay = true } } }
     /// How strong the second and third fills are against the first's.
     var secondaryFill: CGFloat = 1
     var tertiaryFill: CGFloat = 0.2
-    var ceiling: Float?
+    var ceiling: Float? { didSet { if ceiling != oldValue { needsDisplay = true } } }
     /// The lowest the scale goes, so a near-zero series does not fill the chart.
-    var minimumCeiling: Float = 0
+    var minimumCeiling: Float = 0 { didSet { if minimumCeiling != oldValue { needsDisplay = true } } }
     /// Seconds between samples, for the axis and the readout.
-    var step: Double = 2
+    var step: Double = 2 { didSet { if step != oldValue { needsDisplay = true } } }
     var format: (Float) -> String = { String(format: "%.0f", $0) }
     var names = ("", "")
     var tertiaryName = ""
@@ -352,7 +354,7 @@ final class TimeChart: BitmapView {
     /// The time labels under the plot; compact cards leave them off.
     var showsTimeAxis = true { didSet { needsDisplay = true } }
     /// The value at the bottom of the scale, for series that never reach zero (memory, temperature).
-    var bottom: Float = 0 { didSet { needsDisplay = true } }
+    var bottom: Float = 0 { didSet { if bottom != oldValue { needsDisplay = true } } }
     /// Width of the label column on the right.
     var axisWidth: CGFloat = 40
     private var hoverIndex: Int?
@@ -617,6 +619,40 @@ final class TimeChart: BitmapView {
         _ = marks.hover(at: nil)
         hoverIndex = nil
         needsDisplay = true
+    }
+
+    /// What the chart is of, for VoiceOver; the card sets it to its own title.
+    var title = ""
+
+    // The hover readout is the only place the figures appear, so VoiceOver reads the
+    // latest of each series and the highest in the range instead.
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .image }
+    override func accessibilityLabel() -> String? {
+        if !title.isEmpty { return title + " chart" }
+        // Charts in the dropdown cards are named by the card that holds them.
+        var view = superview
+        while let current = view {
+            if current.isAccessibilityElement(), let label = current.accessibilityLabel(), !label.isEmpty { return label + " chart" }
+            view = current.superview
+        }
+        return "Chart"
+    }
+    override func accessibilityValue() -> Any? {
+        var parts: [String] = []
+        for (values, name) in [(primary, names.0), (secondary, names.1), (tertiary, tertiaryName)] {
+            guard let last = values.last(where: { !$0.isNaN }) else { continue }
+            parts.append((name.isEmpty ? "Now " : name + " now ") + format(last))
+        }
+        guard !parts.isEmpty else { return "No readings yet" }
+        if let peak = primary.filter({ !$0.isNaN }).max() { parts.append("peak " + format(peak)) }
+        if !spikes.isEmpty { parts.append(spikes.count == 1 ? "1 marked spike" : "\(spikes.count) marked spikes") }
+        return parts.joined(separator: ", ")
+    }
+    // A spike opens its app when clicked; each one is an action here too.
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        guard let onSpike, !spikes.isEmpty else { return nil }
+        return spikes.map { spike in NSAccessibilityCustomAction(name: spike.label) { onSpike(spike); return true } }
     }
 }
 

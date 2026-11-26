@@ -260,8 +260,8 @@ final class OverviewPage: CardPage {
     private let range = Segmented(["5 Min", "Hour", "Day"])
     private let open: (PageID) -> Void
     private let select: (Selection?) -> Void
-    private let devServers = DevServerScanner()
     private var slowAt = Date.distantPast
+    private var scanning = false
     private var lastMinute = 0
     private var networkToday = "–"
     private lazy var diagnosis = DiagnosisCard(delegate: delegate, open: open, select: select)
@@ -315,6 +315,8 @@ final class OverviewPage: CardPage {
         activity.addSubview(activityTitle)
         activity.addSubview(activityChart)
         activityTitle.title = "Activity"
+        activityChart.title = "Activity"
+        activityChart.names = ("CPU", "GPU")
 
         canvas.addSubview(apps)
         apps.addSubview(appList)
@@ -563,9 +565,17 @@ final class OverviewPage: CardPage {
         let history = delegate.monitor.history
         networkToday = Format.bytes(UInt64(max(0, history.total(.networkIn, since: midnight) + history.total(.networkOut, since: midnight))))
         let table = delegate.table
-        let projects = devServers.scan(table).filter { !$0.path.isEmpty }
-        refreshTips(projects: projects, table: table)
-        relayout()
+        guard !scanning else { return }
+        scanning = true
+        DispatchQueue.global(qos: .utility).async {
+            let projects = DevServerScanner.shared.scan(table).filter { !$0.path.isEmpty }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.scanning = false
+                self.refreshTips(projects: projects, table: table)
+                self.relayout()
+            }
+        }
     }
 
     /// What is worth a look right now, worked out from live readings, then recent alerts.
@@ -624,7 +634,7 @@ final class OverviewPage: CardPage {
     private static func look(_ kind: AlertKind) -> (String, NSColor) {
         switch kind {
         case .cpu: return ("flame", A2.power)
-        case .memoryGrowth: return ("arrow.up", Theme.dynamic(0xE6A700, 0xFFD60A))
+        case .memoryGrowth: return ("arrow.up", A2.caution)
         case .diskWrites: return ("internaldrive", A2.up)
         case .network: return ("network", A2.down)
         case .temperature: return ("thermometer.medium", A2.power)

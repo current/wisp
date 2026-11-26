@@ -65,13 +65,14 @@ enum MenuMetric: String, Codable, CaseIterable {
 
 /// Which plan limit the AI usage item shows.
 enum UsageWindowChoice: String, Codable, CaseIterable {
-    case session, week, both
+    case session, week, both, sideBySide
 
     var title: String {
         switch self {
-        case .session: return "5-hour session"
-        case .week: return "This week"
-        case .both: return "Both, one over the other"
+        case .session: return "5-hour"
+        case .week: return "Weekly"
+        case .both: return "5-hour over weekly"
+        case .sideBySide: return "5-hour and weekly in a row"
         }
     }
 }
@@ -162,6 +163,9 @@ struct MenuItemSetting: Codable, Equatable {
     /// AI usage only: the limit shown, and the account (a PlanUsage id; empty for the most used).
     var usageWindow: UsageWindowChoice = .session
     var usageAccount = ""
+    /// AI usage only: one exact limit of the account (a window name, such as "Gemini this
+    /// week"), in place of `usageWindow`. Empty for none.
+    var usageLimit = ""
 
     init(metric: MenuMetric, enabled: Bool, style: MenuStyle) {
         self.metric = metric
@@ -197,6 +201,7 @@ struct MenuItemSetting: Codable, Equatable {
         steady = (try? c.decode(Bool.self, forKey: .steady)) ?? false
         usageWindow = (try? c.decode(UsageWindowChoice.self, forKey: .usageWindow)) ?? .session
         usageAccount = (try? c.decode(String.self, forKey: .usageAccount)) ?? ""
+        usageLimit = (try? c.decode(String.self, forKey: .usageLimit)) ?? ""
     }
 }
 
@@ -231,10 +236,12 @@ struct AppSettings: Codable, Equatable {
     var allowMCP = true
     /// Read each AI plan's limits with the sign-in its own tool keeps. Off until asked for.
     var planUsage = false
-    /// SSH hosts, as typed, whose T3 Code limits Wisp reads too. Empty until the owner adds one.
-    var remoteLimitHosts = ""
     /// Accounts (PlanUsage ids) the AI usage block leaves out.
     var hiddenUsageAccounts: [String] = []
+    /// Antigravity limits (window names in `AntigravityLive.limits`) AI usage leaves out.
+    var hiddenAntigravityLimits: [String] = []
+    /// Accounts (PlanUsage ids) in the order the user dragged them into; others follow.
+    var usageAccountOrder: [String] = []
     var look = Look.automatic
     var fahrenheit = false
     var bits = false
@@ -278,8 +285,9 @@ struct AppSettings: Codable, Equatable {
         alerts = (try? c.decode(AlertRules.self, forKey: .alerts)) ?? fallback.alerts
         allowMCP = (try? c.decode(Bool.self, forKey: .allowMCP)) ?? fallback.allowMCP
         planUsage = (try? c.decode(Bool.self, forKey: .planUsage)) ?? fallback.planUsage
-        remoteLimitHosts = (try? c.decode(String.self, forKey: .remoteLimitHosts)) ?? fallback.remoteLimitHosts
         hiddenUsageAccounts = (try? c.decode([String].self, forKey: .hiddenUsageAccounts)) ?? fallback.hiddenUsageAccounts
+        hiddenAntigravityLimits = (try? c.decode([String].self, forKey: .hiddenAntigravityLimits)) ?? fallback.hiddenAntigravityLimits
+        usageAccountOrder = (try? c.decode([String].self, forKey: .usageAccountOrder)) ?? fallback.usageAccountOrder
         look = (try? c.decode(Look.self, forKey: .look)) ?? fallback.look
         fahrenheit = (try? c.decode(Bool.self, forKey: .fahrenheit)) ?? fallback.fahrenheit
         bits = (try? c.decode(Bool.self, forKey: .bits)) ?? fallback.bits

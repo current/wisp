@@ -64,41 +64,88 @@ extension DashboardBlock {
         case .why: return Theme.gray
         }
     }
+
+    /// The page a click on the block opens.
+    var page: PageID {
+        switch self {
+        case .cpu, .cores: return .cpu
+        case .meters, .why: return .overview
+        case .memory: return .memory
+        case .gpu: return .gpu
+        case .power: return .energy
+        case .network: return .network
+        case .disk: return .disk
+        case .sensors: return .sensors
+        case .apps: return .apps
+        case .agents, .usage: return .agents
+        }
+    }
 }
 
-/// One card of the dashboard. Each kind lays itself out at the dashboard's width
-/// and says how tall it is; the dashboard stacks them in the saved order.
+/// One block of the dashboard: a soft card (or, for plan limits, a card per account) laid
+/// out in the dropdowns' 400-point space. Each kind fills its card from the readings and
+/// says how tall it is; the dashboard stacks them in the saved order. A click on the card
+/// outside its lines opens the block's page.
 @MainActor
-class DashboardBlockView: CardView {
+class DashboardBlockView: DrawnView {
     let block: DashboardBlock
     unowned let delegate: AppDelegate
-    let header = TextLine()
-    /// Set by the dashboard when its height changes with the data (cores, agents).
+    let card = SoftCard()
+    /// Set by the dashboard: the block's height changed with its data.
     var onResize: (() -> Void)?
+    /// A line and a button under the card's title when it has nothing to list.
+    let message = CardMessage()
+    /// The card's title row, where extra content starts.
+    static let titleRow: CGFloat = 44
+    static let width: CGFloat = DashboardView.width - DashboardView.outer * 2
 
     init(_ block: DashboardBlock, delegate: AppDelegate) {
         self.block = block
         self.delegate = delegate
-        super.init()
-        header.text = Theme.header(block.title, symbol: block.symbol, tint: block.tint)
-        addSubview(header)
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: 46))
+        wantsLayer = true
+        addSubview(card)
+        message.isHidden = true
+        addSubview(message)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel(block.title)
+        setAccessibilityHelp("Opens " + block.page.title + " in Wisp")
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    var height: CGFloat { 106 }
-    var content: CGFloat { bounds.width - 32 }
+    /// The cards whose columns line up with the rest of the dashboard's.
+    var cards: [SoftCard] { card.isHidden ? [] : [card] }
+
+    var height: CGFloat { message.isHidden ? card.height : Self.titleRow + message.height + 8 }
 
     override func layout() {
         super.layout()
-        header.frame = NSRect(x: 16, y: 13, width: max(0, header.naturalWidth + 4), height: 20)
+        card.frame = bounds
+        message.frame = NSRect(x: 0, y: Self.titleRow, width: bounds.width, height: message.height)
     }
 
     func update(_ s: SystemSnapshot, history: HistoryStore) {}
     func update(_ table: ProcessTable) {}
+
+    /// Shows a message under the title in place of lines, or hides it.
+    func showMessage(_ text: String?, button: String = "", action: (() -> Void)? = nil) {
+        message.isHidden = text == nil
+        message.show(text ?? "", button: button)
+        message.onPress = action
+        needsLayout = true
+    }
+
+    /// Asks the dashboard to lay out again once the block's height no longer fits its frame.
+    func refit() {
+        if abs(frame.height - height) > 0.5 { onResize?() }
+    }
+
+    /// "Last 4 minutes": what the recent history covers at the sampling interval.
+    var recentSpan: String {
+        "Last \(Int((Double(HistoryStore.recentSamples) * max(delegate.settings.interval, 1) / 60).rounded())) minutes"
+    }
 
     static func makeView(_ block: DashboardBlock, delegate: AppDelegate) -> DashboardBlockView {
         switch block {
@@ -106,183 +153,202 @@ class DashboardBlockView: CardView {
         case .meters: return MetersBlock(block, delegate: delegate)
         case .cores: return CoresBlock(block, delegate: delegate)
         case .memory: return MemoryBlock(block, delegate: delegate)
+        case .gpu: return GPUBlock(block, delegate: delegate)
+        case .power: return PowerBlock(block, delegate: delegate)
+        case .network: return NetworkBlock(block, delegate: delegate)
+        case .disk: return DiskBlock(block, delegate: delegate)
+        case .sensors: return SensorsBlock(block, delegate: delegate)
         case .apps: return AppsBlock(block, delegate: delegate)
         case .agents: return AgentsBlock(block, delegate: delegate)
         case .usage: return UsageBlock(block, delegate: delegate)
         case .why: return WhyBlock(block, delegate: delegate)
-        case .gpu, .power, .network, .disk, .sensors: return CompactBlock(block, delegate: delegate)
         }
     }
 
-    /// The state pill at the right end of the header.
-    func placeRight(_ view: NSView, width: CGFloat, height: CGFloat = 20) {
-        view.frame = NSRect(x: bounds.width - 16 - width, y: 13 + (20 - height) / 2, width: width, height: height)
+    // MARK: Click
+
+    private var pressed = false
+
+    override func mouseDown(with event: NSEvent) { pressed = true }
+
+    override func mouseUp(with event: NSEvent) {
+        guard pressed else { return }
+        pressed = false
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { delegate.showPage(block.page) }
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        delegate.showPage(block.page)
+        return true
     }
 }
 
 // MARK: - CPU
 
-/// The CPU: its figure and state, user and system, and the recent samples as bars.
+/// The CPU as the CPU dropdown shows it: apps and macOS, the busiest core and the load,
+/// then total and system time over the last few minutes.
 final class CPUBlock: DashboardBlockView {
-    private let state = Pill()
-    private let figure = BigNumber()
-    private let facts = Facts()
-    private let context = TextLine()
-    private let chart = BarHistory()
+    private let chart = SoftDropdown.makeChart(A2.cpu, A2.cpuLight, names: ("Total", "System"), format: { Format.percent(Double($0)) })
 
     override init(_ block: DashboardBlock, delegate: AppDelegate) {
         super.init(block, delegate: delegate)
-        for view in [state, figure, facts, context, chart] as [NSView] { addSubview(view) }
-        figure.font = Theme.figure(30)
-        figure.unitFont = Theme.sans(15, .medium)
-        figure.format = { (String(format: "%.0f", $0 * 100), "%") }
         chart.ceiling = 1
-        chart.color = block.tint
-        chart.pitch = 4
-        facts.alignRight = true
+        card.chart = chart
+        card.chartHeight = 88
+        card.show(mark: .glyph(PageID.cpu.symbol, A2.labelTint(.cpu)), title: "CPU", meta: "Waiting for the first reading",
+                  lines: [.waiting("Apps"), .waiting("macOS"), .waiting("Load")])
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var height: CGFloat { 162 }
-
-    override func layout() {
-        super.layout()
-        placeRight(state, width: state.naturalWidth)
-        figure.frame = NSRect(x: 16, y: 36, width: 150, height: 38)
-        facts.frame = NSRect(x: bounds.width - 16 - 180, y: 44, width: 180, height: 32)
-        context.frame = NSRect(x: 16, y: 78, width: content, height: 14)
-        chart.frame = NSRect(x: 16, y: 102, width: content, height: 44)
-    }
-
     override func update(_ s: SystemSnapshot, history: HistoryStore) {
         guard let c = s.cpu else { return }
-        figure.set(c.total)
-        state.text = c.total >= 0.85 ? "Strained" : (c.total >= 0.6 ? "Busy" : "Normal")
-        state.tone = c.total >= 0.85 ? .bad : (c.total >= 0.6 ? .warn : .good)
-        facts.items = [.init(label: "User", value: Format.percent(c.user), dot: nil),
-                       .init(label: "System", value: Format.percent(c.system), dot: nil),
-                       .init(label: "Load", value: String(format: "%.1f", c.loadAverage.first ?? 0), dot: nil)]
-        let minutes = Int((Double(HistoryStore.recentSamples) * max(delegate.settings.interval, 1) / 60).rounded())
-        context.text = Theme.caption(c.performanceCores > 0
-            ? "\(c.cores.count) cores (\(c.performanceCores)P + \(c.efficiencyCores)E) · last \(minutes) min"
-            : "\(c.cores.count) cores · last \(minutes) min")
-        chart.values = history.recent(.cpu)
-        needsLayout = true
+        chart.step = delegate.settings.interval
+        chart.primary = history.recent(.cpu)
+        chart.secondary = history.recent(.cpuSystem)
+        var lines = [
+            SoftCard.Line(label: "Apps", fraction: c.user, color: A2.cpu, figure: Format.percent(c.user), detail: "User", hover: "Running apps"),
+            SoftCard.Line(label: "macOS", fraction: c.system, color: A2.cpuLight, figure: Format.percent(c.system), detail: "System",
+                          hover: "macOS itself"),
+        ]
+        if let busiest = c.cores.max() {
+            lines.append(.init(label: "Busiest core", fraction: busiest, color: CPUDropdown.heat(busiest), figure: Format.percent(busiest),
+                               detail: "of \(c.cores.count)"))
+        }
+        let cores = max(c.cores.count, ProcessInfo.processInfo.activeProcessorCount)
+        if let one = c.loadAverage.first {
+            let rest = c.loadAverage.dropFirst().prefix(2).map { String(format: "%.1f", $0) }
+            lines.append(.init(label: "Load", fraction: one / Double(cores), color: CPUDropdown.heat(one / Double(cores)),
+                               figure: String(format: "%.1f", one), detail: "1 min", hover: rest.count == 2 ? "Then \(rest[0]), \(rest[1])" : nil))
+        }
+        let split = c.performanceCores > 0 ? "\(c.performanceCores) performance, \(c.efficiencyCores) efficiency cores" : "\(cores) cores"
+        card.show(mark: .glyph(PageID.cpu.symbol, A2.labelTint(.cpu)), title: "CPU", meta: recentSpan, metaHover: split,
+                  tag: Format.percent(c.total), lines: lines)
+        refit()
     }
 }
 
 // MARK: - Meters
 
-/// Six small readings in a grid: memory, GPU, power, network, disk and the battery
+/// Six readings in the row grammar: memory, GPU, power, network, disk and the battery
 /// (or the temperature on a Mac without one).
 final class MetersBlock: DashboardBlockView {
-    private let meters = (0..<6).map { _ in Meter() }
+    /// Samples seen. Rates need two, so a dash shows only once a reading stays missing.
+    private var samples = 0
+    private static let names = ["Memory", "GPU", "Power", "Network", "Disk", MachinePower.hasBattery ? "Battery" : "Temperature"]
 
     override init(_ block: DashboardBlock, delegate: AppDelegate) {
         super.init(block, delegate: delegate)
-        header.isHidden = true
-        meters.forEach(addSubview)
-        for (meter, caption) in zip(meters, ["Memory", "GPU", "Power", "Network", "Disk", "Battery"]) { meter.caption = caption }
+        card.show(mark: .glyph("square.grid.2x2", A2.labelTint(.overview)), title: "Meters", meta: "Waiting for the first reading",
+                  lines: Self.names.map { .waiting($0) })
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var height: CGFloat { 128 }
-
-    override func layout() {
-        super.layout()
-        let column = (content - 32) / 3
-        for (index, meter) in meters.enumerated() {
-            meter.frame = NSRect(x: 16 + CGFloat(index % 3) * (column + 16), y: 16 + CGFloat(index / 3) * 54, width: column, height: 44)
-        }
-    }
-
     override func update(_ s: SystemSnapshot, history: HistoryStore) {
-        if let m = s.memory {
-            meters[0].set(value: Format.memory(m.used).split(separator: " ").first.map(String.init) ?? "",
-                          unit: "/ " + Format.memory(m.total), fraction: m.usedFraction,
-                          color: Strain.memory(m) ? Theme.bad : PageID.memory.tint)
+        samples += 1
+        // Still waiting for the first reading, or none to be had.
+        func missing(_ name: String) -> SoftCard.Line {
+            samples < 4 ? .waiting(name) : SoftCard.Line(label: name, fraction: 0, color: A2.secondary, figure: "–", detail: "None")
+        }
+        var lines: [SoftCard.Line] = []
+        if let m = s.memory, m.total > 0 {
+            lines.append(.init(label: "Memory", fraction: m.usedFraction, color: Strain.memory(m) ? A2.bad : A2.memoryApp,
+                               figure: Format.memory(m.used), detail: "of " + Format.memory(m.total),
+                               hover: m.pressure == .normal ? "Pressure normal" : m.pressure == .warning ? "Pressure warning" : "Pressure critical",
+                               warns: m.pressure != .normal))
+        } else {
+            lines.append(missing("Memory"))
         }
         if let g = s.gpu?.utilization {
-            meters[1].set(value: String(format: "%.0f", g * 100), unit: "%", fraction: g, color: PageID.gpu.tint)
+            lines.append(.init(label: "GPU", fraction: g, color: A2.gpu, figure: Format.percent(g), detail: "Busy"))
         } else {
-            meters[1].set(value: "–", unit: "", fraction: 0, color: PageID.gpu.tint)
+            lines.append(missing("GPU"))
         }
         if let p = s.power, let cpuWatts = p.cpu {
             let total = cpuWatts + (p.gpu ?? 0) + (p.ane ?? 0)
             let peak = Double(history.recent(.power).filter { !$0.isNaN }.max() ?? 0)
-            meters[2].set(value: String(format: total >= 10 ? "%.0f" : "%.1f", total), unit: "W",
-                          fraction: total / max(peak * 1.2, 20), color: PageID.energy.tint)
+            lines.append(.init(label: "Power", fraction: total / max(peak * 1.2, 20), color: A2.power, figure: Format.watts(total), detail: "Chip",
+                               hover: "CPU \(Format.watts(cpuWatts)), GPU \(Format.watts(p.gpu ?? 0))"))
         } else {
-            meters[2].set(value: "–", unit: "", fraction: 0, color: PageID.energy.tint)
+            lines.append(missing("Power"))
         }
         if let n = s.network {
             let rate = n.receivedBytesPerSecond + n.sentBytesPerSecond
             let peak = Double(zip(history.recent(.networkIn), history.recent(.networkOut)).map { $0 + $1 }.filter { !$0.isNaN }.max() ?? 0)
-            let (value, unit) = DashboardView.split(Format.rate(rate))
-            meters[3].set(value: value, unit: unit, fraction: rate / max(peak, 1), color: PageID.network.tint)
+            lines.append(.init(label: "Network", fraction: rate / max(peak, 1), color: A2.down, figure: Format.rate(rate), detail: "In and out",
+                               hover: "↓ \(Format.compactRate(n.receivedBytesPerSecond)) ↑ \(Format.compactRate(n.sentBytesPerSecond))"))
+        } else {
+            lines.append(missing("Network"))
         }
-        if let d = s.disk {
+        if let d = s.disk, d.volumeTotal > 0 {
             let rate = d.readBytesPerSecond + d.writeBytesPerSecond
             let peak = Double(zip(history.recent(.diskRead), history.recent(.diskWrite)).map { $0 + $1 }.filter { !$0.isNaN }.max() ?? 0)
-            let (value, unit) = DashboardView.split(Format.rate(rate))
-            meters[4].caption = Strain.disk(d) ? "Disk · low space" : "Disk"
-            meters[4].set(value: value, unit: unit, fraction: rate / max(peak, 1), color: Strain.disk(d) ? Theme.bad : PageID.disk.tint)
+            let low = Strain.disk(d)
+            lines.append(.init(label: "Disk", fraction: rate / max(peak, 1), color: low ? A2.bad : A2.diskApps, figure: Format.rate(rate),
+                               detail: low ? "Low space" : "\(Format.bytes(d.volumeFree)) free",
+                               hover: "\(Format.bytes(d.volumeFree)) free of \(Format.bytes(d.volumeTotal))", warns: low))
+        } else {
+            lines.append(missing("Disk"))
         }
         if let b = s.battery {
-            meters[5].caption = b.isCharging ? "Charging" : (b.isPluggedIn ? "Battery" : "On battery")
-            meters[5].set(value: String(format: "%.0f", b.percent), unit: "%", fraction: b.percent / 100,
-                          color: Strain.battery(b) ? Theme.bad : Theme.green)
+            let state = b.isCharging ? "Charging" : b.isPluggedIn ? "Plugged in" : "On battery"
+            let left = b.minutesRemaining.flatMap { $0 > 0 ? Format.duration(Double($0) * 60) : nil }
+            lines.append(.init(label: "Battery", fraction: b.percent / 100, color: Strain.battery(b) ? A2.bad : A2.charge,
+                               figure: Format.percent(b.percent / 100), detail: state,
+                               hover: left.map { b.isCharging ? "Full in \($0)" : "\($0) left" }))
         } else if let t = s.thermal?.cpuCelsius {
-            meters[5].caption = "Temperature"
-            meters[5].set(value: Format.temperature(t).0, unit: Format.temperature(t).1, fraction: t / 110,
-                          color: Strain.temperature(s.thermal) ? Theme.bad : PageID.sensors.tint)
+            lines.append(.init(label: "Temperature", fraction: t / 105, color: Strain.temperature(s.thermal) ? A2.bad : A2.cpu,
+                               figure: Format.celsius(t), detail: "CPU"))
+        } else {
+            lines.append(missing(Self.names[5]))
         }
+        let waiting = lines.allSatisfy(\.ghost)
+        card.show(mark: .glyph("square.grid.2x2", A2.labelTint(.overview)), title: "Meters",
+                  meta: waiting ? "Waiting for the first reading" : "Right now", lines: lines)
+        refit()
     }
 }
 
 // MARK: - Cores
 
-/// Every core over the last minute, performance cores on top.
+/// Every core over the last minute, performance cores on top. Hovering a cell reads it
+/// off in the card's quiet spot.
 final class CoresBlock: DashboardBlockView {
-    private let meta = TextLine()
-    let heatmap = Heatmap()
-    private let hint = TextLine(Theme.caption("Hover a core", size: 9.5))
-    private let key = HeatKey()
-    private var rowCount = 0
-    var onHover: (((Int, Int, NSRect)?) -> Void)?
+    private let map = CoreMapGraphic()
+    private var rowCount = ProcessInfo.processInfo.activeProcessorCount
+    private var summary = "Waiting for the first reading"
+    var heatmap: Heatmap { map.heatmap }
 
     override init(_ block: DashboardBlock, delegate: AppDelegate) {
         super.init(block, delegate: delegate)
-        for view in [meta, heatmap, hint, key] as [NSView] { addSubview(view) }
-        meta.alignment = .right
-        heatmap.rowPitch = 11
-        heatmap.labelWidth = 30
-        heatmap.valueWidth = 34
-        heatmap.columns = HistoryStore.recentCoreSamples
-        heatmap.onHover = { [weak self] hover in self?.onHover?(hover) }
-        rowCount = ProcessInfo.processInfo.activeProcessorCount
+        card.graphic = map
+        card.chartHeight = map.height(rows: rowCount)
+        map.heatmap.onHover = { [weak self] hover in self?.hover(hover) }
+        showSummary(nil)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    private var mapHeight: CGFloat { CGFloat(max(rowCount, 1)) * heatmap.rowPitch - heatmap.cellGap }
-    override var height: CGFloat { 44 + mapHeight + 12 + 14 + 14 }
+    private func showSummary(_ hovered: String?) {
+        card.show(mark: .glyph("square.grid.3x3", A2.labelTint(.cpu)), title: "Cores", meta: hovered ?? summary, lines: [])
+    }
 
-    override func layout() {
-        super.layout()
-        meta.frame = NSRect(x: bounds.width - 16 - 220, y: 16, width: 220, height: 14)
-        heatmap.frame = NSRect(x: 16, y: 44, width: content, height: mapHeight)
-        hint.frame = NSRect(x: 16, y: heatmap.frame.maxY + 12, width: 120, height: 14)
-        key.frame = NSRect(x: bounds.width - 16 - 150, y: heatmap.frame.maxY + 12, width: 150, height: 14)
+    private func hover(_ hover: (Int, Int, NSRect)?) {
+        guard let (row, column, _) = hover, heatmap.rows.indices.contains(row) else { return showSummary(nil) }
+        let values = heatmap.rows[row].values
+        let index = values.count - 1 - column
+        guard index >= 0, !values[index].isNaN else { return showSummary(nil) }
+        let seconds = Double(column) * max(delegate.settings.interval, 1)
+        let when = column == 0 ? "now" : Format.duration(seconds) + " ago"
+        showSummary("\(heatmap.rows[row].label) \(String(format: "%.0f%%", values[index] * 100)) \(when)")
     }
 
     override func update(_ s: SystemSnapshot, history: HistoryStore) {
         guard let c = s.cpu else { return }
         let busy = c.cores.filter { $0 >= 0.8 }.count
-        meta.text = Theme.caption(c.performanceCores > 0
-            ? "\(c.performanceCores)P + \(c.efficiencyCores)E · \(busy) busy" : "\(c.cores.count) cores · \(busy) busy")
+        summary = (c.performanceCores > 0 ? "\(c.performanceCores)P + \(c.efficiencyCores)E" : "\(c.cores.count) cores") + " · \(busy) busy"
+        showSummary(nil)
         let cores = history.cores()
         guard !cores.isEmpty else { return }
         // The kernel lists efficiency cores first; show performance cores on top.
@@ -297,203 +363,279 @@ final class CoresBlock: DashboardBlockView {
         heatmap.rows = rows
         if rows.count != rowCount {
             rowCount = rows.count
-            onResize?()
+            card.chartHeight = map.height(rows: rowCount)
         }
+        refit()
     }
 }
 
 // MARK: - Memory
 
-/// Memory in use, its pressure and what holds it.
+/// Memory as the Memory dropdown splits it: app memory, wired, compressed and cached
+/// files, with the share used as the tag and a warning while the pressure is up.
 final class MemoryBlock: DashboardBlockView {
-    private let state = Pill()
-    private let figure = BigNumber()
-    private let context = TextLine()
-    private let bar = SplitBar()
-    private let legend = LegendRows()
-
     override init(_ block: DashboardBlock, delegate: AppDelegate) {
         super.init(block, delegate: delegate)
-        for view in [state, figure, context, bar, legend] as [NSView] { addSubview(view) }
-        figure.font = Theme.figure(30)
-        figure.unitFont = Theme.sans(15, .medium)
+        card.show(mark: .glyph(PageID.memory.symbol, A2.labelTint(.memory)), title: "Memory", meta: "Waiting for the first reading",
+                  lines: ["App memory", "Wired", "Compressed", "Cached files"].map { .waiting($0) })
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var height: CGFloat { 194 }
-
-    override func layout() {
-        super.layout()
-        placeRight(state, width: state.naturalWidth)
-        figure.frame = NSRect(x: 16, y: 36, width: content, height: 38)
-        context.frame = NSRect(x: 16, y: 78, width: content, height: 14)
-        bar.frame = NSRect(x: 16, y: 102, width: content, height: 8)
-        legend.frame = NSRect(x: 16, y: 120, width: content, height: 60)
-    }
-
     override func update(_ s: SystemSnapshot, history: HistoryStore) {
-        guard let m = s.memory else { return }
-        figure.format = { value in
-            let (number, unit) = DashboardView.split(Format.memory(value))
-            return (number, unit + " of " + Format.memory(m.total).replacingOccurrences(of: " GB", with: ""))
+        guard let m = s.memory, m.total > 0 else { return }
+        let share = { (bytes: UInt64) in Double(bytes) / Double(m.total) }
+        let rows: [(String, UInt64, NSColor, String)] = [
+            ("App memory", m.app, A2.memoryApp, "Used by apps"),
+            ("Wired", m.wired, A2.memoryWired, "Kept by macOS"),
+            ("Compressed", m.compressed, A2.memoryCompressed, "Squeezed to fit"),
+            ("Cached files", m.cached, A2.teal, "Freed when needed"),
+        ]
+        let (number, unit) = DashboardView.split(Format.memory(m.used))
+        let total = Format.memory(m.total)
+        let used = total.hasSuffix(" " + unit) ? "\(number) of \(total) used" : "\(Format.memory(m.used)) of \(total) used"
+        let note: String? = switch m.pressure {
+        case .normal: nil
+        case .warning: "Memory pressure is up. Quitting an app frees some."
+        case .critical: "Memory is under heavy pressure. Quit an app you are done with."
         }
-        figure.set(Double(m.used))
-        state.text = m.pressure == .normal ? "Normal" : (m.pressure == .warning ? "Pressure: Warning" : "Pressure: Critical")
-        state.tone = m.pressure == .normal ? .good : (m.pressure == .warning ? .warn : .bad)
-        context.text = Theme.caption("Swap \(Format.memory(m.swapUsed)) · \(Format.memory(m.free + m.cached)) available")
-        let total = Double(max(m.total, 1))
-        let compressed = Theme.indigo.withAlphaComponent(0.45)
-        bar.parts = [(Double(m.app) / total, Theme.indigo), (Double(m.wired) / total, Theme.orange), (Double(m.compressed) / total, compressed)]
-        legend.rows = [(Theme.indigo, "App", Format.memory(m.app)), (Theme.orange, "Wired", Format.memory(m.wired)),
-                       (compressed, "Compressed", Format.memory(m.compressed))]
-        needsLayout = true
+        card.show(mark: .glyph(PageID.memory.symbol, A2.labelTint(.memory)), title: "Memory", meta: used,
+                  metaHover: m.swapUsed > 0 ? "Swap \(Format.memory(m.swapUsed))" : "No swap",
+                  tag: Format.percent(m.usedFraction), note: note,
+                  lines: rows.map { name, bytes, color, about in
+                      SoftCard.Line(label: name, fraction: share(bytes), color: color, figure: Format.memory(bytes),
+                                    detail: Format.percent(share(bytes)), hover: about)
+                  })
+        refit()
     }
 }
 
-// MARK: - Small parts
+// MARK: - GPU
 
-/// GPU, power, network, disk and temperature share one shape: the header, a
-/// figure with a line under it, and a chart or a few facts on the right.
-final class CompactBlock: DashboardBlockView {
-    private let state = Pill()
-    private let figure = BigNumber()
-    private let context = TextLine()
-    private let line = LiveLine()
-    private let facts = Facts()
-    private let bar = SplitBar()
+/// The GPU as its dropdown shows it: rendering, tiling and the memory it holds, then how
+/// busy it has been over the last few minutes.
+final class GPUBlock: DashboardBlockView {
+    private let chart = SoftDropdown.makeChart(A2.gpu, format: { Format.percent(Double($0)) })
 
     override init(_ block: DashboardBlock, delegate: AppDelegate) {
         super.init(block, delegate: delegate)
-        for view in [state, figure, context, line, facts, bar] as [NSView] { addSubview(view) }
-        figure.font = Theme.figure(26)
-        figure.unitFont = Theme.sans(14, .medium)
-        line.color = block.tint
-        line.capacity = HistoryStore.recentSamples
-        facts.alignRight = true
-        state.isHidden = true
-        switch block {
-        case .gpu:
-            figure.format = { (String(format: "%.0f", $0 * 100), "%") }
-            line.ceiling = 1
-            facts.isHidden = true
-            bar.isHidden = true
-        case .network:
-            figure.format = { DashboardView.split(Format.rate($0)) }
-            facts.isHidden = true
-            bar.isHidden = true
-        case .power:
-            figure.format = { (String(format: $0 >= 10 ? "%.0f" : "%.1f", $0), "W") }
-            line.isHidden = true
-            bar.isHidden = true
-        case .disk:
-            figure.format = { value in
-                let (number, unit) = DashboardView.split(Format.bytes(UInt64(max(0, value))))
-                return (number, unit + " free")
-            }
-            line.isHidden = true
-        default:
-            figure.format = { Format.temperature($0) }
-            line.isHidden = true
-            bar.isHidden = true
-        }
+        chart.ceiling = 1
+        card.chart = chart
+        card.chartHeight = 88
+        card.show(mark: .glyph(PageID.gpu.symbol, A2.labelTint(.gpu)), title: "GPU", meta: "Waiting for the first reading",
+                  lines: [.waiting("Rendering"), .waiting("Tiling")])
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var height: CGFloat { block == .disk ? 122 : 106 }
+    override func update(_ s: SystemSnapshot, history: HistoryStore) {
+        guard let g = s.gpu, let busy = g.utilization else { return }
+        chart.step = delegate.settings.interval
+        chart.primary = history.recent(.gpu)
+        var lines: [SoftCard.Line] = []
+        if let renderer = g.rendererUtilization {
+            lines.append(.init(label: "Rendering", fraction: renderer, color: A2.gpu, figure: Format.percent(renderer), detail: "Drawing",
+                               hover: "Drawing what is on screen"))
+        }
+        if let tiler = g.tilerUtilization {
+            lines.append(.init(label: "Tiling", fraction: tiler, color: A2.gpu, figure: Format.percent(tiler), detail: "Sorting",
+                               hover: "Sorting shapes before drawing"))
+        }
+        let installed = ProcessInfo.processInfo.physicalMemory
+        if let used = g.memoryUsed, installed > 0 {
+            lines.append(.init(label: "Memory", fraction: Double(used) / Double(installed), color: A2.memoryApp, figure: Format.memory(used),
+                               detail: Format.percent(Double(used) / Double(installed)), hover: "Shared with the Mac"))
+        }
+        card.show(mark: .glyph(PageID.gpu.symbol, A2.labelTint(.gpu)), title: "GPU", meta: recentSpan,
+                  metaHover: g.coreCount.map { "\($0)-core GPU" }, tag: Format.percent(busy), lines: lines)
+        refit()
+    }
+}
 
-    override func layout() {
-        super.layout()
-        placeRight(state, width: state.naturalWidth)
-        let left = line.isHidden ? content * 0.5 : content * 0.48
-        figure.frame = NSRect(x: 16, y: 36, width: left, height: 34)
-        context.frame = NSRect(x: 16, y: 74, width: line.isHidden ? content * 0.5 : left, height: 14)
-        line.frame = NSRect(x: 16 + content * 0.5, y: 32, width: content * 0.5 + 4, height: 62)
-        facts.frame = NSRect(x: 16 + content * 0.4, y: 42, width: content * 0.6, height: 32)
-        bar.frame = NSRect(x: 16, y: 98, width: content, height: 8)
+// MARK: - Power
+
+/// Where the chip's power goes, as the Power dropdown splits it, and the battery's charge.
+final class PowerBlock: DashboardBlockView {
+    override init(_ block: DashboardBlock, delegate: AppDelegate) {
+        super.init(block, delegate: delegate)
+        card.show(mark: .glyph("bolt", A2.labelTint(.energy)), title: "Power", meta: "Waiting for the first reading",
+                  lines: (MachinePower.hasBattery ? ["Battery"] : []).map { .waiting($0) } + ["CPU", "GPU", "Neural Engine"].map { .waiting($0) })
     }
 
+    required init?(coder: NSCoder) { fatalError() }
+
     override func update(_ s: SystemSnapshot, history: HistoryStore) {
-        switch block {
-        case .gpu:
-            guard let g = s.gpu else { return }
-            figure.set(g.utilization)
-            context.text = Theme.caption([g.coreCount.map { "\($0)-core GPU" }, g.memoryUsed.map { Format.memory($0) }]
-                .compactMap { $0 }.joined(separator: " · "))
-            line.values = history.recent(.gpu)
-        case .network:
-            guard let n = s.network else { return }
-            figure.set(n.receivedBytesPerSecond)
-            context.text = Theme.caption("Down · \(Format.rate(n.sentBytesPerSecond)) up")
-            line.values = zip(history.recent(.networkIn), history.recent(.networkOut)).map { $0 + $1 }
-        case .power:
-            if let p = s.power, let cpuWatts = p.cpu {
-                figure.set(cpuWatts + (p.gpu ?? 0) + (p.ane ?? 0))
-                context.text = Theme.caption("CPU \(Format.watts(cpuWatts)) · GPU \(Format.watts(p.gpu ?? 0))")
-            }
-            var items: [Facts.Item] = []
-            if let b = s.battery {
-                items.append(.init(label: b.isCharging ? "Charging" : (b.isPluggedIn ? "Battery" : "On battery"),
-                                   value: String(format: "%.0f%%", b.percent), dot: Strain.battery(b) ? Theme.bad : nil))
-                if let minutes = b.minutesRemaining, minutes > 0, !b.isPluggedIn {
-                    items.append(.init(label: "Left", value: Format.duration(Double(minutes) * 60), dot: nil))
-                }
-                if let health = b.health { items.append(.init(label: "Health", value: String(format: "%.0f%%", health * 100), dot: nil)) }
-            } else if let ane = s.power?.ane {
-                items.append(.init(label: "Neural Engine", value: Format.watts(ane), dot: nil))
-            }
-            facts.items = items
-        case .disk:
-            guard let d = s.disk else { return }
-            figure.set(Double(d.volumeFree))
-            state.isHidden = !Strain.disk(d)
-            state.text = "Low space"
-            state.tone = .bad
-            context.text = Theme.caption("\(Format.bytes(d.volumeTotal - d.volumeFree)) of \(Format.bytes(d.volumeTotal)) used")
-            facts.items = [.init(label: "Reading", value: Format.rate(d.readBytesPerSecond), dot: nil),
-                           .init(label: "Writing", value: Format.rate(d.writeBytesPerSecond), dot: nil)]
-            bar.parts = [(1 - Double(d.volumeFree) / Double(max(d.volumeTotal, 1)), Strain.disk(d) ? Theme.red : block.tint)]
-        default:
-            guard let t = s.thermal else { return }
-            figure.set(t.cpuCelsius)
-            state.isHidden = t.pressure == .nominal
-            state.text = t.pressure.rawValue.prefix(1).uppercased() + t.pressure.rawValue.dropFirst()
-            state.tone = t.pressure == .fair ? .warn : .bad
-            context.text = Theme.caption("Hottest CPU sensor")
-            var items: [Facts.Item] = t.fans.prefix(2).enumerated().map {
-                .init(label: t.fans.count > 1 ? "Fan \($0.offset + 1)" : "Fan", value: "\(Int($0.element.rpm)) rpm", dot: nil)
-            }
-            if let gpu = t.gpuCelsius { items.insert(.init(label: "GPU", value: Format.temperature(gpu).0 + Format.temperature(gpu).1, dot: nil), at: 0) }
-            facts.items = items
+        guard s.power?.cpu != nil || s.battery != nil else { return }
+        var lines: [SoftCard.Line] = []
+        if let b = s.battery {
+            let low = Strain.battery(b)
+            let state = b.isCharging ? "Charging" : b.chargeHeld == true ? "Held" : b.isPluggedIn ? "Plugged in" : "On battery"
+            let left = b.minutesRemaining.flatMap { $0 > 0 ? Format.duration(Double($0) * 60) : nil }
+            lines.append(.init(label: "Battery", fraction: b.percent / 100, color: low ? A2.bad : A2.charge, figure: Format.percent(b.percent / 100),
+                               detail: state, hover: left.map { b.isCharging ? "Full in \($0)" : b.isPluggedIn ? state : "\($0) left" }, warns: low))
         }
-        needsLayout = true
+        var chip: Double?
+        if let p = s.power, let cpu = p.cpu {
+            let parts: [(String, Double?, NSColor, String)] = [
+                ("CPU", cpu, A2.cpu, "The processor cores"),
+                ("GPU", p.gpu, A2.gpu, "Graphics"),
+                ("Neural Engine", p.ane, A2.memoryApp, "Machine learning"),
+            ]
+            let total = parts.compactMap(\.1).reduce(0, +)
+            chip = total
+            lines += parts.compactMap { name, watts, color, about in
+                watts.map { SoftCard.Line(label: name, fraction: total > 0 ? $0 / total : 0, color: color, figure: Format.watts($0),
+                                          detail: total > 0 ? Format.percent($0 / total) : "", hover: about) }
+            }
+        }
+        let whole = s.battery?.systemWatts ?? s.power?.system
+        card.show(mark: .glyph("bolt", A2.labelTint(.energy)), title: "Power",
+                  meta: whole.map { "\(Format.watts($0)) whole Mac" } ?? (chip == nil ? "" : "Chip right now"),
+                  metaHover: s.battery?.adapterWatts.map { "\($0) W adapter" }, tag: chip.map { Format.watts($0) }, lines: lines)
+        refit()
+    }
+}
+
+// MARK: - Network
+
+/// Download and upload right now with what has moved since the Mac started, then both
+/// over the last few minutes.
+final class NetworkBlock: DashboardBlockView {
+    private let chart = SoftDropdown.makeChart(A2.down, A2.up, names: ("Down", "Up"), format: { Format.rate(Double($0)) })
+
+    override init(_ block: DashboardBlock, delegate: AppDelegate) {
+        super.init(block, delegate: delegate)
+        card.chart = chart
+        card.chartHeight = 88
+        card.show(mark: .glyph(PageID.network.symbol, A2.labelTint(.network)), title: "Network", meta: "Waiting for the first reading",
+                  lines: [.waiting("Download"), .waiting("Upload")])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func update(_ s: SystemSnapshot, history: HistoryStore) {
+        guard let n = s.network else { return }
+        chart.step = delegate.settings.interval
+        chart.primary = history.recent(.networkIn)
+        chart.secondary = history.recent(.networkOut)
+        // Bars against the busiest moment in the chart, so they read on the same scale.
+        let peak = max(1, (chart.primary + chart.secondary).filter { !$0.isNaN }.map(Double.init).max() ?? 1,
+                       n.receivedBytesPerSecond, n.sentBytesPerSecond)
+        card.show(mark: .glyph(PageID.network.symbol, A2.labelTint(.network)), title: "Network", meta: recentSpan,
+                  metaHover: "Totals since the Mac started", tag: Format.rate(n.receivedBytesPerSecond + n.sentBytesPerSecond), lines: [
+                      .init(label: "Download", fraction: n.receivedBytesPerSecond / peak, color: A2.down,
+                            figure: Format.rate(n.receivedBytesPerSecond), detail: Format.bytes(n.totalReceived),
+                            hover: "\(Format.bytes(n.totalReceived)) in"),
+                      .init(label: "Upload", fraction: n.sentBytesPerSecond / peak, color: A2.up,
+                            figure: Format.rate(n.sentBytesPerSecond), detail: Format.bytes(n.totalSent),
+                            hover: "\(Format.bytes(n.totalSent)) out"),
+                  ])
+        refit()
+    }
+}
+
+// MARK: - Disk
+
+/// The startup disk's space and activity, as the Disk dropdown's Space card shows them.
+final class DiskBlock: DashboardBlockView {
+    override init(_ block: DashboardBlock, delegate: AppDelegate) {
+        super.init(block, delegate: delegate)
+        card.show(mark: .glyph(PageID.disk.symbol, A2.labelTint(.disk)), title: "Disk", meta: "Waiting for the first reading",
+                  lines: ["Used", "Free", "Reading", "Writing"].map { .waiting($0) })
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func update(_ s: SystemSnapshot, history: HistoryStore) {
+        guard let d = s.disk, d.volumeTotal > 0 else { return }
+        let total = Double(d.volumeTotal), used = d.volumeTotal - d.volumeFree
+        let low = Strain.disk(d)
+        let peak = max(1, (history.recent(.diskRead) + history.recent(.diskWrite)).filter { !$0.isNaN }.map(Double.init).max() ?? 1,
+                       d.readBytesPerSecond, d.writeBytesPerSecond)
+        card.show(mark: .glyph(PageID.disk.symbol, A2.labelTint(.disk)), title: "Disk", meta: "\(Format.bytes(d.volumeTotal)) startup disk",
+                  tag: low ? "Low" : nil, note: low ? "Space is running low. Clean Up can free some." : nil, lines: [
+                      .init(label: "Used", fraction: Double(used) / total, color: low ? A2.bad : A2.diskApps, figure: Format.bytes(used),
+                            detail: Format.percent(Double(used) / total)),
+                      .init(label: "Free", fraction: Double(d.volumeFree) / total, color: low ? A2.bad : A2.charge,
+                            figure: Format.bytes(d.volumeFree), detail: Format.percent(Double(d.volumeFree) / total)),
+                      .init(label: "Reading", fraction: d.readBytesPerSecond / peak, color: A2.diskApps,
+                            figure: Format.rate(d.readBytesPerSecond), detail: "Now"),
+                      .init(label: "Writing", fraction: d.writeBytesPerSecond / peak, color: A2.diskDocuments,
+                            figure: Format.rate(d.writeBytesPerSecond), detail: "Now"),
+                  ])
+        refit()
+    }
+}
+
+// MARK: - Temperature
+
+/// The sensors by group (the hottest reading of each; hovering lists them) and the fans,
+/// as the Temperature dropdown shows them, with the CPU's reading as the tag.
+final class SensorsBlock: DashboardBlockView {
+    private static let groupLimit = 4
+
+    override init(_ block: DashboardBlock, delegate: AppDelegate) {
+        super.init(block, delegate: delegate)
+        card.show(mark: .glyph(PageID.sensors.symbol, A2.labelTint(.sensors)), title: "Temperature", meta: "Waiting for the first reading",
+                  lines: ["CPU", "GPU"].map { .waiting($0) })
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private static func heat(_ celsius: Double) -> NSColor { celsius >= 90 ? A2.bad : celsius >= 75 ? A2.power : A2.cpu }
+
+    override func update(_ s: SystemSnapshot, history: HistoryStore) {
+        guard let t = s.thermal, !t.sensors.isEmpty || t.cpuCelsius != nil else { return }
+        var lines: [SoftCard.Line]
+        let groups = SensorsCardPage.groups(t.sensors)
+        if groups.isEmpty {
+            lines = [("CPU", t.cpuCelsius), ("GPU", t.gpuCelsius)].compactMap { name, value in
+                value.map { SoftCard.Line(label: name, fraction: $0 / 105, color: Self.heat($0), figure: Format.celsius($0), detail: "") }
+            }
+        } else {
+            lines = groups.prefix(Self.groupLimit).map { group in
+                let top = group.values.max() ?? 0
+                let readings = group.values.sorted(by: >).map { Format.celsius($0) }
+                return SoftCard.Line(label: group.name, fraction: top / 105, color: Self.heat(top), figure: Format.celsius(top),
+                                     detail: group.values.count == 1 ? "1 sensor" : "Hottest of \(group.values.count)",
+                                     hover: readings.count > 1 ? readings.joined(separator: " ") : nil)
+            }
+        }
+        for fan in t.fans.prefix(2) {
+            let top = fan.maxRPM ?? 6000
+            let fraction = fan.rpm > 1 ? min(1, fan.rpm / max(top, 1)) : 0
+            lines.append(.init(label: t.fans.count == 1 ? "Fan" : "Fan \(fan.index + 1)", fraction: fraction,
+                               color: fraction >= 0.8 ? A2.power : A2.cpu, figure: Format.percent(fraction),
+                               detail: fan.rpm > 1 ? "\(Int(fan.rpm.rounded()).formatted(.number.grouping(.automatic))) rpm" : "Off"))
+        }
+        let state: String = switch t.pressure {
+        case .nominal: "Thermal state normal"
+        case .fair: "Thermal state fair"
+        case .serious: "Thermal state serious"
+        case .critical: "Thermal state critical"
+        }
+        let hottest = t.sensors.max { $0.celsius < $1.celsius }
+        card.show(mark: .glyph(PageID.sensors.symbol, A2.labelTint(.sensors)), title: "Temperature", meta: state,
+                  metaHover: hottest.map { "Hottest: \($0.name), \(Format.celsius($0.celsius))" },
+                  tag: t.cpuCelsius.map { "CPU " + Format.celsius($0) },
+                  note: t.pressure == .serious || t.pressure == .critical ? "macOS is slowing the chip to cool it." : nil, lines: lines)
+        refit()
     }
 }
 
 // MARK: - Apps
 
-/// The busiest apps by CPU, memory, power or network.
+/// The busiest apps by CPU, memory, power or network, with their icons; a click opens
+/// one in Wisp, and hovering shows how many processes it runs.
 final class AppsBlock: DashboardBlockView {
-    let tabs = Segmented(["CPU", "Memory", "Power", "Net"])
-    private let meta = TextLine()
-    private let rows = (0..<5).map { _ in ListRow() }
-    private let note = TextLine()
-    private let noteButton = CapsuleButton()
+    let tabs = SoftTabs(["CPU", "Memory", "Power", "Net"])
     private var last: ProcessTable?
+    private static let shown = 5
     var interactive = true
 
     override init(_ block: DashboardBlock, delegate: AppDelegate) {
         super.init(block, delegate: delegate)
-        for view in [tabs, meta, note, noteButton] as [NSView] { addSubview(view) }
-        rows.forEach(addSubview)
-        rows.last?.showsRule = false
-        note.alignment = .center
-        note.text = NSAttributedString(string: "Per-app network is measured while a Wisp window shows it.",
-                                       attributes: [.font: Theme.sans(12), .foregroundColor: Theme.inkSecondary])
-        noteButton.title = "Also measure in the background"
-        noteButton.onPress = { [weak self] in self?.delegate.change { $0.trackAppNetwork = true } }
-        noteButton.setAccessibilityHelp("Turns on Settings, General, Track network per app in the background")
+        addSubview(tabs)
         tabs.onChange = { [weak self] _ in
             guard let self, let table = self.last else { return }
             self.update(table)
@@ -502,43 +644,41 @@ final class AppsBlock: DashboardBlockView {
         if let tab = ProcessInfo.processInfo.environment["WISP_TABS"]?.split(separator: ",").last.flatMap({ Int($0) }) {
             tabs.select(tab, animated: false)
         }
-        showNote(false)
+        card.onClick = { [weak self] index in
+            guard let self, self.interactive, self.card.ids.indices.contains(index) else { return }
+            self.delegate.showWindow(selecting: self.card.ids[index])
+        }
+        showLines([], meta: "", waiting: true)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var height: CGFloat { 60 + 30 * CGFloat(rows.count) + 8 }
-
     override func layout() {
         super.layout()
-        let tabsWidth = tabs.naturalWidth
-        tabs.frame = NSRect(x: bounds.width - 16 - tabsWidth, y: 10, width: tabsWidth, height: 26)
-        meta.frame = NSRect(x: 16, y: 38, width: content, height: 14)
-        for (index, row) in rows.enumerated() {
-            row.frame = NSRect(x: 16, y: 58 + CGFloat(index) * 30, width: content, height: 30)
-        }
-        let middle: CGFloat = 58 + 75
-        note.frame = NSRect(x: 16, y: middle - 24, width: content, height: 16)
-        let buttonWidth = noteButton.naturalWidth
-        noteButton.frame = NSRect(x: (bounds.width - buttonWidth) / 2, y: middle + 2, width: buttonWidth, height: 26)
+        let width = tabs.naturalWidth
+        tabs.frame = NSRect(x: bounds.width - SoftCard.padX - width, y: 10, width: width, height: 26)
     }
 
-    private func showNote(_ on: Bool) {
-        note.isHidden = !on
-        noteButton.isHidden = !on
-        if on { rows.forEach { $0.isHidden = true } }
+    private func showLines(_ lines: [SoftCard.Line], meta: String, waiting: Bool = false) {
+        card.show(mark: .glyph(PageID.apps.symbol, A2.labelTint(.apps)), title: "Apps", meta: meta,
+                  lines: waiting ? (0..<Self.shown).map { _ in .waiting() } : lines)
     }
 
     override func update(_ table: ProcessTable) {
+        // The first table has no apps until the processes have been read once.
+        guard !(table.apps.isEmpty && table.processes.isEmpty) else { return }
         last = table
         let tab = tabs.selected
-        meta.text = Theme.caption("\(table.apps.count) apps · \(table.processes.count) processes")
         if tab == 3, !table.networkMeasured {
-            showNote(true)
-            return
+            card.ids = []
+            showLines([], meta: "")
+            showMessage("Measured only while a Wisp window shows it.", button: "Also measure in the background") { [weak self] in
+                self?.delegate.change { $0.trackAppNetwork = true }
+            }
+            return refit()
         }
-        showNote(false)
-        let key: (AppGroup) -> Double = {
+        showMessage(nil)
+        let value: (AppGroup) -> Double = {
             switch tab {
             case 1: return Double($0.memory)
             case 2: return $0.watts
@@ -546,90 +686,74 @@ final class AppsBlock: DashboardBlockView {
             default: return $0.cpu
             }
         }
-        let top = table.apps.sorted { key($0) > key($1) }.prefix(rows.count)
-        let peak = max(top.first.map(key) ?? 0, 0.000_001)
-        let settings = delegate.settings
-        for (index, row) in rows.enumerated() {
-            guard index < top.count else {
-                row.isHidden = true
-                continue
+        let color = [A2.cpu, A2.memoryApp, A2.power, A2.down][tab]
+        let top = Array(table.apps.filter { value($0) > 0 }.sorted { value($0) > value($1) }.prefix(Self.shown))
+        let peak = max(top.first.map(value) ?? 1, .leastNonzeroMagnitude)
+        let whole = tab == 0 ? Double(max(table.coreCount, 1)) : tab == 1 ? Double(ProcessInfo.processInfo.physicalMemory)
+            : table.apps.map(value).reduce(0, +)
+        let machine = delegate.settings.cpuOfMachine
+        card.ids = top.map(\.id)
+        let lines = top.map { app in
+            let figure: String = switch tab {
+            case 1: Format.memory(app.memory)
+            case 2: Format.watts(app.watts)
+            case 3: Format.rate(app.networkPerSecond)
+            default: Style.appCPU(app.cpu, machine: machine, coreCount: table.coreCount)
             }
-            let app = top[top.startIndex + index]
-            row.isHidden = false
-            row.icon = Icons.icon(for: app)
-            row.name = app.name
-            row.note = app.processCount > 1 ? "\(app.processCount) procs" : ""
-            row.fraction = key(app) / peak
-            row.barColor = [PageID.cpu.tint, PageID.memory.tint, PageID.energy.tint, PageID.network.tint][tab]
-            switch tab {
-            case 1: row.value = Format.memory(app.memory)
-            case 2: row.value = app.watts > 0.005 ? Format.watts(app.watts) : "–"
-            case 3: row.value = app.networkPerSecond > 0 ? Format.rate(app.networkPerSecond) : "–"
-            default: row.value = Style.appCPU(app.cpu, machine: settings.cpuOfMachine, coreCount: table.coreCount)
-            }
-            let id = app.id
-            row.onClick = interactive ? { [weak self] in self?.delegate.showWindow(selecting: id) } : nil
+            return SoftCard.Line(label: app.name, fraction: value(app) / peak, color: color, figure: figure,
+                                 detail: whole > 0 ? Format.percent(value(app) / whole) : "",
+                                 hover: app.processCount == 1 ? "1 process" : "\(app.processCount) processes", icon: Icons.icon(for: app))
         }
+        if lines.isEmpty {
+            showLines([], meta: "")
+            showMessage(tab == 2 ? "No app is drawing measurable power." : "No app is busy with this right now.")
+        } else {
+            showLines(lines, meta: "")
+        }
+        refit()
     }
 }
 
 // MARK: - Coding agents
 
-/// Coding agents running now, one line per kind.
+/// Coding agents running now, one line per kind: its mark, the CPU its processes use,
+/// and how many are running. Hovering shows their memory.
 final class AgentsBlock: DashboardBlockView {
-    private let count = TextLine()
-    private let empty = TextLine(Theme.caption("None running"))
-    private var lines: [AgentLine] = []
     private let finder = AgentFinder()
     private var checkedAt = Date.distantPast
-    private var shown = 0
+    /// How many were found at the last look, for the dashboard's status line.
+    private(set) var running: Int?
 
     override init(_ block: DashboardBlock, delegate: AppDelegate) {
         super.init(block, delegate: delegate)
-        count.alignment = .right
-        addSubview(count)
-        addSubview(empty)
+        card.show(mark: .glyph("sparkles", A2.labelTint(.agents)), title: "Coding agents", meta: "Looking for agents",
+                  lines: [.waiting(), .waiting()])
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var height: CGFloat { 44 + CGFloat(max(1, shown)) * 36 + 6 }
-
-    override func layout() {
-        super.layout()
-        count.frame = NSRect(x: bounds.width - 16 - 120, y: 16, width: 120, height: 14)
-        empty.frame = NSRect(x: 16, y: 54, width: content, height: 16)
-        for (index, line) in lines.enumerated() {
-            line.frame = NSRect(x: 16, y: 44 + CGFloat(index) * 36, width: content, height: 36)
-        }
-    }
-
     override func update(_ table: ProcessTable) {
-        // Finding agents walks the process table; every few seconds is plenty.
-        guard Date().timeIntervalSince(checkedAt) > 5 else { return }
+        // Finding agents walks the process table; every few seconds is plenty. Before the
+        // first table there is nothing to look through yet.
+        guard !table.processes.isEmpty, Date().timeIntervalSince(checkedAt) > 5 else { return }
         checkedAt = Date()
         let found = finder.find(table)
-        let grouped = Dictionary(grouping: found, by: \.kind).map { ($0.key, $0.value.count) }
-            .sorted { ($0.1, $1.0) > ($1.1, $0.0) }.prefix(4)
-        while lines.count < grouped.count {
-            let line = AgentLine()
-            addSubview(line)
-            lines.append(line)
+        running = found.count
+        let groups = Dictionary(grouping: found, by: \.kind)
+            .map { (kind: $0.key, count: $0.value.count, cpu: $0.value.map(\.cpu).reduce(0, +), memory: $0.value.map(\.memory).reduce(0, +)) }
+            .sorted { ($0.count, $1.kind) > ($1.count, $0.kind) }.prefix(4)
+        let peak = max(groups.map(\.cpu).max() ?? 1, 0.01)
+        let machine = delegate.settings.cpuOfMachine
+        let lines = groups.map { group in
+            SoftCard.Line(label: group.kind, fraction: group.cpu / peak, color: A2.cpu,
+                          figure: Style.appCPU(group.cpu, machine: machine, coreCount: table.coreCount),
+                          detail: group.count == 1 ? "1 running" : "\(group.count) running",
+                          hover: "\(Format.memory(group.memory)) memory",
+                          icon: AgentMark.image(group.kind, size: 16, appearance: effectiveAppearance))
         }
-        for (index, line) in lines.enumerated() {
-            line.isHidden = index >= grouped.count
-            guard index < grouped.count else { continue }
-            let (name, number) = grouped[grouped.startIndex + index]
-            line.name = name
-            line.count = number
-            line.showsRule = index < grouped.count - 1
-        }
-        empty.isHidden = !grouped.isEmpty
-        count.text = Theme.caption(found.isEmpty ? "" : "\(found.count) running")
-        if grouped.count != shown {
-            shown = grouped.count
-            onResize?()
-        }
-        needsLayout = true
+        card.show(mark: .glyph("sparkles", A2.labelTint(.agents)), title: "Coding agents",
+                  meta: found.isEmpty ? "None running" : "\(found.count) running", lines: lines)
+        showMessage(found.isEmpty ? "Agents show here while they work." : nil)
+        refit()
     }
 }

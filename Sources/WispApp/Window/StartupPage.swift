@@ -14,7 +14,7 @@ final class StartupPage: CardPage {
     private var caption: TextLine { titleLines.1 }
     private let scope = Segmented(["Third Party", "Everything"])
     private let tint = A2Dev.tint(.startup)
-    private let countTile: A2Tile
+    private let hero = SplitHero("Start with this Mac", symbol: PageID.startup.symbol, page: .startup)
     private let runningTile: A2Tile
     private let cpuTile: A2Tile
     private let memoryTile: A2Tile
@@ -25,6 +25,9 @@ final class StartupPage: CardPage {
     private let tableCard = CardView()
     private let tableTitle = A2TitleRow()
     private let table: A2Table = { let table = A2Table(); table.drawsVisibleOnly = true; return table }()
+    private let ghostRows = ProjectGhostRows()
+    private let tips = TableTips()
+    private var tipTexts: [String] = []
     private var sortColumn = 5
     private let onSelect: (Selection?) -> Void
 
@@ -47,7 +50,6 @@ final class StartupPage: CardPage {
 
     init(delegate: AppDelegate, onSelect: @escaping (Selection?) -> Void) {
         self.onSelect = onSelect
-        countTile = A2Tile("Start with this Mac", symbol: PageID.startup.symbol, tint: tint)
         runningTile = A2Tile("Running now", symbol: "play", tint: tint)
         cpuTile = A2Tile("CPU", symbol: PageID.cpu.symbol, tint: tint)
         memoryTile = A2Tile("Memory", symbol: PageID.memory.symbol, tint: tint)
@@ -61,15 +63,25 @@ final class StartupPage: CardPage {
     override func loadView() {
         super.loadView()
         _ = titleLines
-        for view in [countTile, runningTile, cpuTile, memoryTile, tipsCard, tableCard] as [NSView] { canvas.addSubview(view) }
-        for tile in [countTile, runningTile, cpuTile, memoryTile] { tile.figure.show("–") }
+        for view in [hero, runningTile, cpuTile, memoryTile, tipsCard, tableCard] as [NSView] { canvas.addSubview(view) }
+        for tile in [runningTile, cpuTile, memoryTile] {
+            tile.figure.show("–")
+            tile.set(sub: "Reading…")
+        }
+        hero.measure = "Items"
+        hero.legend.items = [.init(text: "By developer", faint: true)]
+        hero.showGhost("Reading the agents, daemons and login items on this Mac…")
         tipsCard.addSubview(tipsTitle)
         tipsCard.addSubview(tipRules)
         tipsTitle.title = "Worth a look"
         tipsCard.isHidden = true
         tableCard.addSubview(tableTitle)
         tableCard.addSubview(table)
+        tableCard.addSubview(ghostRows)
         tableTitle.title = "Items"
+        tableTitle.items = [.init(text: "Checking who signed each one, which takes a few seconds", faint: true)]
+        // Under the table's own columns: last day, memory, CPU's figure and meter, status, runs, kind, developer.
+        ghostRows.columns = [(30, 0), (40, 65), (34, 134), (52, 182), (64, 261), (110, 372), (44, 515), (104, 608)]
         caption.text = Toolbar.subtitle("Reading launch items…")
         table.nameTitle = "Item"
         // Narrow windows let the schedule, the developer, the day's average and the kind go, in that order.
@@ -83,6 +95,7 @@ final class StartupPage: CardPage {
         }
         table.onSelect = { [weak self] id in self?.showActions(for: id) }
         scope.onChange = { [weak self] _ in self?.refresh(force: true) }
+        scope.setAccessibilityLabel("Show")
     }
 
     override func viewWillAppear() {
@@ -99,21 +112,8 @@ final class StartupPage: CardPage {
 
     override func arrange(width: CGFloat) -> CGFloat {
         let inner = width - margin * 2
-        let tiles = [countTile, runningTile, cpuTile, memoryTile]
-        var y: CGFloat
-        if (inner - gap * 3) / 4 >= 180 {
-            // The first tile is a little wider for its three counts, as in the mockup.
-            let unit = (inner - gap * 3) / 4.25
-            var x = margin
-            for (index, tile) in tiles.enumerated() {
-                let tileWidth = index == 0 ? unit * 1.25 : unit
-                tile.frame = NSRect(x: x.rounded(), y: margin, width: (x + tileWidth).rounded() - x.rounded(), height: 110)
-                x += tileWidth + gap
-            }
-            y = margin + 110 + gap
-        } else {
-            y = grid(tiles, top: margin, width: width, columns: 4, height: 110) + gap
-        }
+        hero.frame = NSRect(x: margin, y: margin, width: inner, height: hero.height(width: inner))
+        var y = grid([runningTile, cpuTile, memoryTile], top: hero.frame.maxY + gap, width: width, columns: 3, height: 110) + gap
         let cardInner = inner - A2.padSide * 2
         if !tipsCard.isHidden {
             let shown = tipRows.filter { !$0.isHidden }
@@ -128,12 +128,18 @@ final class StartupPage: CardPage {
         }
         // The table runs to the window's bottom margin when its rows fit, as in the mockup.
         let tableTop = A2.padTop + 16 + 8
-        let natural = tableTop + table.naturalHeight + A2.padTop
+        // While the items are read, grey rows hold the place the table will take.
+        ghostRows.isHidden = scanned
+        let natural = tableTop + (scanned ? table.naturalHeight : table.headerHeight + CGFloat(ghostRows.count) * table.rowHeight) + A2.padTop
         let room = scroll.contentSize.height - Self.topInset - margin - y
         let height = room >= natural && room <= natural * 1.4 ? room : natural
         tableCard.frame = NSRect(x: margin, y: y, width: inner, height: height)
         tableTitle.frame = NSRect(x: A2.padSide, y: A2.padTop, width: cardInner, height: 16)
         table.frame = NSRect(x: A2.padSide, y: tableTop, width: cardInner, height: height - tableTop - A2.padTop)
+        ghostRows.rowHeight = table.rowHeight
+        ghostRows.frame = NSRect(x: A2.padSide, y: tableTop + table.headerHeight, width: cardInner,
+                                 height: CGFloat(ghostRows.count) * table.rowHeight)
+        tips.install(on: table, texts: tipTexts)
         return tableCard.frame.maxY + margin
     }
 
@@ -240,25 +246,22 @@ final class StartupPage: CardPage {
     private func show() {
         current = lines()
         let byKind = Dictionary(grouping: items, by: \.kind)
-        countTile.figure.show("\(items.count)")
-        countTile.set(sub: [(LaunchItem.Kind.agent, "agents"), (.daemon, "daemons"), (.loginItem, "login items")]
+        let running = current.filter { $0.status == .running }
+        showHero(kinds: [(LaunchItem.Kind.agent, "agents"), (.daemon, "daemons"), (.loginItem, "login items")]
             .compactMap { kind, word in byKind[kind].map { "\($0.count) \($0.count == 1 ? String(word.dropLast()) : word)" } }
             .joined(separator: " · "))
-        let running = current.filter { $0.status == .running }
         runningTile.figure.show("\(running.count)")
         let waiting = current.filter { $0.status == .loaded }.count
-        runningTile.set(sub: waiting > 0 ? "\(waiting) loaded and waiting" : "")
-        cpuTile.show(cpuText(running.reduce(0) { $0 + $1.cpu }))
-        if let busiest = running.max(by: { $0.cpu < $1.cpu }), busiest.cpu > 0.001 {
-            cpuTile.set(facts: [.init(label: "Most in", value: busiest.item.name)])
+        runningTile.set(sub: waiting > 0 ? "\(waiting) loaded and waiting" : running.isEmpty ? "None running now" : "None waiting")
+        if lastTable.processes.isEmpty {
+            // The items can be read before the first process table: costs are not known yet.
+            for tile in [cpuTile, memoryTile] {
+                tile.figure.show("–")
+                tile.set(sub: "Measuring…")
+            }
         } else {
-            cpuTile.set(sub: running.isEmpty ? "" : "Idle")
+            showCosts(running)
         }
-        memoryTile.show(Format.memory(running.reduce(0) { $0 + ($1.cost?.memory ?? 0) }))
-        let watts = running.reduce(0) { $0 + ($1.cost?.watts ?? 0) }
-        let between = NSMutableAttributedString(attributedString: A2.facts([.init(label: "", value: Format.watts(watts))]))
-        between.append(A2.plain(" between them"))
-        memoryTile.sub.text = between
 
         let leftovers = current.filter { $0.item.isLeftover }.count
         var parts = ["\(items.count) items", "\(running.count) running"]
@@ -276,6 +279,55 @@ final class StartupPage: CardPage {
     }
 
     private var laidOut = false
+
+    private func showCosts(_ running: [Line]) {
+        cpuTile.show(cpuText(running.reduce(0) { $0 + $1.cpu }))
+        if let busiest = running.max(by: { $0.cpu < $1.cpu }), busiest.cpu > 0.001 {
+            cpuTile.set(facts: [.init(label: "Most in", value: busiest.item.name)])
+            cpuTile.toolTip = "Most in \(busiest.item.name), \(cpuText(busiest.cpu))"
+        } else {
+            cpuTile.set(sub: running.isEmpty ? "Nothing running" : "Idle")
+            cpuTile.toolTip = nil
+        }
+        memoryTile.show(Format.memory(running.reduce(0) { $0 + ($1.cost?.memory ?? 0) }))
+        let watts = running.reduce(0) { $0 + ($1.cost?.watts ?? 0) }
+        let between = NSMutableAttributedString(attributedString: A2.facts([.init(label: "", value: Format.watts(watts))]))
+        between.append(A2.plain(" between them"))
+        memoryTile.sub.text = between
+    }
+
+    /// The count, whether anything is left over, and who made the items as a split.
+    private func showHero(kinds: String) {
+        hero.figure.show("\(items.count)", unit: items.count == 1 ? "item" : "items")
+        hero.caption.text = A2.plain(kinds.isEmpty ? "Nothing starts with this Mac in this view" : kinds)
+        let leftovers = current.filter { $0.item.isLeftover }.count
+        let unknown = current.filter { $0.signer?.unknown == true && !$0.item.isLeftover }.count
+        if leftovers > 0 {
+            hero.setPill("\(leftovers) left over", tone: .warn)
+        } else if unknown > 0 {
+            hero.setPill("\(unknown) unsigned", tone: .neutral)
+        } else {
+            hero.setPill(items.isEmpty ? nil : "All in place", tone: .good)
+        }
+        guard !items.isEmpty else {
+            hero.showEmpty(scope.selected == 0
+                ? "Only Apple's own items start with this Mac. Everything shows them as well."
+                : "Nothing is set to start with this Mac.")
+            return
+        }
+        let groups = Dictionary(grouping: current, by: developer)
+        hero.show(groups.map { name, lines in
+            let running = lines.filter { $0.status == .running }.count
+            return SplitHero.Slice(label: name, value: Double(lines.count), shown: lines.count == 1 ? "1 item" : "\(lines.count) items",
+                                   note: running > 0 ? "\(running) running" : "none running",
+                                   detail: lines.prefix(4).map(\.item.name).joined(separator: ", ") + (lines.count > 4 ? "…" : ""))
+        }.sorted { ($0.value, $1.label) > ($1.value, $0.label) }) { value, folded in
+            let count = Int(value)
+            return SplitHero.Slice(label: "\(folded.count) more developers", value: value, shown: count == 1 ? "1 item" : "\(count) items",
+                                   note: folded.prefix(2).map(\.label).joined(separator: ", ") + (folded.count > 2 ? "…" : ""),
+                                   detail: folded.map(\.label).joined(separator: ", "))
+        }
+    }
 
     private func reason(_ line: Line) -> String? {
         let item = line.item
@@ -329,7 +381,7 @@ final class StartupPage: CardPage {
             } else if line.signer?.unknown == true, !(item.keepAlive && line.cpu > 0.05) {
                 (symbol, tint) = ("exclamationmark.shield", A2.warn)
             } else {
-                (symbol, tint) = ("flame", Theme.dynamic(0xE6A700, 0xFFD60A))
+                (symbol, tint) = ("flame", A2.caution)
             }
             let (button, action) = primaryAction(line)
             let detail = why + " · " + whereabouts(line)
@@ -404,6 +456,14 @@ final class StartupPage: CardPage {
                                tag: line.item.isLeftover ? "Left over" : nil, faint: line.status != .running)
         }
         tableTitle.items = items.isEmpty ? [] : [.init(text: "\(items.count)"), .init(text: "Sorted by " + Self.sortNames[min(column, 7)])]
+        table.emptyText = "Nothing to list in this view"
+        tipTexts = sorted.map { line in
+            var lines = [line.item.name, line.item.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")]
+            lines.append([developer(line), line.item.kind.title, line.item.schedule].joined(separator: " · "))
+            if let program = line.item.script ?? line.item.program { lines.append("Runs " + program.replacingOccurrences(of: NSHomeDirectory(), with: "~")) }
+            return lines.joined(separator: "\n")
+        }
+        tips.install(on: table, texts: tipTexts)
     }
 
     private func developer(_ line: Line) -> String {

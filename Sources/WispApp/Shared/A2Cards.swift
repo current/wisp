@@ -42,6 +42,8 @@ enum A2 {
     static let pillText = dynamic(Theme.hex(0x007AFF), Theme.hex(0xF5F5F7))
     static let good = Theme.dynamic(0x248A3D, 0x30D158)
     static let warn = Theme.dynamic(0xC93400, 0xFF9F0A)
+    /// Amber, between good and a warning.
+    static let caution = Theme.dynamic(0xE6A700, 0xFFD60A)
     static let bad = Theme.dynamic(0xD70015, 0xFF453A)
 
     /// Chart and bar colours.
@@ -61,17 +63,14 @@ enum A2 {
 
     /// A page's colour for text and icons in a card label: a shade darker than its
     /// chart colour in light mode so 12 pt text keeps its contrast, lighter in dark.
-    static func labelTint(_ page: PageID) -> NSColor {
-        switch page {
-        case .cpu: return Theme.dynamic(0x007AFF, 0x3D9BFF)
-        case .memory: return Theme.dynamic(0x5856D6, 0x9D9BFF)
-        case .gpu: return Theme.dynamic(0xE0284F, 0xFF5C7A)
-        case .energy: return Theme.dynamic(0xD97A00, 0xFFB340)
-        case .disk: return Theme.dynamic(0x0A8FC7, 0x64D2FF)
-        case .network: return Theme.dynamic(0x248A3D, 0x30D158)
-        default: return page.tint
-        }
-    }
+    /// One colour object per page, so views that compare colours see no change.
+    static func labelTint(_ page: PageID) -> NSColor { labelTints[page] ?? page.tint }
+
+    private static let labelTints: [PageID: NSColor] = [
+        .cpu: Theme.dynamic(0x007AFF, 0x3D9BFF), .memory: Theme.dynamic(0x5856D6, 0x9D9BFF),
+        .gpu: Theme.dynamic(0xE0284F, 0xFF5C7A), .energy: Theme.dynamic(0xD97A00, 0xFFB340),
+        .disk: Theme.dynamic(0x0A8FC7, 0x64D2FF), .network: Theme.dynamic(0x248A3D, 0x30D158),
+    ]
 
     static let labelFont = Theme.sans(12, .semibold)
     static let titleFont = Theme.sans(13, .semibold)
@@ -257,7 +256,7 @@ final class A2TitleRow: DrawnView {
 
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
-    override func accessibilityValue() -> Any? { ([title] + items.map(\.text)).joined(separator: ", ") }
+    override func accessibilityValue() -> Any? { ([title] + items.map(\.text)).filter { !$0.isEmpty }.joined(separator: ", ") }
 }
 
 /// Recent samples as a line with a soft fill under it, edge to edge and with no axis.
@@ -368,6 +367,23 @@ final class A2ActivityChart: BitmapView {
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: A2.gridLabel]
         let size = label.size(withAttributes: attributes)
         label.draw(at: NSPoint(x: bounds.width - 14 - size.width, y: y(top) - 4 - font.ascender), withAttributes: attributes)
+    }
+
+    /// What the chart shows and the names of its two lines, for VoiceOver.
+    var title = ""
+    var names = ("", "")
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .image }
+    override func accessibilityLabel() -> String? { title.isEmpty ? "Chart" : title + " chart" }
+    override func accessibilityValue() -> Any? {
+        var parts: [String] = []
+        for (values, name) in [(first, names.0), (second, names.1)] {
+            let shown = values.filter { !$0.isNaN }
+            guard let last = shown.last, let peak = shown.max() else { continue }
+            parts.append((name.isEmpty ? "Now " : name + " now ") + format(last) + ", peak " + format(peak))
+        }
+        return parts.isEmpty ? "No readings yet" : parts.joined(separator: "; ")
     }
 }
 
@@ -659,6 +675,13 @@ final class A2PillButton: DrawnView {
     override func accessibilityRole() -> NSAccessibility.Role? { .button }
     override func accessibilityLabel() -> String? { title }
     override func accessibilityPerformPress() -> Bool { onPress?(); return true }
+    override var acceptsFirstResponder: Bool { KeyPress.reachable }
+    override var canBecomeKeyView: Bool { acceptsFirstResponder }
+    override func keyDown(with event: NSEvent) {
+        if KeyPress.presses(event) { onPress?() } else { super.keyDown(with: event) }
+    }
+    override var focusRingMaskBounds: NSRect { bounds }
+    override func drawFocusRingMask() { KeyPress.capsule(bounds) }
 }
 
 /// A suggestion: a 32 pt round symbol in a wash of its colour (or an app's icon), a

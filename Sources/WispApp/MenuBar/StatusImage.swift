@@ -46,13 +46,15 @@ enum StatusImage {
         let graphInColumn = content.captionAbove && hasGraph && content.text.isEmpty && content.lines == nil
         let caption = content.caption ?? ""
         var valueWidth: CGFloat
+        var textWidth: CGFloat = 0
         if let lines = content.lines {
             valueWidth = max(width(lines.0, lineAttributes), width(lines.1, lineAttributes))
             if let sample = content.steadySample { valueWidth = max(valueWidth, width(sample, lineAttributes)) }
         } else if graphInColumn {
             valueWidth = 28
         } else {
-            valueWidth = width(content.text, valueAttributes)
+            textWidth = width(content.text, valueAttributes)
+            valueWidth = textWidth
             if let sample = content.steadySample, valueWidth > 0 { valueWidth = max(valueWidth, width(sample, valueAttributes)) }
         }
         let captionWidth = width(caption, captionAttributes)
@@ -129,8 +131,7 @@ enum StatusImage {
             (lines.1 as NSString).draw(in: NSRect(x: x, y: middle - lineHeight + 0.5, width: valueWidth, height: lineHeight), withAttributes: attributes)
         } else if !content.text.isEmpty {
             // A steady item keeps its figure against the right edge, where the digits change least.
-            let shown = width(content.text, valueAttributes)
-            (content.text as NSString).draw(at: NSPoint(x: x + valueWidth - shown, y: inlineBaseline + fonts.value.descender), withAttributes: valueAttributes)
+            (content.text as NSString).draw(at: NSPoint(x: x + valueWidth - textWidth, y: inlineBaseline + fonts.value.descender), withAttributes: valueAttributes)
         }
         NSGraphicsContext.restoreGraphicsState()
 

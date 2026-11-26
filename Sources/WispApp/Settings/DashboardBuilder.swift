@@ -8,8 +8,11 @@ import WispCore
 ///
 /// The block being dragged is a bitmap on its own layer that follows the pointer;
 /// the others slide on the render server. Nothing here draws per frame.
+///
+/// The builder draws its own cards: with room, the preview on a card as narrow as it
+/// is and the blocks on a card beside it; without, both on one card.
 @MainActor
-final class DashboardBuilder: DrawnView {
+final class DashboardBuilder: DrawnView, SettingsSizing {
     private unowned let delegate: AppDelegate
     static let scale: CGFloat = 0.6
     private let inset: CGFloat = 16
@@ -19,8 +22,14 @@ final class DashboardBuilder: DrawnView {
     private let stage = CardView()
     private let holder = Holder()
     let preview: DashboardView
-    private let paletteTitle = TextLine(NSAttributedString(string: "Blocks", attributes: [.font: A2.titleFont, .foregroundColor: A2.primary]))
-    private let paletteNote = TextLine(A2.plain("Drag one onto the preview, or click to add it."))
+    private let previewCard = CardView()
+    private let blocksCard = CardView()
+    private var previewHeader: SettingsCardHeader?
+    private var blocksHeader: SettingsCardHeader?
+    private let dropHint = DropHint()
+    private let footerRule = SettingsRule()
+    private let resetNote = TextLine(A2.plain("Back to the CPU, meters, cores and apps."))
+    private let resetButton = A2PillButton()
     private var chips: [PaletteChip] = []
     private let removeButton = RemoveButton()
     private let indicator = CAShapeLayer()
@@ -54,13 +63,20 @@ final class DashboardBuilder: DrawnView {
         preview = DashboardView(delegate: delegate, preview: true)
         super.init(frame: NSRect(x: 0, y: 0, width: 620, height: 600))
         wantsLayer = true
+        for card in [previewCard, blocksCard] {
+            card.radius = A2.radius
+            addSubview(card)
+        }
+        addSubview(dropHint)
+        for view in [footerRule, resetNote, resetButton] as [NSView] { addSubview(view) }
+        resetButton.title = "Reset to Default"
+        resetButton.onPress = { [weak self] in self?.reset() }
         stage.fill = Theme.ground
         stage.radius = Theme.panelRadius * Self.scale
         addSubview(stage)
         holder.wantsLayer = true
         holder.addSubview(preview)
         addSubview(holder)
-        for view in [paletteTitle, paletteNote] as [NSView] { addSubview(view) }
         for block in DashboardBlock.allCases {
             let chip = PaletteChip(block)
             chip.onPress = { [weak self] in self?.add(block) }
@@ -92,17 +108,75 @@ final class DashboardBuilder: DrawnView {
 
     // MARK: Layout
 
-    private var stageOrigin: NSPoint { NSPoint(x: inset, y: inset) }
-    private var paletteX: CGFloat { inset + DashboardView.width * Self.scale + 28 }
-    private static let chipHeight: CGFloat = 42
+    private var stageOrigin: NSPoint { geometry(bounds.width).stage }
+    private var paletteX: CGFloat { geometry(bounds.width).palette.minX }
+    private static let chipHeight: CGFloat = 56
     private static let chipGap: CGFloat = 6
+    private static let footerHeight: CGFloat = 52
+    private static let cardGap = SettingsPageView.gap
+
+    /// Where everything goes at a width: the two cards (one, when narrow), the stage's
+    /// corner, and the palette's frame and columns.
+    private struct Geometry {
+        var split: Bool
+        var previewCard: NSRect
+        var blocksCard: NSRect
+        var stage: NSPoint
+        var palette: NSRect
+        var columns: Int
+        var footerY: CGFloat
+    }
+
+    private func geometry(_ width: CGFloat) -> Geometry {
+        let stageWidth = (DashboardView.width * Self.scale).rounded(.up)
+        let top = SettingsCardHeader.height + 2
+        let split = width >= 640
+        let previewWidth = inset + stageWidth + inset
+        let paletteX = split ? previewWidth + Self.cardGap + inset : inset + stageWidth + 28
+        let paletteWidth = max(120, width - paletteX - inset)
+        let columns = paletteWidth >= 3 * 240 + 2 * Self.chipGap ? 3 : paletteWidth >= 2 * 220 + Self.chipGap ? 2 : 1
+        let rows = (chips.count + columns - 1) / columns
+        let paletteHeight = CGFloat(rows) * (Self.chipHeight + Self.chipGap) - Self.chipGap
+        let palette = NSRect(x: paletteX, y: top, width: paletteWidth, height: paletteHeight)
+        let footerY = palette.maxY + inset
+        let stageBottom = top + (committedPreviewHeight + slack) * Self.scale + inset
+        let blocksBottom = footerY + Self.footerHeight
+        if split {
+            return Geometry(split: true, previewCard: NSRect(x: 0, y: 0, width: previewWidth, height: ceil(stageBottom)),
+                            blocksCard: NSRect(x: previewWidth + Self.cardGap, y: 0, width: width - previewWidth - Self.cardGap, height: ceil(blocksBottom)),
+                            stage: NSPoint(x: inset, y: top), palette: palette, columns: columns, footerY: footerY)
+        }
+        let card = NSRect(x: 0, y: 0, width: width, height: ceil(max(stageBottom, blocksBottom)))
+        return Geometry(split: false, previewCard: card, blocksCard: card, stage: NSPoint(x: inset, y: top), palette: palette,
+                        columns: columns, footerY: footerY)
+    }
+
+    func height(for width: CGFloat) -> CGFloat {
+        let g = geometry(width)
+        return max(g.previewCard.maxY, g.blocksCard.maxY)
+    }
 
     /// The builder's height for the saved layout.
-    var preferredHeight: CGFloat {
-        let committed = committedPreviewHeight
-        let stageBottom = inset + (committed + slack) * Self.scale + inset
-        let paletteBottom = 66 + CGFloat(chips.count) * (Self.chipHeight + Self.chipGap) - Self.chipGap + inset
-        return ceil(max(stageBottom, paletteBottom))
+    var preferredHeight: CGFloat { height(for: bounds.width) }
+
+    /// The headers follow the layout's counts, so they are made again when it changes.
+    private func makeHeaders(_ g: Geometry) {
+        let blocks = layoutBlocks.count
+        previewHeader?.removeFromSuperview()
+        blocksHeader?.removeFromSuperview()
+        let tint = SettingsPage.Section.menuBar.tint
+        let preview = SettingsCardHeader(title: "Dashboard", symbol: "rectangle.grid.1x2", tint: tint,
+                                         summary: g.split ? "\(blocks) blocks, live." : "Drag a block onto the preview, or click one to add it.",
+                                         trailing: g.split ? nil : .text("\(blocks) of \(chips.count) shown"))
+        addSubview(preview, positioned: .above, relativeTo: blocksCard)
+        previewHeader = preview
+        if g.split {
+            let header = SettingsCardHeader(title: "Blocks", symbol: "square.grid.2x2", tint: tint,
+                                            summary: "Click or drag one to add it. Only shown blocks are read.",
+                                            trailing: .text("\(blocks) of \(chips.count) shown"))
+            addSubview(header, positioned: .above, relativeTo: blocksCard)
+            blocksHeader = header
+        }
     }
 
     private var committedPreviewHeight: CGFloat = 0
@@ -113,13 +187,30 @@ final class DashboardBuilder: DrawnView {
         if drag == nil { committedPreviewHeight = preview.frame.height }
         placeHolder()
         stage.frame = scaled(NSRect(origin: .zero, size: preview.frame.size))
-        let x = paletteX
-        let width = max(120, bounds.width - x - inset)
-        paletteTitle.frame = NSRect(x: x, y: inset, width: width, height: 18)
-        paletteNote.frame = NSRect(x: x, y: inset + 20, width: width, height: 16)
+        let g = geometry(bounds.width)
+        previewCard.frame = g.previewCard
+        blocksCard.frame = g.blocksCard
+        blocksCard.isHidden = !g.split
+        makeHeaders(g)
+        previewHeader?.frame = NSRect(x: g.previewCard.minX, y: 0, width: g.previewCard.width, height: SettingsCardHeader.height)
+        blocksHeader?.frame = NSRect(x: g.blocksCard.minX, y: 0, width: g.blocksCard.width, height: SettingsCardHeader.height)
+        let stageWidth = DashboardView.width * Self.scale
+        let stageBottom = g.stage.y + committedPreviewHeight * Self.scale
+        dropHint.frame = NSRect(x: g.stage.x, y: stageBottom + 10, width: stageWidth, height: max(0, slack * Self.scale - 10))
+        dropHint.isHidden = drag != nil
+        let columnWidth = ((g.palette.width - Self.chipGap * CGFloat(g.columns - 1)) / CGFloat(g.columns)).rounded(.down)
         for (index, chip) in chips.enumerated() {
-            chip.frame = NSRect(x: x, y: 66 + CGFloat(index) * (Self.chipHeight + Self.chipGap), width: width, height: Self.chipHeight)
+            let column = index % g.columns, row = index / g.columns
+            chip.frame = NSRect(x: g.palette.minX + CGFloat(column) * (columnWidth + Self.chipGap), y: g.palette.minY + CGFloat(row) * (Self.chipHeight + Self.chipGap),
+                                width: columnWidth, height: Self.chipHeight)
         }
+        let footerLeft = g.split ? g.blocksCard.minX + inset : g.palette.minX
+        footerRule.frame = NSRect(x: footerLeft, y: g.footerY, width: g.blocksCard.maxX - inset - footerLeft, height: 0.5)
+        let resetWidth = resetButton.naturalWidth
+        resetButton.frame = NSRect(x: g.blocksCard.maxX - inset - resetWidth, y: g.footerY + (Self.footerHeight - 26) / 2, width: resetWidth, height: 26)
+        resetNote.frame = NSRect(x: footerLeft, y: g.footerY + (Self.footerHeight - 16) / 2, width: resetButton.frame.minX - 12 - footerLeft, height: 16)
+        removeAllToolTips()
+        for chip in chips { addToolTip(chip.frame, owner: (chip.block.title + ": " + chip.block.detail) as NSString, userData: nil) }
         placeRemoveButton()
     }
 
@@ -193,7 +284,7 @@ final class DashboardBuilder: DrawnView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         // Chips and the preview are drawn; the builder takes their clicks and drags.
         guard let hit = super.hitTest(point) else { return nil }
-        return hit === removeButton ? hit : self
+        return hit === removeButton || hit === resetButton ? hit : self
     }
 
     private func block(at point: NSPoint) -> DashboardBlock? {
@@ -654,7 +745,9 @@ final class DashboardBuilder: DrawnView {
             element.setAccessibilityCustomActions(actions)
             return element
         }
-        return elements + chips
+        // The footer's note and Reset button are views of their own; list them after the chips.
+        let footer = [resetNote, resetButton].filter { !$0.isHidden && $0.isAccessibilityElement() } as [Any]
+        return elements + chips + footer
     }
 
     // MARK: Bitmaps
@@ -746,8 +839,8 @@ final class DashboardBuilder: DrawnView {
 
 // MARK: - Pieces
 
-/// One block in the builder's list: its symbol, name and a line about it. A block
-/// already on the dashboard says so and cannot be added twice.
+/// One block in the builder's list: its symbol, name and up to two lines about it. A
+/// block already on the dashboard takes its colour and a check, and cannot be added twice.
 final class PaletteChip: DrawnView {
     let block: DashboardBlock
     var onPress: (() -> Void)?
@@ -773,27 +866,41 @@ final class PaletteChip: DrawnView {
             shape.stroke()
             return
         }
-        (pressed ? Theme.track : hovering ? Theme.hover : Theme.fill).setFill()
-        shape.fill()
-        let alpha: CGFloat = inUse ? 0.5 : 1
-        IconTile.image(block.symbol, tint: block.tint, size: 26, appearance: effectiveAppearance)
-            .draw(in: NSRect(x: 9, y: (bounds.height - 26) / 2, width: 26, height: 26), from: .zero, operation: .sourceOver,
-                  fraction: alpha, respectFlipped: true, hints: nil)
-        let trailing: CGFloat = 70
-        let room = bounds.width - 46 - trailing
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingTail
-        (block.title as NSString).draw(with: NSRect(x: 44, y: 5, width: room, height: 17), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                       attributes: [.font: Theme.sans(13, .medium), .foregroundColor: A2.primary.withAlphaComponent(alpha), .paragraphStyle: paragraph])
-        (block.detail as NSString).draw(with: NSRect(x: 44, y: 22, width: room, height: 15), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                        attributes: [.font: A2.subFont, .foregroundColor: A2.secondary.withAlphaComponent(alpha), .paragraphStyle: paragraph])
         if inUse {
-            let text = NSAttributedString(string: "Shown", attributes: [.font: A2.subFont, .foregroundColor: A2.secondary])
-            let size = text.size()
-            IconTile.glyph("checkmark", tint: Theme.inkSecondary, size: 12, appearance: effectiveAppearance)
-                .draw(in: NSRect(x: bounds.width - 14 - size.width - 16, y: (bounds.height - 12) / 2, width: 12, height: 12),
-                      from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-            text.draw(at: NSPoint(x: bounds.width - 12 - size.width, y: (bounds.height - size.height) / 2))
+            // Chosen, not disabled: a wash and an edge in the block's own colour.
+            block.tint.withAlphaComponent(hovering ? 0.16 : 0.11).setFill()
+            shape.fill()
+            block.tint.withAlphaComponent(0.45).setStroke()
+            shape.lineWidth = 1
+            shape.stroke()
+        } else {
+            (pressed ? Theme.track : hovering ? Theme.hover : Theme.fill).setFill()
+            shape.fill()
+        }
+        IconTile.image(block.symbol, tint: block.tint, size: 28, appearance: effectiveAppearance)
+            .draw(in: NSRect(x: 10, y: (bounds.height - 28) / 2, width: 28, height: 28), from: .zero, operation: .sourceOver,
+                  fraction: 1, respectFlipped: true, hints: nil)
+        let trailing: CGFloat = 34
+        let room = bounds.width - 48 - trailing
+        let titleFont = Theme.sans(13, .semibold)
+        let detail = NSMutableParagraphStyle()
+        detail.lineBreakMode = .byWordWrapping
+        let detailText = NSAttributedString(string: block.detail, attributes: [.font: A2.subFont, .foregroundColor: A2.secondary, .paragraphStyle: detail])
+        let lineHeight = ceil(A2.subFont.ascender - A2.subFont.descender + A2.subFont.leading)
+        let detailHeight = min(lineHeight * 2, ceil(detailText.boundingRect(with: NSSize(width: room, height: 100), options: [.usesLineFragmentOrigin]).height))
+        let titleHeight: CGFloat = 17
+        // The title and its lines sit as one block in the middle of the chip.
+        let top = ((bounds.height - titleHeight - 2 - detailHeight) / 2).rounded()
+        (block.title as NSString).draw(with: NSRect(x: 48, y: top, width: room, height: titleHeight), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                       attributes: [.font: titleFont, .foregroundColor: A2.primary])
+        detailText.draw(with: NSRect(x: 48, y: top + titleHeight + 2, width: room, height: detailHeight),
+                        options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        if inUse {
+            let badge = NSRect(x: bounds.width - 30, y: (bounds.height - 18) / 2, width: 18, height: 18)
+            block.tint.setFill()
+            NSBezierPath(ovalIn: badge).fill()
+            IconTile.glyph("checkmark", tint: .white, size: 10, appearance: effectiveAppearance)
+                .draw(in: badge.insetBy(dx: 4, dy: 4), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         } else {
             IconTile.glyph("plus", tint: Theme.accent, size: 14, appearance: effectiveAppearance)
                 .draw(in: NSRect(x: bounds.width - 26, y: (bounds.height - 14) / 2, width: 14, height: 14),
@@ -841,6 +948,13 @@ final class RemoveButton: DrawnView {
     override func accessibilityRole() -> NSAccessibility.Role? { .button }
     override func accessibilityLabel() -> String? { label }
     override func accessibilityPerformPress() -> Bool { onPress?(); return true }
+    override var acceptsFirstResponder: Bool { KeyPress.reachable }
+    override var canBecomeKeyView: Bool { acceptsFirstResponder }
+    override func keyDown(with event: NSEvent) {
+        if KeyPress.presses(event) { onPress?() } else { super.keyDown(with: event) }
+    }
+    override var focusRingMaskBounds: NSRect { bounds }
+    override func drawFocusRingMask() { NSBezierPath(ovalIn: bounds).fill() }
 }
 
 /// A menu item that runs a closure.
@@ -859,4 +973,21 @@ final class MenuAction: NSObject {
     }
 
     @objc private func run() { body() }
+}
+
+/// The room under the preview where a dragged block can go, said in a dashed outline.
+final class DropHint: DrawnView {
+    override func draw(_ dirtyRect: NSRect) {
+        guard bounds.height > 24 else { return }
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
+        shape.setLineDash([4, 3], count: 2, phase: 0)
+        shape.lineWidth = 1
+        A2.chevron.setStroke()
+        shape.stroke()
+        let text = NSAttributedString(string: "Drop a block here", attributes: [.font: A2.subFont, .foregroundColor: A2.tertiary])
+        let size = text.size()
+        text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

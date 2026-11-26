@@ -576,7 +576,13 @@ class DiskPage: MachinePage {
     }
 
     override func updateHero(_ s: SystemSnapshot) {
-        if Date().timeIntervalSince(volumesCheckedAt) > 30 { refreshVolumes() }
+        if Date().timeIntervalSince(volumesCheckedAt) > 30 {
+            volumesCheckedAt = Date()
+            DispatchQueue.global(qos: .utility).async {
+                let volumes = Volumes.list()
+                DispatchQueue.main.async { [weak self] in self?.show(volumes) }
+            }
+        }
         guard let d = s.disk else { return }
         hero.figure.set(Double(d.volumeFree))
         hero.meta.text = A2.plain("Free on the startup disk of \(Format.bytes(d.volumeTotal)) · read \(Format.rate(d.readBytesPerSecond)) · write \(Format.rate(d.writeBytesPerSecond))")
@@ -588,9 +594,7 @@ class DiskPage: MachinePage {
         hero.needsLayout = true
     }
 
-    private func refreshVolumes() {
-        volumesCheckedAt = Date()
-        let volumes = Volumes.list()
+    private func show(_ volumes: [Volume]) {
         while volumeRows.count < volumes.count {
             let row = ListRow()
             volumesCard.addSubview(row)

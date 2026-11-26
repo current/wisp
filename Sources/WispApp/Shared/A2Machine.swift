@@ -66,11 +66,15 @@ extension A2 {
         return text
     }
 
-    /// Draws `text` vertically centred on `mid` with its left edge at `x`; returns the right edge.
-    @discardableResult
-    static func draw(_ text: String, at x: CGFloat, mid: CGFloat, font: NSFont, color: NSColor) -> CGFloat {
+    /// Draws `text` vertically centred on `mid` with its left edge at `x`.
+    static func draw(_ text: String, at x: CGFloat, mid: CGFloat, font: NSFont, color: NSColor) {
         (text as NSString).draw(at: NSPoint(x: x, y: mid - (font.ascender - font.descender) / 2), withAttributes: [.font: font, .foregroundColor: color])
-        return x + ceil((text as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    /// Draws as `draw` does and returns the right edge.
+    static func measuredDraw(_ text: String, at x: CGFloat, mid: CGFloat, font: NSFont, color: NSColor) -> CGFloat {
+        draw(text, at: x, mid: mid, font: font, color: color)
+        return x + width(text, font)
     }
 
     static func width(_ text: String, _ font: NSFont) -> CGFloat {
@@ -163,7 +167,7 @@ final class A2Header: DrawnView {
             let gap: CGFloat = item.value.isEmpty || item.text.isEmpty ? 0 : 3
             right -= valueWidth + gap + textWidth
             var at = right
-            at = A2.draw(item.text, at: at, mid: mid, font: legend, color: item.faint ? A2.tertiary : A2.secondary)
+            at = A2.measuredDraw(item.text, at: at, mid: mid, font: legend, color: item.faint ? A2.tertiary : A2.secondary)
             if !item.value.isEmpty { A2.draw(item.value, at: at + gap, mid: mid, font: bold, color: A2.primary) }
             if let dot = item.dot {
                 right -= 13
@@ -345,7 +349,7 @@ final class A2ShareKeys: DrawnView {
             let mid = y + 7
             key.color.setFill()
             NSBezierPath(roundedRect: NSRect(x: x, y: mid - 3.5, width: 7, height: 7), xRadius: 2, yRadius: 2).fill()
-            let after = A2.draw(key.label, at: x + 13, mid: mid, font: Self.labelFont, color: A2.secondary)
+            let after = A2.measuredDraw(key.label, at: x + 13, mid: mid, font: Self.labelFont, color: A2.secondary)
             A2.draw(key.share, at: after + 4, mid: mid, font: Self.labelFont, color: A2.tertiary)
             A2.draw(key.value, at: x + 13, mid: y + 22, font: Self.valueFont, color: A2.primary)
         }
@@ -401,6 +405,8 @@ final class A2Row: DrawnView {
     /// A hairline under the row instead, for a row of column titles.
     var ruleBelow = false { didSet { if ruleBelow != oldValue { needsDisplay = true } } }
     var onClick: (() -> Void)?
+    /// Words for VoiceOver only, for what the row shows by colour or a mark ("Low", "In use").
+    var spokenNote = ""
     private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
     static let spacing: CGFloat = 11
 
@@ -512,7 +518,7 @@ final class A2Row: DrawnView {
             var x = rect.minX
             for (number, text) in values.enumerated() {
                 guard x + 40 <= rect.maxX + 1 else { break }
-                if values.count > 1 { x = A2.draw("\(number + 1)", at: x, mid: mid + 1, font: index, color: A2.tertiary) + 4 }
+                if values.count > 1 { x = A2.measuredDraw("\(number + 1)", at: x, mid: mid + 1, font: index, color: A2.tertiary) + 4 }
                 A2.draw(text, at: x, mid: mid, font: value, color: A2.primary)
                 x = rect.minX + CGFloat(number + 1) * 52
             }
@@ -543,7 +549,7 @@ final class A2Row: DrawnView {
             case .chips(let values): return values.joined(separator: ", ")
             default: return nil
             }
-        }).filter { !$0.isEmpty }.joined(separator: ", ")
+        } + [spokenNote]).filter { !$0.isEmpty }.joined(separator: ", ")
     }
 }
 
@@ -726,4 +732,11 @@ final class A2ToolbarButton: DrawnView {
     }
 
     override func accessibilityPerformPress() -> Bool { onPress?(); return true }
+    override var acceptsFirstResponder: Bool { KeyPress.reachable }
+    override var canBecomeKeyView: Bool { acceptsFirstResponder }
+    override func keyDown(with event: NSEvent) {
+        if KeyPress.presses(event) { onPress?() } else { super.keyDown(with: event) }
+    }
+    override var focusRingMaskBounds: NSRect { bounds }
+    override func drawFocusRingMask() { KeyPress.capsule(bounds) }
 }

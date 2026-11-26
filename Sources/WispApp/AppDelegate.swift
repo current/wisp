@@ -29,8 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private(set) var system = SystemSnapshot()
     private(set) var table = ProcessTable()
-    private var systemObservers: [(SystemSnapshot) -> Void] = []
-    private var tableObservers: [(ProcessTable) -> Void] = []
+    private var systemObservers: [(id: Int, body: (SystemSnapshot) -> Void)] = []
+    private var tableObservers: [(id: Int, body: (ProcessTable) -> Void)] = []
+    private var lastObserverID = 0
 
     override init() {
         let archive = AppSettings.load().keepHistory ? HourlyArchive() : nil
@@ -82,9 +83,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Finished hours go to disk as they close; this catches the hour in progress
         // every 15 minutes so a crash loses little.
         flushTimer = Timer.scheduledTimer(withTimeInterval: 900, repeats: true) { [weak self] _ in
-            self?.monitor.history.flushToArchive()
-            self?.monitor.dataUsage.save()
-            MainActor.assumeIsolated { self?.cleanUp.checkSchedule() }
+            MainActor.assumeIsolated {
+                self?.monitor.save()
+                self?.cleanUp.checkSchedule()
+            }
         }
         flushTimer?.tolerance = 120
 
@@ -126,16 +128,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func received(_ snapshot: SystemSnapshot) {
         system = snapshot
         statusBar.update(snapshot, history: monitor.history)
-        for observer in systemObservers { observer(snapshot) }
+        for observer in systemObservers { observer.body(snapshot) }
     }
 
     private func received(_ table: ProcessTable) {
         self.table = table
-        for observer in tableObservers { observer(table) }
+        for observer in tableObservers { observer.body(table) }
     }
 
-    func observeSystem(_ body: @escaping (SystemSnapshot) -> Void) { systemObservers.append(body) }
-    func observeTable(_ body: @escaping (ProcessTable) -> Void) { tableObservers.append(body) }
+    /// Returns a token for `removeObserver`, for observers that do not live as long as the app.
+    @discardableResult
+    func observeSystem(_ body: @escaping (SystemSnapshot) -> Void) -> Int {
+        lastObserverID += 1
+        systemObservers.append((lastObserverID, body))
+        return lastObserverID
+    }
+
+    @discardableResult
+    func observeTable(_ body: @escaping (ProcessTable) -> Void) -> Int {
+        lastObserverID += 1
+        tableObservers.append((lastObserverID, body))
+        return lastObserverID
+    }
+
+    func removeObserver(_ id: Int) {
+        systemObservers.removeAll { $0.id == id }
+        tableObservers.removeAll { $0.id == id }
+    }
 
     // MARK: What is on screen
 
@@ -147,8 +166,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var windowDemand: Demand = [] { didSet { if windowVisible { replan() } } }
 
     func replan() {
-        plans.remoteHosts = settings.planUsage ? T3RemoteLimits.hosts(settings.remoteLimitHosts) : []
-        plans.running = settings.menuItems.contains { $0.metric == .usage && $0.enabled }
+        plans.hiddenAntigravity = settings.hiddenAntigravityLimits
+        plans.order = settings.usageAccountOrder
+        plans.allowed = settings.planUsage
+        plans.running = settings.planUsage && !displayAsleep && settings.menuItems.contains { $0.metric == .usage && $0.enabled }
         var demand: Demand = []
         for item in settings.menuItems where item.enabled { demand.insert(item.metric.demand) }
 
@@ -180,6 +201,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func displaysSlept() {
         displayAsleep = true
         monitor.setPaused(true)
+        // Its checks start codex and ssh processes; nobody sees the figures until the displays wake.
+        plans.running = false
     }
 
     @objc private func displaysWoke() {

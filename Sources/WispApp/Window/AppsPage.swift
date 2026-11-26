@@ -37,6 +37,11 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
             default: return 74
             }
         }
+
+        /// The sorted column: its figure and, before it, a meter as wide as the CPU page's.
+        /// While the drawer leaves the table narrow the names need the room, so it keeps
+        /// only its bold figure.
+        static func wideWidth(narrow: Bool) -> CGFloat { narrow ? 74 : 74 + 110 }
     }
 
     private unowned let delegate: AppDelegate
@@ -61,6 +66,10 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
     private var sortColumn: Column = .cpu
     private var ascending = false
     private var table = ProcessTable()
+    private let totals = AppsTotalsStrip()
+    private let state = AppsTableState()
+    /// The largest app figure in each column, the full length of its bars.
+    private var columnMax: [Column: Double] = [:]
     private var pendingSelection: String?
     /// Set while a reload puts the selection back, so the drawer does not take it for a second click.
     private var restoringSelection = false
@@ -94,8 +103,10 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         outline.intercellSpacing = NSSize(width: 12, height: 0)
         outline.allowsColumnReordering = true
         outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
-        outline.autosaveName = "WispApps"
-        outline.autosaveTableColumns = true
+        if !Wisp.readOnly {
+            outline.autosaveName = "WispApps"
+            outline.autosaveTableColumns = true
+        }
         outline.autosaveExpandedItems = false
         outline.rowHeight = 30
         outline.style = .plain
@@ -124,6 +135,8 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         search.delegate = self
         search.translatesAutoresizingMaskIntoConstraints = true
         search.sendsSearchStringImmediately = true
+        // WISP_FILTER=<text> fills the filter, for screenshots.
+        if let filter = ProcessInfo.processInfo.environment["WISP_FILTER"] { search.stringValue = filter }
 
         titleLabel.attributedStringValue = Toolbar.title("Apps")
         // The toolbar places these by frame.
@@ -134,11 +147,37 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         (search.cell as? NSSearchFieldCell)?.drawsBackground = false
         search.font = Theme.sans(13)
         let root = GroundView()
+        totals.translatesAutoresizingMaskIntoConstraints = false
+        totals.onSort = { [weak self] metric in
+            guard let self else { return }
+            self.outline.sortDescriptors = [NSSortDescriptor(key: metric.rawValue, ascending: false)]
+        }
+        totals.setSorted(.cpu)
+        state.translatesAutoresizingMaskIntoConstraints = false
+        state.outline = outline
+        state.rowHeight = outline.rowHeight
+        state.headerHeight = header.frame.height
+        state.mode = .loading
+        state.clear.onPress = { [weak self] in
+            guard let self else { return }
+            self.search.stringValue = ""
+            self.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        }
+        card.addSubview(state)
+        root.addSubview(totals)
         root.addSubview(card)
         NSLayoutConstraint.activate([
+            totals.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: CardPage.margin),
+            totals.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -CardPage.margin),
+            totals.topAnchor.constraint(equalTo: root.topAnchor, constant: Toolbar.height),
+            totals.heightAnchor.constraint(equalToConstant: AppsTotalTile.height),
+            state.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
+            state.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
+            state.topAnchor.constraint(equalTo: scroll.topAnchor),
+            state.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
             card.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: CardPage.margin),
             card.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -CardPage.margin),
-            card.topAnchor.constraint(equalTo: root.topAnchor, constant: Toolbar.height),
+            card.topAnchor.constraint(equalTo: totals.bottomAnchor, constant: 12),
             card.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -CardPage.margin),
             scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 6),
             scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -6),
@@ -170,6 +209,7 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
 
         var live = Set<String>()
         var result: [Node] = []
+        var shownChildren: [String: [String]] = [:]
         for app in table.apps {
             var processes = app.pids.compactMap { byPID[$0] }
             if !filter.isEmpty, !app.name.lowercased().contains(filter) {
@@ -179,29 +219,56 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
             let appNode = node("app:" + app.id)
             appNode.app = app
             live.insert(appNode.key)
+            shownChildren[appNode.key] = appNode.children.map(\.key)
             appNode.children = processes.map { row in
                 let child = node("pid:\(row.pid)")
                 child.process = row
                 live.insert(child.key)
                 return child
             }
-            appNode.children.sort(by: processOrder)
             result.append(appNode)
         }
         // Re-rank at most every few seconds. Between re-ranks rows keep their places and
         // only their figures change, which is easier to read and far cheaper to draw.
+        // An app's processes keep theirs the same way while they are the same ones.
         let now = Date()
         let sameApps = Set(result.map(\.key)) == Set(roots.map(\.key))
         if sameApps, !forceSort, now.timeIntervalSince(lastSort) < 6 {
             let position = Dictionary(uniqueKeysWithValues: roots.enumerated().map { ($1.key, $0) })
             result.sort { (position[$0.key] ?? 0) < (position[$1.key] ?? 0) }
+            for appNode in result {
+                let shown = shownChildren[appNode.key] ?? []
+                guard shown.count == appNode.children.count, Set(shown) == Set(appNode.children.map(\.key)) else {
+                    appNode.children.sort(by: processOrder)
+                    continue
+                }
+                let place = Dictionary(uniqueKeysWithValues: shown.enumerated().map { ($1, $0) })
+                appNode.children.sort { (place[$0.key] ?? 0) < (place[$1.key] ?? 0) }
+            }
         } else {
+            for appNode in result { appNode.children.sort(by: processOrder) }
             result.sort(by: appOrder)
             lastSort = now
             forceSort = false
         }
         roots = result
         if nodes.count > live.count + 256 { nodes = nodes.filter { live.contains($0.key) } }
+        let shownApps = result.compactMap(\.app)
+        var maxima: [Column: Double] = [:]
+        for column in Column.allCases where column != .name {
+            maxima[column] = shownApps.reduce(0) { max($0, value(column, app: $1)) }
+        }
+        columnMax = maxima
+        totals.update(apps: shownApps, table: table, machine: delegate.settings.cpuOfMachine,
+                      memoryTotal: Double(delegate.system.memory?.total ?? ProcessInfo.processInfo.physicalMemory),
+                      filtered: !filter.isEmpty)
+        if table.apps.isEmpty {
+            state.mode = .loading
+        } else if result.isEmpty {
+            state.mode = .noMatch(search.stringValue.trimmingCharacters(in: .whitespaces))
+        } else {
+            state.mode = .hidden
+        }
 
         // Same rows in the same order: refresh only what is on screen. Anything else
         // (a new app, a change in ranking) needs a full reload.
@@ -227,7 +294,8 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         }
 
         // Counts move rarely; a label that changes every tick re-lays out the whole window.
-        summary.variants = ["\(roots.count) apps, \(table.processes.count / 10 * 10)+ processes", "\(roots.count) apps"].map(Toolbar.subtitle)
+        summary.variants = (table.processes.isEmpty ? ["Reading processes"]
+            : ["\(roots.count) apps, \(table.processes.count / 10 * 10)+ processes", "\(roots.count) apps"]).map(Toolbar.subtitle)
     }
 
     private var lastOrder: [String] = []
@@ -243,9 +311,18 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
             for (index, column) in columns.enumerated() where column != .name {
                 guard let cell = outline.view(atColumn: index, row: row, makeIfNecessary: false) as? FigureCell else { continue }
                 let (text, faint) = figure(node, column)
-                cell.set(text, faint: faint)
+                cell.set(text, faint: faint, bar: bar(node, column), sorted: column == sortColumn)
             }
         }
+    }
+
+    /// The share of the column's largest app figure, for the sorted column's meter.
+    private func bar(_ node: Node, _ column: Column) -> Double {
+        guard let top = columnMax[column], top > 0 else { return 0 }
+        if column == .network, !table.networkMeasured { return 0 }
+        if let app = node.app { return value(column, app: app) / top }
+        if let row = node.process, row.readable || column == .energy { return value(column, process: row) / top }
+        return 0
     }
     private var lastSort = Date.distantPast
     private var forceSort = false
@@ -331,7 +408,10 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         sortColumn = column
         ascending = first.ascending
         (outline.headerView as? AppHeaderView)?.sorted = (column.rawValue, ascending)
+        totals.setSorted(AppsMetric(rawValue: column.rawValue))
+        sizeForSort()
         forceSort = true
+        lastOrder = []
         rebuild()
     }
 
@@ -352,8 +432,9 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         }
 
         let cell = (outlineView.makeView(withIdentifier: id, owner: nil) as? FigureCell) ?? FigureCell(identifier: id)
+        if cell.meterColors == nil { cell.meterColors = AppsMetric(rawValue: column.rawValue)?.meterColors }
         let (text, faint) = figure(node, column)
-        cell.set(text, faint: faint)
+        cell.set(text, faint: faint, bar: bar(node, column), sorted: column == sortColumn)
         return cell
     }
 
@@ -420,6 +501,12 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
             }
         }
         (outline.headerView as? AppHeaderView)?.sorted = (sortColumn.rawValue, ascending)
+        let narrow = !roomForMeter
+        if narrow != sizedNarrow {
+            sizedNarrow = narrow
+            // Not inside this layout pass: a column resized mid-layout leaves the outline's cells where they were.
+            DispatchQueue.main.async { [weak self] in self?.sizeForSort() }
+        }
         // The name column takes whatever the figures leave, so nothing runs off the card.
         guard let nameColumn = outline.tableColumns.first(where: { $0.identifier.rawValue == Column.name.rawValue }),
               let clip = outline.enclosingScrollView?.contentView else { return }
@@ -428,6 +515,37 @@ final class AppsPage: NSViewController, Page, NSOutlineViewDataSource, NSOutline
         let spacing = outline.intercellSpacing.width * CGFloat(visible.count)
         let fit = max(nameColumn.minWidth, floor(clip.bounds.width - others - spacing - 2))
         if abs(nameColumn.width - fit) > 0.5 { nameColumn.width = fit }
+        totals.pageWidth = width
+        state.needsDisplay = true
+    }
+
+    /// Whether the columns were last sized for a narrow table; nil before the first layout.
+    private var sizedNarrow: Bool?
+    /// The room app names keep before the sorted column takes a meter.
+    private static let nameRoom: CGFloat = 240
+
+    /// True when the name column keeps `nameRoom` with the sorted column's meter added.
+    private var roomForMeter: Bool {
+        guard let clip = outline.enclosingScrollView?.contentView else { return true }
+        let visible = outline.tableColumns.filter { !$0.isHidden }
+        let figures = visible.compactMap { Column(rawValue: $0.identifier.rawValue) }.filter { $0 != .name }
+        let spacing = outline.intercellSpacing.width * CGFloat(visible.count)
+        let room = clip.bounds.width - figures.reduce(0) { $0 + $1.width } - spacing - Column.wideWidth(narrow: false) + Column.wideWidth(narrow: true)
+        return room >= Self.nameRoom
+    }
+
+    /// The sorted column widens to hold its meter and the others go back to plain figures.
+    /// A width the user dragged is kept while the column stays on the same side of that line.
+    private func sizeForSort() {
+        var changed = false
+        let target = Column.wideWidth(narrow: !roomForMeter)
+        for column in outline.tableColumns {
+            guard let kind = Column(rawValue: column.identifier.rawValue), kind != .name else { continue }
+            if kind == sortColumn, abs(column.width - target) > 1 { column.width = target; changed = true }
+            if kind != sortColumn, column.width >= kind.width + 30 { column.width = kind.width; changed = true }
+        }
+        // Also called while loadView sets the first sort; asking for `view` then would load it a second time.
+        if changed { viewIfLoaded?.needsLayout = true }
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
@@ -614,8 +732,9 @@ final class AppHeaderView: NSTableHeaderView {
             let title = column.title + (active ? (sorted.1 ? " ↑" : " ↓") : "")
             let paragraph = NSMutableParagraphStyle()
             paragraph.alignment = index == 0 ? .left : .right
+            let activeColor = AppsMetric(rawValue: column.identifier.rawValue)?.labelTint ?? A2.primary
             let text = NSAttributedString(string: title, attributes: [
-                .font: Theme.digits(10.5, active ? .semibold : .regular), .foregroundColor: active ? A2.primary : A2.tertiary,
+                .font: Theme.digits(10.5, active ? .semibold : .regular), .foregroundColor: active ? activeColor : A2.tertiary,
                 .paragraphStyle: paragraph,
             ])
             let height = text.size().height
@@ -646,8 +765,16 @@ final class GroundView: NSView {
 /// cell for redraw; a text field would invalidate its size and re-lay out the window.
 final class FigureCell: NSTableCellView {
     private static let font = Theme.digits(12.5)
+    private static let boldFont = Theme.digits(12.5, .semibold)
     private var text = ""
     private var faint = false
+    /// The meter in the sorted column: the row's share of the column's largest.
+    private var bar = 0.0
+    private var sorted = false
+    /// The meter's two ends in the column's colour; nil for columns without one.
+    var meterColors: (NSColor, NSColor)? { didSet { needsDisplay = true } }
+    /// Room the figure keeps at the right of the sorted column, the width of a plain column less its padding.
+    static let figureRoom: CGFloat = 68
     var alignment: NSTextAlignment = .right { didSet { needsDisplay = true } }
     var color: NSColor? { didSet { needsDisplay = true } }
 
@@ -660,10 +787,14 @@ final class FigureCell: NSTableCellView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func set(_ newText: String, faint newFaint: Bool) {
-        guard newText != text || newFaint != faint else { return }
+    func set(_ newText: String, faint newFaint: Bool, bar newBar: Double = 0, sorted newSorted: Bool = false) {
+        // Bars move in steps of half a point at most, so a figure that barely moves does not redraw.
+        let quantised = (min(1, max(0, newBar)) * 140).rounded() / 140
+        guard newText != text || newFaint != faint || quantised != bar || newSorted != sorted else { return }
         text = newText
         faint = newFaint
+        bar = quantised
+        sorted = newSorted
         setAccessibilityValue(newText)
         needsDisplay = true
     }
@@ -678,9 +809,19 @@ final class FigureCell: NSTableCellView {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = alignment
         paragraph.lineBreakMode = .byTruncatingTail
-        let attributes: [NSAttributedString.Key: Any] = [.font: Self.font, .foregroundColor: textColor, .paragraphStyle: paragraph]
-        let height = ceil(Self.font.ascender - Self.font.descender + Self.font.leading)
-        (text as NSString).draw(in: NSRect(x: 2, y: (bounds.height - height) / 2, width: max(0, bounds.width - 6), height: height),
-                                withAttributes: attributes)
+        let font = sorted && !faint ? Self.boldFont : Self.font
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: textColor, .paragraphStyle: paragraph]
+        let height = ceil(font.ascender - font.descender + font.leading)
+        let textRect = NSRect(x: 2, y: (bounds.height - height) / 2, width: max(0, bounds.width - 6), height: height)
+        (text as NSString).draw(in: textRect, withAttributes: attributes)
+        // The sorted column is wider and carries the meter before its figure, as on the CPU
+        // page: one bar per row, for the measure the rows are ranked by.
+        if sorted, let meterColors {
+            let width = bounds.width - 6 - Self.figureRoom - 12
+            if width > 24 {
+                let meter = NSRect(x: 6, y: (bounds.height / 2 - 2.5).rounded(), width: width, height: 5)
+                A2Dev.drawMeter(meter, fraction: faint ? 0 : bar, colors: meterColors)
+            }
+        }
     }
 }

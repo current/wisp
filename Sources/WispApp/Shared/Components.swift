@@ -1,4 +1,6 @@
 import AppKit
+import CoreVideo
+import IOSurface
 import QuartzCore
 
 // The pieces the card style is built from. Each one draws itself and is laid out
@@ -8,6 +10,24 @@ import QuartzCore
 /// A view drawn top-down.
 class DrawnView: NSView {
     override var isFlipped: Bool { true }
+}
+
+/// A drawn button's part in the keyboard loop. Like NSButton, it takes focus only while
+/// Keyboard Navigation is on in System Settings, so clicks never leave a focus ring for
+/// anyone else, and Space presses it.
+@MainActor
+enum KeyPress {
+    static var reachable: Bool { NSApp.isFullKeyboardAccessEnabled }
+
+    /// True when the key is the one that presses a focused button.
+    static func presses(_ event: NSEvent) -> Bool {
+        event.charactersIgnoringModifiers == " " && event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+    }
+
+    /// The capsule the drawn buttons share, for their focus ring.
+    static func capsule(_ bounds: NSRect) {
+        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+    }
 }
 
 /// A drawn view that renders into its own bitmap and hands it to its layer.
@@ -57,24 +77,106 @@ class BitmapView: DrawnView {
         return zoom > 0 ? backing * zoom : backing
     }
 
+    /// For a view whose drawing is the same on every row between a top and a bottom part
+    /// (a panel, its shadow, a section of cards): how tall those parts are, in points.
+    /// The bitmap then holds only them and a few rows between, and the layer stretches
+    /// those rows, so a tall panel keeps a bitmap of a short one.
+    var stretchCaps: (top: CGFloat, bottom: CGFloat)? { nil }
+    private static let unstretched = CGRect(x: 0, y: 0, width: 1, height: 1)
+
     override func updateLayer() {
         guard let layer, bounds.width >= 1, bounds.height >= 1 else { return }
         if drawsVisibleOnly { return drawVisible(into: layer) }
         let scale = pixelScale
+        if let caps = stretchCaps, let (contents, center) = stretched(caps, scale: scale) {
+            layer.contentsScale = scale
+            layer.contentsGravity = .resize
+            layer.contentsCenter = center
+            layer.contents = contents
+            return
+        }
+        if layer.contentsCenter != Self.unstretched { layer.contentsCenter = Self.unstretched }
         let width = Int((bounds.width * scale).rounded(.up)), height = Int((bounds.height * scale).rounded(.up))
-        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
-        // Flip to match the view, then draw with AppKit as usual.
-        context.translateBy(x: 0, y: CGFloat(height))
-        context.scaleBy(x: scale, y: -scale)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
-        effectiveAppearance.performAsCurrentDrawingAppearance { draw(bounds) }
-        NSGraphicsContext.restoreGraphicsState()
+        guard let contents = bitmap(width: width, height: height, body: { context in
+            // Flip to match the view, then draw with AppKit as usual.
+            context.translateBy(x: 0, y: CGFloat(height))
+            context.scaleBy(x: scale, y: -scale)
+            drawWithAppKit(in: context, bounds)
+        }) else { return }
         layer.contentsScale = scale
         layer.contentsGravity = .resize
-        layer.contents = context.makeImage()
+        layer.contents = contents
+    }
+
+    private func drawWithAppKit(in context: CGContext, _ rect: NSRect) {
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        effectiveAppearance.performAsCurrentDrawingAppearance { draw(rect) }
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    private static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
+
+    /// A bitmap for a layer's contents, drawn by `body`. Past a small size, an IOSurface,
+    /// which the window server reads where it is: a CGImage is held twice, once here and
+    /// once in the copy Core Animation makes to send it over. The surface is drawn in the
+    /// display's colours and tagged with them, so the server composites it as it did the
+    /// sRGB image it converted itself; a surface tagged sRGB comes out a shade off where it
+    /// is translucent. Small bitmaps stay sRGB images, where a surface's own overhead would
+    /// outweigh the copy. A move to a display with other colours redraws through
+    /// viewDidChangeBackingProperties.
+    private func bitmap(width: Int, height: Int, body: (CGContext) -> Void) -> Any? {
+        guard width > 0, height > 0 else { return nil }
+        let format = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        let properties: [IOSurfacePropertyKey: Any] = [.width: width, .height: height, .bytesPerElement: 4,
+                                                       .pixelFormat: kCVPixelFormatType_32BGRA]
+        let space = window?.colorSpace?.cgColorSpace ?? Self.sRGB
+        if width * height * 4 >= 64 << 10, let tag = space.copyPropertyList(), let surface = IOSurface(properties: properties) {
+            IOSurfaceSetValue(surface, kIOSurfaceColorSpace, tag)
+            surface.lock(options: [], seed: nil)
+            defer { surface.unlock(options: [], seed: nil) }
+            guard let context = CGContext(data: surface.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                          bytesPerRow: surface.bytesPerRow, space: space, bitmapInfo: format) else { return nil }
+            // A new surface's memory is not cleared, and drawing composites over what is there.
+            context.clear(CGRect(x: 0, y: 0, width: width, height: height))
+            body(context)
+            return surface
+        }
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: Self.sRGB, bitmapInfo: format) else { return nil }
+        body(context)
+        return context.makeImage()
+    }
+
+    /// The view's top and bottom parts, each as tall as the larger of the two so the
+    /// stretched rows sit in the middle whichever way the layer is flipped, with a few
+    /// rows of the band between them. Nil when that would not be smaller than the whole.
+    private func stretched(_ caps: (top: CGFloat, bottom: CGFloat), scale: CGFloat) -> (Any, CGRect)? {
+        let cap = Int((max(caps.top, caps.bottom) * scale).rounded(.up))
+        // Several rows, all alike, so filtering at the band's edges blends only equal pixels.
+        let band = 4
+        let height = cap * 2 + band
+        guard cap > 0, CGFloat(height + band) < bounds.height * scale else { return nil }
+        let width = Int((bounds.width * scale).rounded(.up))
+        let split = CGFloat(cap + band) / scale
+        let tall = CGFloat(height) / scale
+        // The whole bitmap would be this many rows, its last one partly empty; the bottom
+        // part ends the same way, so it lands where it always has.
+        let rows = (bounds.height * scale).rounded(.up)
+        guard let contents = bitmap(width: width, height: height, body: { context in
+            context.translateBy(x: 0, y: CGFloat(height))
+            context.scaleBy(x: scale, y: -scale)
+            // The top part and the band where they are; the bottom part moved up to the bitmap's end.
+            for (clip, shift) in [(NSRect(x: 0, y: 0, width: bounds.width, height: split), CGFloat(0)),
+                                  (NSRect(x: 0, y: split, width: bounds.width, height: tall - split), (CGFloat(height) - rows) / scale)] {
+                context.saveGState()
+                context.clip(to: clip)
+                context.translateBy(x: 0, y: shift)
+                drawWithAppKit(in: context, bounds)
+                context.restoreGState()
+            }
+        }) else { return nil }
+        return (contents, CGRect(x: 0, y: CGFloat(cap) / CGFloat(height), width: 1, height: CGFloat(band) / CGFloat(height)))
     }
 
     private func drawVisible(into layer: CALayer) {
@@ -87,24 +189,19 @@ class BitmapView: DrawnView {
         let target = visible.insetBy(dx: 0, dy: -200).intersection(bounds).integral
         let scale = window?.backingScaleFactor ?? 2
         let width = Int(target.width * scale), height = Int(target.height * scale)
-        guard width > 0, height > 0,
-              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
-        context.translateBy(x: 0, y: CGFloat(height))
-        context.scaleBy(x: scale, y: -scale)
-        context.translateBy(x: -target.minX, y: -target.minY)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
-        effectiveAppearance.performAsCurrentDrawingAppearance { draw(target) }
-        NSGraphicsContext.restoreGraphicsState()
+        guard let contents = bitmap(width: width, height: height, body: { context in
+            context.translateBy(x: 0, y: CGFloat(height))
+            context.scaleBy(x: scale, y: -scale)
+            context.translateBy(x: -target.minX, y: -target.minY)
+            drawWithAppKit(in: context, target)
+        }) else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         if region.superlayer !== layer { layer.addSublayer(region) }
         layer.contents = nil
         region.frame = target
         region.contentsScale = scale
-        region.contents = context.makeImage()
+        region.contents = contents
         CATransaction.commit()
         drawnRegion = target
     }
@@ -115,8 +212,9 @@ class BitmapView: DrawnView {
     }
 
     override func setFrameSize(_ newSize: NSSize) {
+        let resized = newSize != frame.size
         super.setFrameSize(newSize)
-        needsDisplay = true
+        if resized { needsDisplay = true }
     }
 }
 
@@ -247,8 +345,9 @@ final class TextLine: DrawnView {
     }
 
     override func setFrameSize(_ newSize: NSSize) {
+        let resized = newSize != frame.size
         super.setFrameSize(newSize)
-        pickVariant()
+        if resized { pickVariant() }
     }
 
     convenience init(_ text: NSAttributedString, alignment: NSTextAlignment = .left) {
@@ -284,9 +383,16 @@ final class TextLine: DrawnView {
                   options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 
-    override func isAccessibilityElement() -> Bool { true }
+    /// The words without the symbol attachments a caption leads with, which VoiceOver
+    /// would otherwise read as "object replacement character".
+    var spokenText: String {
+        text.string.replacingOccurrences(of: "\u{FFFC}", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // An empty line is a slot waiting for text; VoiceOver skips it until it has some.
+    override func isAccessibilityElement() -> Bool { !spokenText.isEmpty }
     override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
-    override func accessibilityValue() -> Any? { text.string }
+    override func accessibilityValue() -> Any? { spokenText }
 }
 
 /// A large figure with a quieter unit after it. When a number changes on screen,
@@ -595,7 +701,7 @@ final class BigNumber: DrawnView {
 
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
-    override func accessibilityValue() -> Any? { current.0 + " " + current.1 }
+    override func accessibilityValue() -> Any? { (current.0 + " " + current.1).trimmingCharacters(in: .whitespaces) }
 }
 
 /// A short capsule with uppercase text, for states like NORMAL or BUSY.

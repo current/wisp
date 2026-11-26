@@ -2,15 +2,20 @@ import AppKit
 import WispCore
 
 extension StorageCategory {
+    // Made once, so rows that carry them compare equal from one refresh to the next.
+    private static let mail = Theme.dynamic(0x34C759, 0x30D158)
+    private static let snapshots = Theme.dynamic(0xAF52DE, 0xBF5AF2)
+    private static let purgeable = Theme.dynamic(0xD1D1D6, 0x48484A)
+
     var color: NSColor {
         switch self {
         case .apps: return A2.diskApps
         case .developer: return A2.diskDeveloper
         case .documents: return A2.diskDocuments
-        case .mail: return Theme.dynamic(0x34C759, 0x30D158)
+        case .mail: return Self.mail
         case .system: return A2.diskSystem
-        case .snapshots: return Theme.dynamic(0xAF52DE, 0xBF5AF2)
-        case .purgeable: return Theme.dynamic(0xD1D1D6, 0x48484A)
+        case .snapshots: return Self.snapshots
+        case .purgeable: return Self.purgeable
         case .free: return A2.track
         }
     }
@@ -40,6 +45,8 @@ final class DiskBar: BitmapView {
 
     var slices: [Slice] = [] { didSet { if slices != oldValue { needsDisplay = true } } }
     var selected: StorageCategory? { didSet { if selected != oldValue { needsDisplay = true } } }
+    /// Kinds whose size is a stand-in until the folders are measured, drawn striped.
+    var unsorted: Set<StorageCategory> = [] { didSet { if unsorted != oldValue { needsDisplay = true } } }
     var onPick: ((StorageCategory?) -> Void)?
     var onHover: ((StorageCategory?, NSRect) -> Void)?
     private var hovered: StorageCategory? { didSet { if hovered != oldValue { needsDisplay = true } } }
@@ -71,6 +78,10 @@ final class DiskBar: BitmapView {
         }
         let focus = selected ?? hovered
         for (category, rect) in frames {
+            if unsorted.contains(category) {
+                Ghost.hatch(rect, color: category.color)
+                continue
+            }
             let faded = focus != nil && focus != category && category != .free
             (faded ? category.color.withAlphaComponent(0.38) : category.color).setFill()
             rect.fill()
@@ -123,10 +134,18 @@ final class DiskLegend: BitmapView {
         var value: String
     }
 
-    var items: [Item] = [] { didSet { if items != oldValue { needsDisplay = true } } }
+    var items: [Item] = [] {
+        didSet {
+            guard items != oldValue else { return }
+            widest = nil
+            needsDisplay = true
+        }
+    }
     var selected: StorageCategory? { didSet { if selected != oldValue { needsDisplay = true } } }
     var onPick: ((StorageCategory?) -> Void)?
     private var hovered: Int? { didSet { if hovered != oldValue { needsDisplay = true } } }
+    /// The widest label or value, measured once per set of items.
+    private var widest: CGFloat?
     static let itemHeight: CGFloat = 44
     static let rowGap: CGFloat = 2
     static let inset: CGFloat = 8
@@ -137,10 +156,11 @@ final class DiskLegend: BitmapView {
 
     /// The most columns, up to four, in which every label and value fits on one line.
     private func columns(_ width: CGFloat) -> Int {
-        let widest = items.map { item in
+        let widest = widest ?? items.map { item in
             max((item.category.title as NSString).size(withAttributes: [.font: Self.labelFont]).width,
                 (item.value as NSString).size(withAttributes: [.font: Self.valueFont]).width)
         }.max() ?? 0
+        self.widest = widest
         let needed = ceil(widest) + 14 + Self.inset * 2
         return [4, 3].first { (width - Self.columnGap * CGFloat($0 - 1)) / CGFloat($0) >= needed } ?? 2
     }
@@ -154,6 +174,7 @@ final class DiskLegend: BitmapView {
     }
 
     private func frame(_ index: Int) -> NSRect {
+        let columns = columns
         let width = (bounds.width - Self.columnGap * CGFloat(columns - 1)) / CGFloat(columns)
         return NSRect(x: CGFloat(index % columns) * (width + Self.columnGap), y: CGFloat(index / columns) * (Self.itemHeight + Self.rowGap),
                       width: width, height: Self.itemHeight)
@@ -183,6 +204,11 @@ final class DiskLegend: BitmapView {
             (item.category.title as NSString).draw(with: NSRect(x: x + 14, y: labelY, width: rect.width - Self.inset * 2 - 14, height: ceil(labelLine)),
                                                    options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
                                                    attributes: [.font: Self.labelFont, .foregroundColor: A2.secondary, .paragraphStyle: truncating])
+            // A size still being measured is a grey placeholder, not a figure.
+            if item.value.isEmpty {
+                Ghost.bar(NSRect(x: x + 14, y: labelY + labelLine + 6, width: 40 + CGFloat(index % 3) * 8, height: 11))
+                continue
+            }
             (item.value as NSString).draw(with: NSRect(x: x + 14, y: labelY + labelLine + 3, width: rect.width - Self.inset * 2 - 14, height: 17),
                                           options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
                                           attributes: [.font: Self.valueFont, .foregroundColor: A2.primary, .paragraphStyle: truncating])
@@ -208,7 +234,9 @@ final class DiskLegend: BitmapView {
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .list }
     override func accessibilityLabel() -> String? { "Kinds of storage" }
-    override func accessibilityValue() -> Any? { items.map { "\($0.category.title) \($0.value)" }.joined(separator: ", ") }
+    override func accessibilityValue() -> Any? {
+        items.map { "\($0.category.title) \($0.value.isEmpty ? "measuring" : $0.value)" }.joined(separator: ", ")
+    }
 }
 
 /// "This Mac › Home › Library": earlier parts are links back up.
@@ -286,9 +314,11 @@ final class SpaceChart: BitmapView {
     }
 
     /// Free bytes per hour, NaN where nothing was recorded.
-    var values: [Double] = [] { didSet { needsDisplay = true } }
-    var marks: [Mark] = [] { didSet { needsDisplay = true } }
-    var capacity: Double = 1
+    var values: [Double] = [] {
+        didSet { if !values.elementsEqual(oldValue, by: { $0 == $1 || ($0.isNaN && $1.isNaN) }) { needsDisplay = true } }
+    }
+    var marks: [Mark] = [] { didSet { if marks != oldValue { needsDisplay = true } } }
+    var capacity: Double = 1 { didSet { if capacity != oldValue { needsDisplay = true } } }
     var tint: NSColor = A2.up
     private var hoverIndex: Int? { didSet { if hoverIndex != oldValue { needsDisplay = true } } }
 

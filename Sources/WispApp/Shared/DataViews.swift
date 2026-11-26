@@ -1,4 +1,5 @@
 import AppKit
+import WispCore
 
 /// Rows of small cells coloured by value, newest on the right, with the latest
 /// value as a figure at the end of each row.
@@ -218,6 +219,17 @@ final class Waffle: BitmapView {
     override func mouseExited(with event: NSEvent) {
         highlighted = nil
         onHover(nil)
+    }
+
+    /// What the squares split ("Disk use"), for VoiceOver, which reads each part's share.
+    var title = ""
+
+    override func isAccessibilityElement() -> Bool { !parts.isEmpty }
+    override func accessibilityRole() -> NSAccessibility.Role? { .image }
+    override func accessibilityLabel() -> String? { title.isEmpty ? "Split" : title }
+    override func accessibilityValue() -> Any? {
+        let total = parts.reduce(0) { $0 + max(0, $1.value) }
+        return parts.map { part in total > 0 ? part.name + " " + Format.percent(max(0, part.value) / total) : part.name }.joined(separator: ", ")
     }
 }
 
