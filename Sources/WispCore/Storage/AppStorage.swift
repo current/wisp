@@ -24,7 +24,8 @@ public struct AppStorage: Sendable, Equatable {
         a.parts == b.parts && a.caches.map(\.path) == b.caches.map(\.path) && a.cacheSize == b.cacheSize
     }
 
-    /// Measures every place the app at `bundlePath` uses. A few folder walks; run it off the main thread.
+    /// Measures every place the app at `bundlePath` uses. A few folder walks, each byte
+    /// read once; run it off the main thread.
     public static func measure(bundlePath: String, home: String = NSHomeDirectory(),
                                fullDiskAccess: Bool = StorageAccess.hasFullDiskAccess) -> AppStorage {
         let bundle = Bundle(path: bundlePath)
@@ -37,7 +38,7 @@ public struct AppStorage: Sendable, Equatable {
         let library = home + "/Library"
         let fm = FileManager.default
 
-        func measure(_ paths: [String]) -> (UInt64, [String]) {
+        func measure(_ paths: [String], scanner: FolderScanner = scanner, threads: Int = 1) -> (UInt64, [String]) {
             var total: UInt64 = 0
             var found: [String] = []
             for path in Set(paths) {
@@ -45,7 +46,7 @@ public struct AppStorage: Sendable, Equatable {
                 guard fm.fileExists(atPath: path, isDirectory: &isFolder) else { continue }
                 found.append(path)
                 if isFolder.boolValue {
-                    total += scanner.folder(at: path).size
+                    total += scanner.folder(at: path, threads: threads).size
                 } else {
                     let values = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.totalFileAllocatedSizeKey])
                     total += UInt64(values?.totalFileAllocatedSize ?? 0)
@@ -65,18 +66,24 @@ public struct AppStorage: Sendable, Equatable {
             if !found.isEmpty { parts.append(Part(name: name, detail: detail, paths: found, size: size, locked: false)) }
         }
 
-        let (appSize, _) = measure([bundlePath])
+        // Apps macOS ships (Safari) are links into a cryptex volume; the bundle is
+        // measured where it is, by a scanner of its own, since a scanner stays on one volume.
+        let bundleFolder = Self.resolved(bundlePath)
+        let (appSize, _) = measure([bundleFolder], scanner: FolderScanner(rules: rules), threads: rules.threads)
         parts.append(Part(name: "App", detail: "The app itself", paths: [bundlePath], size: appSize, locked: false))
         var caches: [(String, UInt64)] = []
         if let id {
             let container = library + "/Containers/" + id
             let containerCaches = container + "/Data/Library/Caches"
             if fullDiskAccess {
-                let (total, found) = measure([container])
+                // The container is read without its caches and the caches on their own, so no file is read twice.
+                var outside = rules
+                outside.skip.insert(containerCaches)
+                let (total, found) = measure([container], scanner: FolderScanner(rules: outside), threads: rules.threads)
                 let (cacheInContainer, _) = measure([containerCaches])
                 if !found.isEmpty {
                     parts.append(Part(name: "Container", detail: "Its documents, settings and data in the sandbox", paths: found,
-                                      size: total > cacheInContainer ? total - cacheInContainer : 0, locked: false))
+                                      size: total, locked: false))
                 }
                 if cacheInContainer > 0 { caches.append((containerCaches, cacheInContainer)) }
                 let groups = appGroups(bundlePath).map { library + "/Group Containers/" + $0 }
@@ -104,6 +111,15 @@ public struct AppStorage: Sendable, Equatable {
                          at: min(parts.count, 2))
         }
         return AppStorage(parts: parts, caches: caches.map { (path: $0.0, size: $0.1) }, measuredAt: Date())
+    }
+
+    /// The bundle a link in /Applications stands for, or the path itself. Only a link to
+    /// another app is followed, so a link elsewhere is not measured as the app.
+    static func resolved(_ path: String) -> String {
+        guard let real = realpath(path, nil) else { return path }
+        defer { free(real) }
+        let target = String(cString: real)
+        return target.hasSuffix(".app") ? target : path
     }
 
     /// App groups from the app's code signature, which name its folders in Group Containers.

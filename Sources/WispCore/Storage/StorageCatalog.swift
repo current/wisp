@@ -191,6 +191,37 @@ enum StorageCatalog {
         return table
     }()
 
+    /// `rules` by path component, so a walk looks up one name per level, and only while it
+    /// is on a catalogued path. Absolute paths hang under "/".
+    final class RuleTree {
+        var location: StorageLocation?
+        var children: [String: RuleTree] = [:]
+
+        func node(_ path: String) -> RuleTree? {
+            var node: RuleTree? = path.hasPrefix("/") ? children["/"] : self
+            for part in path.split(separator: "/") { node = node?.children[String(part)] }
+            return node
+        }
+    }
+
+    static let ruleTree: RuleTree = {
+        let tree = RuleTree()
+        for (path, location) in rules {
+            var node = tree
+            for part in (path.hasPrefix("/") ? ["/"] : []) + path.split(separator: "/").map(String.init) {
+                if let next = node.children[part] {
+                    node = next
+                } else {
+                    let next = RuleTree()
+                    node.children[part] = next
+                    node = next
+                }
+            }
+            node.location = location
+        }
+        return tree
+    }()
+
     static func location(row: String) -> StorageLocation? {
         (developer + places + [temporary]).first { $0.row == row }
     }

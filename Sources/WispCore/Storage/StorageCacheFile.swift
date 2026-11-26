@@ -13,12 +13,13 @@ enum StorageCacheFile {
         var seconds: [String: Double]
         var fullDiskAccess: Bool
         var roots: [String]
+        var eventsUUID: String?
     }
 
     static func encode(_ cache: StorageIndex.Cache) -> Data? {
         let order = cache.roots.keys.sorted()
         let header = Header(version: cache.version, eventID: cache.eventID, date: cache.date.timeIntervalSince1970, seconds: cache.seconds,
-                            fullDiskAccess: cache.fullDiskAccess, roots: order)
+                            fullDiskAccess: cache.fullDiskAccess, roots: order, eventsUUID: cache.eventsUUID)
         guard let json = try? JSONEncoder().encode(header) else { return nil }
         var data = Data()
         data.reserveCapacity(4 << 20)
@@ -41,7 +42,8 @@ enum StorageCacheFile {
                 roots[root] = node
             }
             return StorageIndex.Cache(version: header.version, eventID: header.eventID, date: Date(timeIntervalSince1970: header.date),
-                                      roots: roots, seconds: header.seconds, fullDiskAccess: header.fullDiskAccess)
+                                      roots: roots, seconds: header.seconds, fullDiskAccess: header.fullDiskAccess,
+                                      eventsUUID: header.eventsUUID)
         }
     }
 

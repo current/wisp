@@ -44,8 +44,21 @@ public struct StorageVolume: Codable, Sendable, Equatable {
                                    systemVolume: spaceUsed("/"), dataVolume: spaceUsed("/System/Volumes/Data"),
                                    preboot: spaceUsed("/System/Volumes/Preboot"), vm: spaceUsed("/System/Volumes/VM"),
                                    update: spaceUsed("/System/Volumes/Update"))
-        for name in ["xarts", "iSCPreboot", "Hardware"] { volume.otherSystemVolumes += spaceUsed("/System/Volumes/" + name) ?? 0 }
+        // On Apple silicon these live in a small container of their own, outside the disk's capacity.
+        let main = container(of: "/")
+        for name in ["xarts", "iSCPreboot", "Hardware"] where container(of: "/System/Volumes/" + name) == main {
+            volume.otherSystemVolumes += spaceUsed("/System/Volumes/" + name) ?? 0
+        }
         return volume
+    }
+
+    /// "disk3" for a volume mounted from /dev/disk3s1s1: the APFS container it is in.
+    static func container(of mountPoint: String) -> String? {
+        var fs = statfs()
+        guard statfs(mountPoint, &fs) == 0 else { return nil }
+        let device = withUnsafeBytes(of: fs.f_mntfromname) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
+        guard device.hasPrefix("/dev/disk") else { return nil }
+        return "disk" + device.dropFirst("/dev/disk".count).prefix { $0.isNumber }
     }
 
     /// Free bytes on the startup disk from one statfs call, cheap enough for the hourly archive.

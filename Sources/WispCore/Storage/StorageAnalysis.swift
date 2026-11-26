@@ -96,34 +96,73 @@ public enum StorageAnalysis {
         }
     }
 
-    private struct Found {
+    fileprivate struct Found {
         var path: String
         var node: FolderNode
     }
 
-    private final class Tally {
+    fileprivate final class Tally {
         var rowSize: [String: UInt64] = [:]
         var rowEntries: [String: [Found]] = [:]
         var rowLocked: Set<String> = []
         var category: [StorageCategory: UInt64] = [:]
         var locked: [String] = []
-        var staleModules: [ReclaimItem.Entry] = []
+        /// Every node_modules with a known project date; which are stale depends on `now`.
+        var modules: [ReclaimItem.Entry] = []
         var artifactTitles: [String: (String, String)] = [:]
+
+        func add(_ other: Tally) {
+            rowSize.merge(other.rowSize, uniquingKeysWith: +)
+            rowEntries.merge(other.rowEntries, uniquingKeysWith: +)
+            rowLocked.formUnion(other.rowLocked)
+            category.merge(other.category, uniquingKeysWith: +)
+            locked += other.locked
+            modules += other.modules
+            artifactTitles.merge(other.artifactTitles) { first, _ in first }
+        }
     }
 
-    public static func summarize(_ input: Input) -> StorageSummary {
+    /// What each root added up to in the last summary. Trees never change once handed
+    /// over, so a root whose node is the same object is not walked again.
+    public final class Memo: @unchecked Sendable {
+        private let lock = NSLock()
+        private var roots: [String: (node: FolderNode, tally: Tally)] = [:]
+
+        public init() {}
+
+        fileprivate func tally(_ root: String, _ node: FolderNode, make: () -> Tally) -> Tally {
+            if let kept = lock.withLock({ roots[root] }), kept.node === node { return kept.tally }
+            let tally = make()
+            lock.withLock { roots[root] = (node, tally) }
+            return tally
+        }
+
+        fileprivate func keep(only roots: [String: FolderNode]) {
+            lock.withLock { self.roots = self.roots.filter { roots[$0.key] != nil } }
+        }
+
+        public func clear() { lock.withLock { roots.removeAll() } }
+    }
+
+    /// The path of the node being visited, made into a string only when a row needs it.
+    private struct Place {
+        let base: String
+        var names: [String] = []
+        var path: String { names.isEmpty ? base : base + "/" + names.joined(separator: "/") }
+        var parentPath: String { names.count <= 1 ? base : base + "/" + names.dropLast().joined(separator: "/") }
+    }
+
+    public static func summarize(_ input: Input, memo: Memo? = nil) -> StorageSummary {
         let tally = Tally()
         for (root, node) in input.roots {
-            if root == input.home {
-                walkHome(node, input: input, tally: tally)
-            } else if root.hasPrefix("/private/var/folders/") {
-                let rule = StorageCatalog.temporary
-                tally.rowEntries[rule.row, default: []].append(Found(path: root, node: node))
-                visit(node, path: root, relative: nil, inherited: (rule.category, rule.row), parent: nil, input: input, tally: tally)
-            } else if let rule = StorageCatalog.rules[root] {
-                visit(node, path: root, relative: nil, inherited: (rule.category, rule.row), parent: nil, input: input, tally: tally)
+            let make = { () -> Tally in
+                let tally = Tally()
+                walk(root, node, input: input, tally: tally)
+                return tally
             }
+            tally.add(memo?.tally(root, node, make: make) ?? make())
         }
+        memo?.keep(only: input.roots)
 
         let volume = input.volume
         var segments: [StorageSummary.Segment] = []
@@ -196,10 +235,23 @@ public enum StorageAnalysis {
         StorageRow(id: id, name: name, detail: detail, category: .system, size: size, lastUsed: nil, paths: [], count: 0, locked: false)
     }
 
+    private static func walk(_ root: String, _ node: FolderNode, input: Input, tally: Tally) {
+        var place = Place(base: root)
+        if root == input.home {
+            walkHome(node, input: input, tally: tally)
+        } else if root.hasPrefix("/private/var/folders/") {
+            let rule = StorageCatalog.temporary
+            tally.rowEntries[rule.row, default: []].append(Found(path: root, node: node))
+            visit(node, rule: nil, place: &place, inHome: false, inherited: (rule.category, rule.row), parent: nil, input: input, tally: tally)
+        } else if let rules = StorageCatalog.ruleTree.node(root), let rule = rules.location {
+            visit(node, rule: rules, place: &place, inHome: false, inherited: (rule.category, rule.row), parent: nil, input: input, tally: tally)
+        }
+    }
+
     private static func walkHome(_ home: FolderNode, input: Input, tally: Tally) {
         add(home.ownFiles + home.otherSize, row: "homefiles", category: .documents, tally: tally)
+        var place = Place(base: input.home)
         for child in home.children where !child.isFile {
-            let path = input.home + "/" + child.name
             let inherited: (StorageCategory, String)
             if child.name.hasPrefix(".") {
                 inherited = (.system, "hidden")
@@ -208,7 +260,9 @@ public enum StorageAnalysis {
             } else {
                 inherited = (.documents, "otherfiles")
             }
-            visit(child, path: path, relative: child.name, inherited: inherited, parent: home, input: input, tally: tally)
+            place.names = [child.name]
+            visit(child, rule: StorageCatalog.ruleTree.children[child.name], place: &place, inHome: true, inherited: inherited, parent: home,
+                  input: input, tally: tally)
         }
     }
 
@@ -217,43 +271,44 @@ public enum StorageAnalysis {
         tally.category[category, default: 0] += size
     }
 
-    private static func visit(_ node: FolderNode, path: String, relative: String?, inherited: (StorageCategory, String),
-                              parent: FolderNode?, input: Input, tally: Tally) {
+    /// `rule` is the catalog's node for this place, nil once the walk has left every catalogued path.
+    private static func visit(_ node: FolderNode, rule: StorageCatalog.RuleTree?, place: inout Place, inHome: Bool,
+                              inherited: (StorageCategory, String), parent: FolderNode?, input: Input, tally: Tally) {
         var assigned = inherited
-        if let rule = StorageCatalog.rules[relative ?? path] {
-            assigned = (rule.category, rule.row)
-            tally.rowEntries[rule.row, default: []].append(Found(path: path, node: node))
-            if node.locked { tally.rowLocked.insert(rule.row) }
-        } else if let relative, inherited.0 != .developer, !relative.hasPrefix("Library/"), let parent,
-                  let artifact = artifact(node, path: path, input: input) {
+        if let location = rule?.location {
+            assigned = (location.category, location.row)
+            tally.rowEntries[location.row, default: []].append(Found(path: place.path, node: node))
+            if node.locked { tally.rowLocked.insert(location.row) }
+        } else if inHome, inherited.0 != .developer, place.names.count == 1 || place.names[0] != "Library", let parent,
+                  let artifact = artifact(node, place: place, input: input) {
             // Build output inside a project: the whole folder counts, nothing below it matters.
+            let path = place.path
             tally.artifactTitles[artifact.row] = (artifact.title, artifact.detail)
             tally.rowEntries[artifact.row, default: []].append(Found(path: path, node: node))
             add(node.size, row: artifact.row, category: .developer, tally: tally)
             if artifact.row == "node_modules" {
                 let active = projectActivity(parent)
-                if active > 0, input.now.timeIntervalSince1970 - active > staleAfter {
-                    tally.staleModules.append(.init(path: path, name: parent.name, size: node.size,
-                                                    lastUsed: Date(timeIntervalSince1970: active)))
+                if active > 0 {
+                    tally.modules.append(.init(path: path, name: parent.name, size: node.size, lastUsed: Date(timeIntervalSince1970: active)))
                 }
             }
             return
         }
-        if node.locked { tally.locked.append(path) }
+        if node.locked { tally.locked.append(place.path) }
         let folders = node.children.reduce(UInt64(0)) { $0 + ($1.isFile ? 0 : $1.size) }
         add(node.size > folders ? node.size - folders : 0, row: assigned.1, category: assigned.0, tally: tally)
         for child in node.children where !child.isFile {
-            visit(child, path: path + "/" + child.name, relative: relative.map { $0 + "/" + child.name }, inherited: assigned,
-                  parent: node, input: input, tally: tally)
+            place.names.append(child.name)
+            visit(child, rule: rule?.children[child.name], place: &place, inHome: inHome, inherited: assigned, parent: node, input: input, tally: tally)
+            place.names.removeLast()
         }
     }
 
-    private static func artifact(_ node: FolderNode, path: String, input: Input) -> StorageCatalog.Artifact? {
+    private static func artifact(_ node: FolderNode, place: Place, input: Input) -> StorageCatalog.Artifact? {
         guard StorageCatalog.artifactNames.contains(node.name) else { return nil }
-        let parentPath = String(path.dropLast(node.name.count + 1))
         for artifact in StorageCatalog.artifacts where artifact.name == node.name {
             if artifact.markers.isEmpty { return artifact }
-            let base = artifact.markerInside ? path : parentPath
+            let base = artifact.markerInside ? place.path : place.parentPath
             if artifact.markers.contains(where: { input.exists(base + "/" + $0) }) { return artifact }
         }
         return nil
@@ -308,7 +363,8 @@ public enum StorageAnalysis {
                                  entries: whole("Library/Caches/Homebrew", minimum: 10 << 20)))
         items.append(ReclaimItem(id: "node_modules", name: "Old node_modules", detail: "Projects untouched for 90 days",
                                  consequence: "npm install brings them back when you return to a project",
-                                 entries: tally.staleModules.filter { $0.size >= 1 << 20 }.sorted { $0.size > $1.size }))
+                                 entries: tally.modules.filter { $0.size >= 1 << 20 && $0.lastUsed.map { $0.timeIntervalSince1970 < cutoff } == true }
+                                    .sorted { $0.size > $1.size }))
         return items.filter { !$0.entries.isEmpty }
     }
 }

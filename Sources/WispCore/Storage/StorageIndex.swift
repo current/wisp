@@ -20,7 +20,11 @@ public struct StorageState: @unchecked Sendable {
 /// Keeps the storage scan. Opening loads the cache from disk and asks FSEvents for
 /// every change since the event id saved with it, so only changed folders are read
 /// again, even across launches. With no cache it scans, sending partial results.
-/// Closing cancels any scan, stops the stream and saves. Nothing runs while closed.
+/// FSEvents hands back a few thousand old events a second, so after a long or busy
+/// gap a fresh scan is sooner: the replay gives way to one when it would take longer.
+/// Closing stops the stream and saves. A full scan of a root that is under way goes on
+/// at background priority and is saved, so it does not start over next time; nothing
+/// else runs while closed.
 public final class StorageIndex: @unchecked Sendable {
     public struct Cache {
         public static let currentVersion = 2
@@ -30,6 +34,9 @@ public final class StorageIndex: @unchecked Sendable {
         public var roots: [String: FolderNode]
         public var seconds: [String: Double]
         public var fullDiskAccess: Bool
+        /// The FSEvents database the event id belongs to. A new one (after it was reset)
+        /// means the saved id says nothing about what changed.
+        public var eventsUUID: String? = nil
     }
 
     public static var cacheURL: URL { Wisp.supportDirectory.appendingPathComponent("storage-scan.bin") }
@@ -64,6 +71,10 @@ public final class StorageIndex: @unchecked Sendable {
     private var latestEvent: UInt64 = 0
     private var refreshScheduled = false
     private var historyDone = false
+    /// The replay of old events under way: where it started and ends, and how long a
+    /// fresh scan of every root took last time, which it must beat.
+    private var replay: (from: UInt64, to: UInt64, started: Date, budget: Double)?
+    private var lastSave = Date()
     private var isOpen = false
     private var generation = 0
 
@@ -73,24 +84,35 @@ public final class StorageIndex: @unchecked Sendable {
     private var changed = false
     private var snapshots: [LocalSnapshot] = []
     private var fullDiskAccess = false
+    /// The access the trees were read with, saved with them.
+    private var treeAccess = false
     private let home: String
     private let rootPaths: [String]
+    /// The full scan under way, under `lock`, so closing can turn it down.
+    private var fullScanner: FolderScanner?
 
     private let cacheURL: URL
     private let historyURL: URL
-    private let realRoots: [(real: String, root: String)]
+    /// FSEvents reports real paths (/private/var for /var), as bytes to compare cheaply.
+    private let realRoots: [(real: [UInt8], root: String)]
+    /// Wisp's own folder: its databases and this cache change all the time and say nothing about disk use.
+    private let ignored: [UInt8]
     private let callbackQueue: DispatchQueue
+
+    private let summaryMemo = StorageAnalysis.Memo()
+    private let readingsLock = NSLock()
+    private var volumeReading: (volume: StorageVolume, date: Date)?
+    private var existing: [String: Bool] = [:]
 
     public init(home: String = NSHomeDirectory(), roots: [String]? = nil, cacheURL: URL = StorageIndex.cacheURL,
                 historyURL: URL = SpaceHistory.url, callbackQueue: DispatchQueue = .main) {
         self.home = home
         rootPaths = roots ?? Self.roots(home: home)
-        // FSEvents reports real paths (/private/var for /var); match events against those.
-        realRoots = rootPaths.map { root in
-            guard let real = realpath(root, nil) else { return (root, root) }
-            defer { free(real) }
-            return (String(cString: real), root)
+        realRoots = rootPaths.compactMap { root in
+            let real = Self.realPath(root)
+            return real == root ? nil : (Array(real.utf8), root)
         }
+        ignored = Array(Self.realPath(Wisp.supportDirectory.path).utf8)
         self.cacheURL = cacheURL
         self.historyURL = historyURL
         self.callbackQueue = callbackQueue
@@ -103,6 +125,12 @@ public final class StorageIndex: @unchecked Sendable {
     private var cooldown: [String: Date] = [:]
     private var waitingForCooldown = false
 
+    private static func realPath(_ path: String) -> String {
+        guard let real = realpath(path, nil) else { return path }
+        defer { free(real) }
+        return String(cString: real)
+    }
+
     public func open() {
         lock.withLock {
             guard !isOpen else { return }
@@ -110,28 +138,47 @@ public final class StorageIndex: @unchecked Sendable {
             generation += 1
             flag = ScanFlag()
             historyDone = false
+            fullScanner?.quiet = false
         }
         let generation = lock.withLock { self.generation }
         work.async { [self] in
             guard current(generation) else { return }
             fullDiskAccess = StorageAccess.hasFullDiskAccess
             let loadStart = Date()
+            let now = FSEventsGetCurrentEventId()
+            let uuid = eventsUUID()
+            var stale = false
             if state.roots.isEmpty, let cache = Self.loadCache(from: cacheURL), cache.version == Cache.currentVersion {
                 log(String(format: "loaded the cache in %.3f s", Date().timeIntervalSince(loadStart)))
                 state.roots = cache.roots
                 state.scannedAt = cache.date
                 state.scanSeconds = cache.seconds
                 cacheEventID = cache.eventID
-                // Access changed since the scan: what was locked is readable now, or the other way round.
-                if cache.fullDiskAccess != fullDiskAccess { state.roots[home] = nil }
+                treeAccess = cache.fullDiskAccess
+                // A reset event database or an id from the future cannot say what changed.
+                stale = cache.eventID > now || (cache.eventsUUID != nil && uuid != nil && cache.eventsUUID != uuid)
             }
+            if state.roots.isEmpty { treeAccess = fullDiskAccess }
             log(String(format: "opened with %d cached roots", state.roots.count))
             malloc_zone_pressure_relief(nil, 0)
             state.health = DiskHealth.read()
             snapshots = LocalSnapshot.list()
             publish()
-            let since = cacheEventID != 0 && !state.roots.isEmpty ? cacheEventID : FSEventsGetCurrentEventId()
-            startStream(since: since)
+            let replaying = cacheEventID != 0 && !state.roots.isEmpty && !stale
+            if replaying {
+                let budget = rootPaths.reduce(0.0) { $0 + (state.scanSeconds[$1] ?? 0) }
+                lock.withLock { replay = (cacheEventID, now, Date(), budget) }
+            }
+            startStream(since: replaying ? cacheEventID : now)
+            if stale {
+                log("the saved event id is from another event database; measuring again")
+                scan(rootPaths, generation: generation)
+                return
+            }
+            if treeAccess != fullDiskAccess {
+                followAccess(generation: generation)
+                guard current(generation) else { return }
+            }
             let missing = rootPaths.filter { state.roots[$0] == nil }
             if !missing.isEmpty { scan(missing, generation: generation) }
         }
@@ -144,6 +191,7 @@ public final class StorageIndex: @unchecked Sendable {
         }
         guard wasOpen else { return }
         flag.set()
+        lock.withLock { fullScanner?.quiet = true }
         stopStream()
         work.async { [self] in
             if changed {
@@ -154,7 +202,10 @@ public final class StorageIndex: @unchecked Sendable {
             // Closed costs nothing: the tree is on disk and loads again in a moment.
             guard !lock.withLock({ isOpen }) else { return }
             state = StorageState()
+            summaryMemo.clear()
+            // Reopened, the page measures again what changed while it was shut.
             cooldown.removeAll()
+            readingsLock.withLock { existing.removeAll() }
             malloc_zone_pressure_relief(nil, 0)
         }
     }
@@ -174,7 +225,7 @@ public final class StorageIndex: @unchecked Sendable {
         DispatchQueue.global(qos: .utility).async {
             var rules = FolderScanner.Rules()
             rules.skip = skip
-            let node = FolderScanner(rules: rules).folder(at: path)
+            let node = FolderScanner(rules: rules).folder(at: path, threads: rules.threads)
             DispatchQueue.main.async { done(node) }
         }
     }
@@ -198,33 +249,41 @@ public final class StorageIndex: @unchecked Sendable {
         let startEvent = FSEventsGetCurrentEventId()
         for path in paths {
             guard current(generation) else { return }
-            let scanner = FolderScanner(rules: rules, cancel: lock.withLock { flag })
+            // Not cancelled by closing: a root is only worth anything once it is read to the end.
+            let scanner = FolderScanner(rules: rules)
+            lock.withLock {
+                scanner.quiet = !isOpen
+                fullScanner = scanner
+            }
             let started = Date()
             state.scanning = path
+            readingsLock.withLock { existing.removeAll() }
             publish()
             let order = state.roots[path].map { Dictionary($0.children.map { ($0.name, $0.size) }, uniquingKeysWith: max) } ?? [:]
             let previous = state.roots[path]
             // The work queue waits for the scan, so partial trees go out from the scan's own
-            // threads, on a copy of the state. They only fill in a root that has nothing yet.
+            // threads, on a copy of the state. They only fill in a root that has nothing yet;
+            // a page opened again during the scan gets the state once.
             let base = state
             let partialLock = NSLock()
+            var shownTo = generation
             let node = scanner.scan(path, order: order) { [weak self] partial in
-                guard let self, previous == nil else { return }
+                guard let self, let open = lock.withLock({ self.isOpen ? self.generation : nil }) else { return }
                 partialLock.withLock {
+                    guard previous == nil || open != shownTo else { return }
+                    shownTo = open
                     autoreleasepool {
                         var copy = base
-                        copy.roots[path] = partial
+                        if previous == nil { copy.roots[path] = partial }
                         copy.summary = self.summarize(copy)
                         let callback = self.onChange
                         self.callbackQueue.async { callback?(copy) }
                     }
                 }
             }
-            guard !scanner.cancelled else {
-                if previous == nil { state.roots[path] = nil }
-                state.scanning = nil
-                return
-            }
+            lock.withLock { fullScanner = nil }
+            // Changes from here on are replayed next launch even if the other roots are never reached.
+            if cacheEventID == 0 { cacheEventID = startEvent }
             state.roots[path] = node
             state.scanSeconds[path] = Date().timeIntervalSince(started)
             log(String(format: "scanned %@ in %.2f s: %llu files, %d folders, %d nodes kept", path, Date().timeIntervalSince(started),
@@ -235,6 +294,7 @@ public final class StorageIndex: @unchecked Sendable {
         }
         state.scannedAt = Date()
         cacheEventID = startEvent
+        if Set(paths) == Set(rootPaths) { treeAccess = fullDiskAccess }
         // The walk made and dropped a node per folder; give the freed pages back.
         malloc_zone_pressure_relief(nil, 0)
         save()
@@ -244,7 +304,40 @@ public final class StorageIndex: @unchecked Sendable {
         refreshNow()
     }
 
+    /// Full Disk Access changed since the trees were read: what was locked may be readable
+    /// now, or what was read is guarded. Only those folders are read again; if closing
+    /// stops this halfway, the saved access stays the old one and the rest waits for next time.
+    private func followAccess(generation: Int) {
+        let started = Date()
+        var rules = FolderScanner.Rules()
+        rules.skip = StorageAccess.skipped(home: home)
+        let scanner = FolderScanner(rules: rules, cancel: lock.withLock { flag })
+        var count = 0
+        for (root, tree) in state.roots {
+            var targets: [String] = []
+            tree.walk { node, relative in
+                guard !node.isFile else { return false }
+                if node.locked || rules.skip.contains(root + "/" + relative) {
+                    targets.append(relative)
+                    return false
+                }
+                return true
+            }
+            for relative in targets {
+                let new = scanner.folder(at: root + "/" + relative, threads: rules.threads)
+                guard current(generation), !scanner.cancelled else { return }
+                state.roots[root] = state.roots[root]?.replacing(at: relative.split(separator: "/").map(String.init), with: new)
+                changed = true
+                count += 1
+            }
+        }
+        treeAccess = fullDiskAccess
+        log(String(format: "read %d folders again for the change in access in %.2f s", count, Date().timeIntervalSince(started)))
+        publish()
+    }
+
     private func publish() {
+        guard lock.withLock({ isOpen }) else { return }
         state.summary = autoreleasepool { summarize(state) }
         let copy = state
         let callback = onChange
@@ -252,10 +345,28 @@ public final class StorageIndex: @unchecked Sendable {
     }
 
     private func summarize(_ state: StorageState) -> StorageSummary {
-        let input = StorageAnalysis.Input(volume: .read(), roots: state.roots, home: home, snapshots: snapshots, swap: .read(),
-                                          scannedAt: state.scannedAt, fullDiskAccess: fullDiskAccess,
+        let input = StorageAnalysis.Input(volume: volume(), roots: state.roots, home: home, snapshots: snapshots, swap: .read(),
+                                          scannedAt: state.scannedAt, fullDiskAccess: fullDiskAccess, exists: { [self] in exists($0) },
                                           deviceName: Simulators.name(ofDeviceAt:))
-        return StorageAnalysis.summarize(input)
+        return StorageAnalysis.summarize(input, memo: summaryMemo)
+    }
+
+    /// The volume's figures take a dozen file system calls; a few seconds old is fine for the page.
+    private func volume() -> StorageVolume {
+        readingsLock.withLock {
+            if let reading = volumeReading, Date().timeIntervalSince(reading.date) < 10 { return reading.volume }
+            let volume = StorageVolume.read()
+            volumeReading = (volume, Date())
+            return volume
+        }
+    }
+
+    /// Marker files (Cargo.toml and the like) seen since the last change was read.
+    private func exists(_ path: String) -> Bool {
+        if let known = readingsLock.withLock({ existing[path] }) { return known }
+        let found = FileManager.default.fileExists(atPath: path)
+        readingsLock.withLock { existing[path] = found }
+        return found
     }
 
     // MARK: Cache
@@ -272,11 +383,45 @@ public final class StorageIndex: @unchecked Sendable {
         let complete = state.roots.filter { state.scanning != $0.key }
         guard !complete.isEmpty else { return }
         let cache = Cache(eventID: cacheEventID, date: state.scannedAt ?? Date(), roots: complete, seconds: state.scanSeconds,
-                          fullDiskAccess: fullDiskAccess)
+                          fullDiskAccess: treeAccess, eventsUUID: eventsUUID())
         if let data = StorageCacheFile.encode(cache) { try? data.write(to: cacheURL, options: .atomic) }
+        lastSave = Date()
     }
 
     // MARK: FSEvents
+
+    /// The FSEvents database of the volume the roots are on.
+    private func eventsUUID() -> String? {
+        var info = stat()
+        guard let root = rootPaths.first(where: { lstat($0, &info) == 0 }), !root.isEmpty,
+              let uuid = FSEventsCopyUUIDForDevice(info.st_dev) else { return nil }
+        return CFUUIDCreateString(nil, uuid) as String?
+    }
+
+    /// Whether the replay of old events, at the pace it is going, will take longer than
+    /// measuring everything again. Called with `lock` held.
+    private func replayTooSlow() -> Bool {
+        guard let replay, !historyDone, replay.budget > 0, replay.to > replay.from else { return false }
+        let elapsed = Date().timeIntervalSince(replay.started)
+        // Events come in bursts, so the pace is only judged once it has run a while.
+        guard elapsed > max(5, replay.budget / 10) else { return false }
+        let done = Double(min(latestEvent, replay.to) &- min(latestEvent, replay.from)) / Double(replay.to - replay.from)
+        return elapsed / max(done, 0.001) > replay.budget
+    }
+
+    /// Drops the replay and measures every root again, keeping the saved trees on show.
+    private func abandonReplay(generation: Int) {
+        guard current(generation), lock.withLock({ !historyDone }) else { return }
+        stopStream()
+        lock.withLock {
+            replay = nil
+            dirty.removeAll()
+            mustScan.removeAll()
+        }
+        log("the replay of old events would take longer than measuring again")
+        startStream(since: FSEventsGetCurrentEventId())
+        scan(rootPaths, generation: generation)
+    }
 
     private func startStream(since: UInt64) {
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil,
@@ -284,10 +429,10 @@ public final class StorageIndex: @unchecked Sendable {
         let callback: FSEventStreamCallback = { _, info, count, paths, flags, ids in
             guard let info else { return }
             let index = Unmanaged<StorageIndex>.fromOpaque(info).takeUnretainedValue()
-            let list = Unmanaged<CFArray>.fromOpaque(paths).takeUnretainedValue() as? [String] ?? []
-            index.received(list, flags: Array(UnsafeBufferPointer(start: flags, count: count)), ids: Array(UnsafeBufferPointer(start: ids, count: count)))
+            let list = UnsafeBufferPointer(start: paths.assumingMemoryBound(to: UnsafePointer<CChar>.self), count: count)
+            index.received(list, flags: UnsafeBufferPointer(start: flags, count: count), ids: UnsafeBufferPointer(start: ids, count: count))
         }
-        let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagWatchRoot)
+        let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagWatchRoot)
         guard let stream = FSEventStreamCreate(nil, callback, &context, rootPaths as CFArray, since, 5.0, flags) else { return }
         FSEventStreamSetDispatchQueue(stream, events)
         FSEventStreamStart(stream)
@@ -305,43 +450,78 @@ public final class StorageIndex: @unchecked Sendable {
         FSEventStreamRelease(stream)
     }
 
-    private func received(_ paths: [String], flags: [FSEventStreamEventFlags], ids: [FSEventStreamEventId]) {
+    private func received(_ paths: UnsafeBufferPointer<UnsafePointer<CChar>>, flags: UnsafeBufferPointer<FSEventStreamEventFlags>,
+                          ids: UnsafeBufferPointer<FSEventStreamEventId>) {
+        let rescan = kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagRootChanged | kFSEventStreamEventFlagEventIdsWrapped
+        var changes: [(path: String, deep: Bool)] = []
         var historyEnded = false
-        lock.withLock {
-            for (index, raw) in paths.enumerated() {
-                let flag = Int(flags[index])
+        let dropped = kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped
+        for index in flags.indices where Int(flags[index]) & dropped != 0 {
+            log("FSEvents dropped events (\(Int(flags[index]) & kFSEventStreamEventFlagKernelDropped != 0 ? "kernel" : "Wisp too slow")) at \(String(cString: paths[index]))")
+        }
+        for (index, raw) in paths.enumerated() where Int(flags[index]) & kFSEventStreamEventFlagHistoryDone == 0 {
+            let bytes = UnsafeRawPointer(raw).assumingMemoryBound(to: UInt8.self)
+            guard let path = eventPath(UnsafeBufferPointer(start: bytes, count: strlen(raw))) else { continue }
+            changes.append((path, Int(flags[index]) & rescan != 0))
+        }
+        let giveUp: Int? = lock.withLock {
+            for index in flags.indices {
                 latestEvent = max(latestEvent, ids[index])
-                if flag & kFSEventStreamEventFlagHistoryDone != 0 {
+                if Int(flags[index]) & kFSEventStreamEventFlagHistoryDone != 0 {
                     historyDone = true
                     historyEnded = true
-                    continue
-                }
-                let path = canonical(Self.normalize(raw))
-                if flag & (kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagRootChanged | kFSEventStreamEventFlagEventIdsWrapped) != 0 {
-                    mustScan.insert(path)
-                } else {
-                    dirty.insert(path)
+                    replay = nil
                 }
             }
+            for change in changes {
+                if change.deep { mustScan.insert(change.path) } else { dirty.insert(change.path) }
+            }
+            guard replayTooSlow() else { return nil }
+            replay = nil
+            return generation
+        }
+        if let giveUp {
+            work.async { [self] in abandonReplay(generation: giveUp) }
+            return
         }
         if historyEnded { work.async { [self] in refreshNow() } } else { scheduleRefresh() }
     }
 
-    /// An event path in terms of the root paths the tree uses.
-    private func canonical(_ path: String) -> String {
-        for (real, root) in realRoots where real != root {
-            if path == real { return root }
-            if path.hasPrefix(real + "/") { return root + path.dropFirst(real.count) }
+    private static let dataVolume = Array("/System/Volumes/Data".utf8)
+    private static let slash = UInt8(ascii: "/")
+
+    /// An event path in terms of the root paths the tree uses: FSEvents may report the data
+    /// volume's own path for firmlinked folders, and real paths for roots behind a link.
+    /// Nil for Wisp's own folder. Both sides come from the file system, so bytes compare.
+    func eventPath(_ raw: UnsafeBufferPointer<UInt8>) -> String? {
+        var path = raw[...]
+        if Self.starts(path, with: Self.dataVolume[...]), path.count > Self.dataVolume.count {
+            path = path.dropFirst(Self.dataVolume.count)
         }
-        return path
+        while path.count > 1, path.last == Self.slash { path = path.dropLast() }
+        if !ignored.isEmpty, Self.starts(path, with: ignored[...]) { return nil }
+        for (real, root) in realRoots where Self.starts(path, with: real[...]) {
+            return root + String(decoding: path.dropFirst(real.count), as: UTF8.self)
+        }
+        return String(decoding: path, as: UTF8.self)
     }
 
-    /// FSEvents may report the data volume's own path for firmlinked folders.
-    static func normalize(_ path: String) -> String {
+    func eventPath(_ path: String) -> String? {
         var path = path
-        if path.hasPrefix("/System/Volumes/Data/") { path.removeFirst("/System/Volumes/Data".count) }
-        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
-        return path
+        return path.withUTF8 { eventPath($0) }
+    }
+
+    /// Whether `path` is `prefix` or inside it.
+    private static func starts<A: Collection<UInt8>, B: BidirectionalCollection<UInt8>>(_ path: A, with prefix: B) -> Bool {
+        guard path.starts(with: prefix) else { return false }
+        return path.count == prefix.count || prefix.last == slash || path.dropFirst(prefix.count).first == slash
+    }
+
+    /// The deepest root at or above `path`.
+    private func root(of path: String) -> String? {
+        var best: String?
+        for root in rootPaths where Self.starts(path.utf8, with: root.utf8) && root.utf8.count > (best?.utf8.count ?? -1) { best = root }
+        return best
     }
 
     private func scheduleRefresh() {
@@ -357,6 +537,34 @@ public final class StorageIndex: @unchecked Sendable {
         }
     }
 
+    typealias Target = (root: String, parts: [String], deep: Bool)
+
+    /// Folders to read again, without those inside one read again in full, and with
+    /// the same folder once, in full if any event asked for that.
+    static func merged(_ targets: [Target]) -> [Target] {
+        var chosen: [Target] = []
+        var chosenAt: [String: Int] = [:]
+        for target in targets.sorted(by: { $0.parts.count < $1.parts.count }) {
+            var key = target.root
+            var covered = false
+            for part in target.parts {
+                if let index = chosenAt[key], chosen[index].deep {
+                    covered = true
+                    break
+                }
+                key += "/" + part
+            }
+            if covered { continue }
+            if let index = chosenAt[key] {
+                chosen[index].deep = chosen[index].deep || target.deep
+            } else {
+                chosenAt[key] = chosen.count
+                chosen.append(target)
+            }
+        }
+        return chosen
+    }
+
     /// Reads again the folders FSEvents reported, at the deepest level the tree keeps.
     private func refreshNow() {
         guard state.scanning == nil else { return }
@@ -369,35 +577,32 @@ public final class StorageIndex: @unchecked Sendable {
         var rules = FolderScanner.Rules()
         rules.skip = StorageAccess.skipped(home: home)
         let scanner = FolderScanner(rules: rules, cancel: lock.withLock { flag })
+        readingsLock.withLock { existing.removeAll() }
 
         // A must-scan event at or above a root means that root starts over.
-        var rescanRoots: [String] = []
+        var rescanRoots: Set<String> = []
         for path in full {
-            for root in rootPaths where root == path || root.hasPrefix(path == "/" ? "/" : path + "/") { rescanRoots.append(root) }
+            for root in rootPaths where Self.starts(root.utf8, with: path.utf8) { rescanRoots.insert(root) }
         }
-        var targets: [(root: String, parts: [String], deep: Bool)] = []
+        var targets: [Target] = []
         for (path, deep) in paths.map({ ($0, false) }) + full.map({ ($0, true) }) {
-            guard let root = rootPaths.filter({ path == $0 || path.hasPrefix($0 + "/") }).max(by: { $0.count < $1.count }),
-                  let tree = state.roots[root], !rescanRoots.contains(root) else { continue }
-            let relative = path == root ? "" : String(path.dropFirst(root.count + 1))
+            guard let root = root(of: path), let tree = state.roots[root], !rescanRoots.contains(root) else { continue }
+            let relative = path.utf8.count == root.utf8.count ? "" : String(decoding: path.utf8.dropFirst(root.utf8.count + 1), as: UTF8.self)
             let parts = tree.deepest(relative).path
             // The folder that changed is the one kept, or one the tree folded into it; a full
             // rescan is only needed when FSEvents says so for that very folder.
             let fullHere = deep && parts.count == relative.split(separator: "/").count
             targets.append((root, parts, fullHere))
         }
-        // Drop targets inside another target of the same root.
-        targets.sort { $0.parts.count < $1.parts.count }
-        var chosen: [(root: String, parts: [String], deep: Bool)] = []
-        for target in targets where !chosen.contains(where: { $0.root == target.root && target.parts.starts(with: $0.parts) && ($0.deep || $0.parts == target.parts) }) {
-            if let same = chosen.firstIndex(where: { $0.root == target.root && $0.parts == target.parts }) {
-                chosen[same].deep = chosen[same].deep || target.deep
-            } else {
-                chosen.append(target)
-            }
-        }
+        // Cheap reads first, so most of the page is current while a big folder is read again.
+        let chosen = Self.merged(targets).map { target -> (Target, UInt64) in
+            let tree = state.roots[target.root]
+            return (target, (target.parts.isEmpty ? tree : tree?.descendant(target.parts.joined(separator: "/")))?.files ?? 0)
+        }.sorted { $0.1 < $1.1 }.map(\.0)
+        if !rescanRoots.isEmpty { log("FSEvents asks for a full read of " + rescanRoots.sorted().joined(separator: ", ")) }
         var deferred: [String] = []
         let now = Date()
+        var lastPublish = Date()
         for target in chosen {
             guard !scanner.cancelled, let tree = state.roots[target.root] else { return }
             let path = ([target.root] + target.parts).joined(separator: "/")
@@ -410,18 +615,20 @@ public final class StorageIndex: @unchecked Sendable {
             }
             let old = target.parts.isEmpty ? tree : tree.descendant(target.parts.joined(separator: "/")) ?? tree
             let targetStart = Date()
-            let new = target.deep ? scanner.folder(at: path) : scanner.refresh(old, at: path)
+            let new = target.deep ? scanner.folder(at: path, threads: rules.threads) : scanner.refresh(old, at: path)
             let cost = Date().timeIntervalSince(targetStart)
             if cost > 0.05 { cooldown[path] = Date().addingTimeInterval(min(1800, cost * backoff)) }
-            if Date().timeIntervalSince(targetStart) > 0.1 {
-                log(String(format: "  %@ %@ took %.2f s (%llu files)", target.deep ? "rescan" : "refresh", path, Date().timeIntervalSince(targetStart), new.files))
-            }
+            if cost > 0.1 { log(String(format: "  %@ %@ took %.2f s (%llu files)", target.deep ? "rescan" : "refresh", path, cost, new.files)) }
             if scanner.cancelled { return }
             state.roots[target.root] = target.parts.isEmpty ? new : tree.replacing(at: target.parts, with: new)
+            if Date().timeIntervalSince(lastPublish) > 2 {
+                publish()
+                lastPublish = Date()
+            }
         }
-        for root in Set(rescanRoots) { state.roots[root] = nil }
-        // Changes still waiting must be replayed next launch, so the saved place only moves on when none are.
-        if deferred.isEmpty { cacheEventID = max(cacheEventID, eventID) }
+        // Changes still waiting must be replayed next launch, so the saved place only moves on when none
+        // are. A root read again from scratch moves it on itself once it is done.
+        if deferred.isEmpty, rescanRoots.isEmpty { cacheEventID = max(cacheEventID, eventID) }
         if let next = deferred.compactMap({ cooldown[$0] }).min(), !waitingForCooldown {
             waitingForCooldown = true
             work.asyncAfter(deadline: .now() + max(1, next.timeIntervalSinceNow)) { [self] in
@@ -430,6 +637,8 @@ public final class StorageIndex: @unchecked Sendable {
             }
         }
         changed = true
+        // Saved now and then, so a quit without closing the page leaves little to replay.
+        if Date().timeIntervalSince(lastSave) > 600 { save() }
         state.lastRefreshSeconds = Date().timeIntervalSince(started)
         log(String(format: "refreshed %d folders (%d waiting) from %d events in %.3f s", chosen.count - deferred.count, deferred.count,
                    paths.count + full.count, Date().timeIntervalSince(started)))
@@ -439,7 +648,8 @@ public final class StorageIndex: @unchecked Sendable {
         }
         if !rescanRoots.isEmpty {
             let generation = lock.withLock { self.generation }
-            scan(Array(Set(rescanRoots)).sorted(), generation: generation)
+            // Quickest first, so most roots are current while the big one is read.
+            scan(rescanRoots.sorted { (state.scanSeconds[$0] ?? 0, $0) < (state.scanSeconds[$1] ?? 0, $1) }, generation: generation)
         }
     }
 }

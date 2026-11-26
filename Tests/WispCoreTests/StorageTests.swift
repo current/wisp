@@ -44,7 +44,12 @@ import Testing
         #expect(root.size == expected)
         #expect(root.files == 4)
         let a = try #require(root.child("a"))
-        #expect(a.size == scratch.allocated("a/one.bin") + scratch.allocated("a/b/two.bin"))
+        let c = try #require(root.child("c"))
+        // Each of the two links counts half the file, so the folders come out the same
+        // whichever is read first, and the file still counts once in all.
+        let one = scratch.allocated("a/one.bin")
+        let ownA = scratch.allocated("a/b/two.bin"), ownC = scratch.allocated("c/three.bin")
+        #expect((a.size, c.size) == (ownA + one / 2, ownC + one / 2))
         #expect(root.descendant("a/b")?.files == 1)
         // Largest first.
         #expect(root.children.map(\.size) == root.children.map(\.size).sorted(by: >))
@@ -162,6 +167,67 @@ import Testing
         index.close()
     }
 
+    /// A change in Full Disk Access reads the locked folders again and keeps the rest of the tree.
+    @Test func accessChangeReadsOnlyLockedFolders() async throws {
+        let scratch = Scratch()
+        scratch.file("locked/a.bin", bytes: 200_000)
+        scratch.file("open/b.bin", bytes: 200_000)
+        let cacheURL = URL(fileURLWithPath: scratch.path + "-cache.bin")
+        let historyURL = URL(fileURLWithPath: scratch.path + "-sizes.json")
+        defer {
+            try? FileManager.default.removeItem(at: cacheURL)
+            try? FileManager.default.removeItem(at: historyURL)
+        }
+        let access = StorageAccess.hasFullDiskAccess
+        let open = FolderNode(name: "open", size: 12_345, files: 1)
+        let root = FolderNode(name: "root", size: 12_345, files: 1, children: [open, FolderNode(name: "locked", locked: true)])
+        let cache = StorageIndex.Cache(eventID: 0, date: Date(), roots: [scratch.path: root], seconds: [:], fullDiskAccess: !access)
+        try #require(StorageCacheFile.encode(cache)).write(to: cacheURL)
+
+        let queue = DispatchQueue(label: "test.storage.access")
+        let lock = NSLock()
+        var latest: StorageState?
+        let index = StorageIndex(home: "/nonexistent", roots: [scratch.path], cacheURL: cacheURL, historyURL: historyURL, callbackQueue: queue)
+        index.onChange = { state in lock.withLock { latest = state } }
+        func unlocked() -> FolderNode? {
+            lock.withLock { latest?.roots[scratch.path].flatMap { $0.child("locked")?.locked == false ? $0 : nil } }
+        }
+        index.open()
+        // Up to 20 s: on a busy Mac the locked folder's read can wait behind other work.
+        for _ in 0..<400 where unlocked() == nil { try await Task.sleep(nanoseconds: 50_000_000) }
+        let after = try #require(unlocked())
+        #expect(after.child("locked")?.size == scratch.allocated("locked/a.bin"))
+        // Not scanned again: the made-up size is still there.
+        #expect(after.child("open")?.size == 12_345)
+        index.close()
+        for _ in 0..<100 where StorageIndex.loadCache(from: cacheURL)?.fullDiskAccess != access {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        #expect(StorageIndex.loadCache(from: cacheURL)?.fullDiskAccess == access)
+    }
+
+    /// Closing during a scan lets it finish and saves it, so opening again does not start over.
+    @Test func closingDuringAScanKeepsIt() async throws {
+        let scratch = Scratch()
+        for index in 0..<400 { scratch.file("f\(index)/g\(index % 7)/x.bin", bytes: 2_000) }
+        let cacheURL = URL(fileURLWithPath: scratch.path + "-cache.bin")
+        let historyURL = URL(fileURLWithPath: scratch.path + "-sizes.json")
+        defer {
+            try? FileManager.default.removeItem(at: cacheURL)
+            try? FileManager.default.removeItem(at: historyURL)
+        }
+        let index = StorageIndex(home: "/nonexistent", roots: [scratch.path], cacheURL: cacheURL, historyURL: historyURL,
+                                 callbackQueue: DispatchQueue(label: "test.storage.close"))
+        // The page goes away as soon as the scan has started.
+        index.onChange = { [unowned index] state in if state.scanning != nil { index.close() } }
+        index.open()
+        for _ in 0..<200 where StorageIndex.loadCache(from: cacheURL)?.roots[scratch.path] == nil {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let saved = try #require(StorageIndex.loadCache(from: cacheURL)?.roots[scratch.path])
+        #expect(saved.files == 400)
+    }
+
     @Test func binaryCacheRoundTrips() throws {
         let deep = FolderNode(name: "naïve folder", size: 7, files: 2, modified: 1_700_000_000, ownModified: 1_600_000_000, locked: true)
         let file = FolderNode(name: "big.bin", size: 3, files: 1, isFile: true)
@@ -232,6 +298,32 @@ import Testing
                                                       exists: { $0 == "/Users/me/rust/Cargo.toml" }))
         #expect(summary.row("target")?.paths == ["/Users/me/rust/target"])
         #expect(summary.segment(.developer)?.size == 2 * gb)
+    }
+
+    @Test func rulesMatchWholePathsInEveryRoot() {
+        let gb: UInt64 = 1 << 30
+        let library = tree("Library", 10 * gb, [tree("Caches", 2 * gb), tree("Developer", 3 * gb, [tree("Caches", 1 * gb)])])
+        let home = tree("me", 6 * gb, [
+            tree("Café", 3 * gb, [tree("app", 3 * gb, [tree("node_modules", 2 * gb)])]),
+            tree("Library", 3 * gb, [tree("Caches", 3 * gb, [tree("node_modules", 3 * gb)])]),
+        ])
+        let volume = StorageVolume(capacity: 100 * gb, available: 50 * gb, availableForImportant: 50 * gb)
+        let input = StorageAnalysis.Input(volume: volume, roots: ["/Library": library, "/Users/me": home], home: "/Users/me", exists: { _ in false })
+        let memo = StorageAnalysis.Memo()
+        let summary = StorageAnalysis.summarize(input, memo: memo)
+        #expect(summary.row("caches")?.paths.sorted() == ["/Library/Caches", "/Users/me/Library/Caches"])
+        #expect(summary.row("caches")?.size == 5 * gb)
+        // /Library/Developer/Caches is not a rule of its own; it stays with the folder above.
+        #expect(summary.row("librarydeveloper")?.size == 3 * gb)
+        #expect(summary.row("systemlibrary")?.size == 5 * gb)
+        // Build output is looked for in projects, not in Library.
+        #expect(summary.row("node_modules")?.paths == ["/Users/me/Café/app/node_modules"])
+
+        // The memo gives the same answer, and a root that changed is walked again.
+        #expect(StorageAnalysis.summarize(input, memo: memo).rows == summary.rows)
+        var changed = input
+        changed.roots["/Library"] = library.replacing(at: ["Caches"], with: tree("Caches", 4 * gb))
+        #expect(StorageAnalysis.summarize(changed, memo: memo).row("caches")?.size == 7 * gb)
     }
 
     @Test func trashOnlyTakesFoldersInsideHome() {
@@ -312,9 +404,33 @@ import Testing
         #expect(snapshots[0].date != nil && snapshots[1].date == nil)
     }
 
-    @Test func eventPathsLoseTheDataVolumePrefix() {
-        #expect(StorageIndex.normalize("/System/Volumes/Data/Users/me/x/") == "/Users/me/x")
-        #expect(StorageIndex.normalize("/Applications") == "/Applications")
+    @Test func eventPathsUseTheRootsSpelling() {
+        let index = StorageIndex(home: "/nonexistent", roots: ["/tmp", "/Applications"])
+        #expect(index.eventPath("/System/Volumes/Data/Users/me/x/") == "/Users/me/x")
+        #expect(index.eventPath("/Applications") == "/Applications")
+        #expect(index.eventPath("/") == "/")
+        // /tmp is a link to /private/tmp, which is what FSEvents reports.
+        #expect(index.eventPath("/private/tmp") == "/tmp")
+        #expect(index.eventPath("/System/Volumes/Data/private/tmp/naïve/") == "/tmp/naïve")
+        #expect(index.eventPath("/private/tmpfile") == "/private/tmpfile")
+        // Wisp's own folder changes all the time and is not followed.
+        let support = (Wisp.supportDirectory.path as NSString).resolvingSymlinksInPath
+        #expect(index.eventPath(support) == nil)
+        #expect(index.eventPath(support + "/storage-scan.bin") == nil)
+        #expect(index.eventPath(support + "-other") == support + "-other")
+    }
+
+    @Test func refreshTargetsMergeAndDropWhatAFullReadCovers() {
+        let targets: [StorageIndex.Target] = [("/r", ["a", "b"], false), ("/r", ["a"], false), ("/r", ["a"], true), ("/r", ["c", "d"], false),
+                                              ("/r", ["c"], false), ("/s", ["a", "b"], false)]
+        let merged = StorageIndex.merged(targets)
+        #expect(merged.count == 4)
+        // The same folder once, in full because one event asked for that; what is inside it goes.
+        #expect(merged.contains { $0.root == "/r" && $0.parts == ["a"] && $0.deep })
+        #expect(!merged.contains { $0.root == "/r" && $0.parts == ["a", "b"] })
+        // A refresh keeps kept children as they were, so a change inside one is read on its own.
+        #expect(merged.contains { $0.root == "/r" && $0.parts == ["c", "d"] })
+        #expect(merged.contains { $0.root == "/s" && $0.parts == ["a", "b"] })
     }
 
     @Test func volumeFiguresAreConsistent() {
