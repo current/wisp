@@ -129,8 +129,10 @@ final class FakeHome {
         home.file("Library/iTunes/iPhone Software Updates/iPhone_27.0_Restore.ipsw", bytes: 2 * Self.mb)
 
         let items = SystemJunkScanner().scan(home.context(excluded: ["Library/Logs/other.log"]))
-        let logs = try #require(items.first { $0.name == "App logs" })
+        // Each app's log folder is its own row, so one log held open keeps back only that app's.
+        let logs = try #require(items.first { $0.name == "SomeApp logs" })
         #expect(logs.paths == [home.path + "/Library/Logs/SomeApp"])
+        #expect(!items.contains { $0.paths.contains(home.path + "/Library/Logs/other.log") })
         let crashes = try #require(items.first { $0.name == "Crash reports" })
         #expect(crashes.paths == [home.path + "/Library/Logs/DiagnosticReports/App-2026-11-01.ips"])
         #expect(items.contains { $0.name == "iPhone and iPad software updates" && $0.paths.count == 1 })

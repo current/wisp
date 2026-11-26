@@ -26,13 +26,17 @@ public struct InstallerScanner: CleanScanner {
     public var depth: Int
     /// Downloads, Desktop and Documents need Full Disk Access; without it macOS asks the owner.
     public var readsGuardedFolders: @Sendable () -> Bool
+    /// Real paths of the disk images attached right now.
+    public var attachedImages: @Sendable () -> Set<String>
 
     public init(minimumBytes: Int64 = 1 << 20, applications: String = "/Applications", depth: Int = 3,
-                readsGuardedFolders: @escaping @Sendable () -> Bool = { StorageAccess.hasFullDiskAccess }) {
+                readsGuardedFolders: @escaping @Sendable () -> Bool = { StorageAccess.hasFullDiskAccess },
+                attachedImages: @escaping @Sendable () -> Set<String> = { DiskImages.attached() }) {
         self.minimumBytes = minimumBytes
         self.applications = applications
         self.depth = depth
         self.readsGuardedFolders = readsGuardedFolders
+        self.attachedImages = attachedImages
     }
 
     public func scan(_ context: CleanScanContext) -> [CleanItem] {
@@ -48,14 +52,21 @@ public struct InstallerScanner: CleanScanner {
             items.append(CleanItem(id: "installer:\(path)", tab: .junk, group: Self.group, name: String(name.dropLast(4)),
                                    detail: "The macOS installer. Only needed to install that version again, and the App Store has it.",
                                    paths: [path], bytes: size.bytes, modified: size.modified, safety: .checkFirst,
-                                   checkedByDefault: false))
+                                   checkedByDefault: false).stamped([path: size]))
         }
         if !items.isEmpty { context.found(items) }
 
         guard readsGuardedFolders() else { return items }
+        var attached: Set<String>?
         for folder in ["Downloads", "Desktop", "Documents"] {
             var found: [String] = []
             collect(context.homePath + "/" + folder, depth: 0, context: context, into: &found)
+            // A disk image in use is attached; the Trash cannot take it, and it holds what is open from it.
+            if !found.isEmpty {
+                let images = attached ?? attachedImages()
+                attached = images
+                found.removeAll { DiskImages.isAttached($0, in: images) }
+            }
             let sizes = sizer.sizes(found)
             var batch: [CleanItem] = []
             for path in found {
@@ -63,7 +74,7 @@ public struct InstallerScanner: CleanScanner {
                 let ext = (path as NSString).pathExtension.lowercased()
                 batch.append(CleanItem(id: "installer:\(path)", tab: .junk, group: Self.group, name: (path as NSString).lastPathComponent,
                                        detail: Self.kinds[ext] ?? "", paths: [path], bytes: size.bytes, modified: size.modified,
-                                       safety: .checkFirst, checkedByDefault: false))
+                                       safety: .checkFirst, checkedByDefault: false).stamped(sizes))
             }
             if !batch.isEmpty { context.found(batch) }
             items += batch

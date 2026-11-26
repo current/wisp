@@ -1,8 +1,9 @@
 import Foundation
 
 /// Git worktrees: every one a coding agent made, so their space shows even while they are
-/// in use, and in hand-made `*-worktrees` folders the ones the repository forgot or that
-/// nobody has touched for a while. None is ticked or cleaned without a review.
+/// in use, and in hand-made `*-worktrees` folders the ones nobody has touched for a while.
+/// None is ticked or cleaned without a review. A worktree its repository forgot is not
+/// offered: git cannot say what in it was never committed, so the cleaner leaves it.
 public struct WorktreeScanner: CleanScanner {
     static let group = "Worktrees"
 
@@ -25,10 +26,9 @@ public struct WorktreeScanner: CleanScanner {
         self.readsGuardedFolders = readsGuardedFolders
     }
 
-    struct Orphan {
+    struct Worktree {
         var path: String
         var repository: String
-        /// Still tracked by its repository; nil when the repository forgot it.
         var lastUsed: Date?
     }
 
@@ -52,48 +52,54 @@ public struct WorktreeScanner: CleanScanner {
             }
         }
 
-        var orphans: [Orphan] = []
+        var worktrees: [Worktree] = []
         var seen = Set<String>()
         for (container, agent) in containers where CleanFiles.isDirectory(container) && seen.insert(container).inserted {
             if context.isCancelled() { return [] }
-            find(container, level: 0, listsEvery: agent, home: home, readsGuarded: readsGuarded, context: context, into: &orphans)
+            find(container, level: 0, listsEvery: agent, home: home, readsGuarded: readsGuarded, context: context, into: &worktrees)
         }
 
         let busy = workingFolders()
-        orphans = orphans.filter { !WorkingFolders.contains(busy, inside: $0.path) && !context.isBlocked($0.path) }
+        worktrees = worktrees.filter { !WorkingFolders.contains(busy, inside: $0.path) && !context.isBlocked($0.path) }
         let sizer = CleanSizer(context)
-        let sizes = sizer.sizes(orphans.map(\.path))
-        if sizer.cancelled { return [] }
-        let items = orphans.map { orphan in
-            let size = sizes[orphan.path] ?? .init(bytes: 0, modified: nil)
-            return CleanItem(id: "worktree:\(orphan.path)", tab: .developer, group: Self.group,
-                             name: "\((orphan.path as NSString).lastPathComponent) (\(orphan.repository))",
-                             detail: orphan.lastUsed.map {
-                                     "A git worktree, last used \(Self.ago($0)). Its commits and branch stay in \(orphan.repository); files git ignores, like build output and .env files, go with it. Wisp leaves it if anything in it is not committed."
-                                 } ?? "A git worktree its repository no longer tracks. Changes in it that were never pushed go with it.",
-                             paths: [orphan.path], bytes: size.bytes, modified: size.modified, safety: .checkFirst, checkedByDefault: false)
-        }.sorted { $0.bytes > $1.bytes }
-        if !items.isEmpty { context.found(items) }
+        var items: [CleanItem] = []
+        // A few at a time, so the first rows show while the rest are measured.
+        for start in stride(from: 0, to: worktrees.count, by: 4) {
+            let batch = Array(worktrees[start..<min(worktrees.count, start + 4)])
+            let sizes = sizer.sizes(batch.map(\.path))
+            if sizer.cancelled { return [] }
+            let found = batch.map { worktree in
+                let size = sizes[worktree.path] ?? .init(bytes: 0, modified: nil)
+                return CleanItem(id: "worktree:\(worktree.path)", tab: .developer, group: Self.group,
+                                 name: "\((worktree.path as NSString).lastPathComponent) (\(worktree.repository))",
+                                 detail: "A git worktree, last used \(Self.ago(worktree.lastUsed ?? Date())). Its commits and branch stay in \(worktree.repository); files git ignores, like build output and .env files, go with it. Wisp leaves it if anything in it is not committed." + size.unreadNote,
+                                 paths: [worktree.path], bytes: size.bytes, modified: size.modified, safety: .checkFirst, checkedByDefault: false)
+                    .stamped(sizes)
+            }
+            context.found(found)
+            items += found
+        }
+        items.sort { $0.bytes > $1.bytes }
+        // A process that ends right after its scan, like the CLI, keeps what it measured.
+        sizer.cache?.save()
         return items
     }
 
     /// Worktrees sit a level or two down (tool/repo/name); a folder with a .git file is one, and is not walked into.
     private func find(_ folder: String, level: Int, listsEvery: Bool, home: String, readsGuarded: Bool, context: CleanScanContext,
-                      into orphans: inout [Orphan]) {
+                      into worktrees: inout [Worktree]) {
         for name in CleanFiles.names(folder) where !name.hasPrefix(".") {
             let path = folder + "/" + name
             guard CleanFiles.isDirectory(path), !context.isExcluded(path) else { continue }
             let gitFile = path + "/.git"
             if CleanFiles.isDirectory(gitFile) { continue }
             if CleanFiles.exists(gitFile) {
-                if let orphan = Self.orphan(path, home: home, readsGuarded: readsGuarded) {
-                    orphans.append(orphan)
-                } else if let tracked = Self.tracked(path, home: home, readsGuarded: readsGuarded),
-                          listsEvery || tracked.lastUsed!.timeIntervalSinceNow < -staleAfter {
-                    orphans.append(tracked)
+                if let tracked = Self.tracked(path, home: home, readsGuarded: readsGuarded),
+                   listsEvery || tracked.lastUsed!.timeIntervalSinceNow < -staleAfter {
+                    worktrees.append(tracked)
                 }
             } else if level < 2 {
-                find(path, level: level + 1, listsEvery: listsEvery, home: home, readsGuarded: readsGuarded, context: context, into: &orphans)
+                find(path, level: level + 1, listsEvery: listsEvery, home: home, readsGuarded: readsGuarded, context: context, into: &worktrees)
             }
         }
     }
@@ -101,7 +107,7 @@ public struct WorktreeScanner: CleanScanner {
     /// A worktree its repository still tracks, last used when the folder itself or git's record
     /// of it (HEAD, index, reflog) last changed. Locked worktrees are left out:
     /// `git worktree lock` is how a tool says to keep one.
-    static func tracked(_ worktree: String, home: String, readsGuarded: Bool) -> Orphan? {
+    static func tracked(_ worktree: String, home: String, readsGuarded: Bool) -> Worktree? {
         guard let gitdir = gitdir(worktree), gitdir.contains("/.git/worktrees/"), CleanFiles.isDirectory(gitdir),
               !CleanFiles.exists(gitdir + "/locked") else { return nil }
         if !readsGuarded && CleanFiles.isGuarded(gitdir, home: home) { return nil }
@@ -111,7 +117,7 @@ public struct WorktreeScanner: CleanScanner {
             if lstat(path, &info) == 0 { newest = max(newest, Double(info.st_mtimespec.tv_sec)) }
         }
         let repository = gitdir.components(separatedBy: "/.git/worktrees/")[0]
-        return Orphan(path: worktree, repository: (repository as NSString).lastPathComponent, lastUsed: Date(timeIntervalSince1970: newest))
+        return Worktree(path: worktree, repository: (repository as NSString).lastPathComponent, lastUsed: Date(timeIntervalSince1970: newest))
     }
 
     /// "today", "yesterday" or "12 days ago".
@@ -127,20 +133,5 @@ public struct WorktreeScanner: CleanScanner {
               let line = text.split(separator: "\n").first(where: { $0.hasPrefix("gitdir:") }) else { return nil }
         let gitdir = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
         return gitdir.hasPrefix("/") ? gitdir : ((worktree as NSString).appendingPathComponent(gitdir) as NSString).standardizingPath
-    }
-
-    /// A worktree whose `.git` file points at a gitdir that no longer exists. Nil when it
-    /// is fine or when that cannot be told: the repository is on a disk that is not
-    /// connected, or in a folder Wisp may not read.
-    static func orphan(_ worktree: String, home: String, readsGuarded: Bool) -> Orphan? {
-        guard let gitdir = gitdir(worktree), gitdir.contains("/.git/worktrees/") else { return nil }
-        if gitdir.hasPrefix("/Volumes/") {
-            let volume = gitdir.split(separator: "/").prefix(2).joined(separator: "/")
-            if !CleanFiles.isDirectory("/" + volume) { return nil }
-        }
-        if !readsGuarded && CleanFiles.isGuarded(gitdir, home: home) { return nil }
-        if CleanFiles.exists(gitdir) { return nil }
-        let repository = gitdir.components(separatedBy: "/.git/worktrees/")[0]
-        return Orphan(path: worktree, repository: (repository as NSString).lastPathComponent)
     }
 }

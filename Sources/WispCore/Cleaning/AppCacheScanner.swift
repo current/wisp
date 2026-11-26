@@ -103,12 +103,14 @@ public struct AppCacheScanner: CleanScanner {
                     ? "Files \(app.name) downloaded. It downloads them again when needed, which can take a while."
                     : "Temporary files \(app.name) makes again as you use it."
                 batch.append(CleanItem(id: "appcache:\(app.paths[0])", tab: .junk, group: Self.group, name: "\(app.name) cache",
-                                       detail: detail, paths: app.paths, bytes: size.bytes, modified: size.modified,
-                                       safety: costly ? .checkFirst : .safe, ownerBundleID: app.bundleID))
+                                       detail: detail + size.unreadNote, paths: app.paths, bytes: size.bytes, modified: size.modified,
+                                       safety: costly ? .checkFirst : .safe, ownerBundleID: app.bundleID).stamped(sizes))
             }
             if !batch.isEmpty { context.found(batch) }
             items += batch
         }
+        // A process that ends right after its scan, like the CLI, keeps what it measured.
+        sizer.cache?.save()
         return items
     }
 

@@ -14,6 +14,8 @@ struct BulkEntry {
     var length: UInt64
     var created: Double
     var modified: Double
+    /// Nanoseconds since 1970, for the stamp a clean checks.
+    var modifiedNanos: Int64 = 0
     var accessed: Double
     var flags: UInt32
     /// Pure APFS clones share it; 0 when the volume does not report one.
@@ -22,6 +24,17 @@ struct BulkEntry {
     /// Its contents live in the cloud. Reading it would start a download.
     var isDataless: Bool { flags & UInt32(SF_DATALESS) != 0 }
     var isHidden: Bool { name.hasPrefix(".") || flags & UInt32(UF_HIDDEN) != 0 }
+
+    /// What the walk saw, as a clean compares it before it removes anything.
+    var stamp: CleanStamp {
+        let kind: UInt32 = switch self.kind {
+        case .file: UInt32(S_IFREG)
+        case .folder: UInt32(S_IFDIR)
+        case .symlink: UInt32(S_IFLNK)
+        case .other: 0
+        }
+        return CleanStamp(device: Int64(device), inode: fileID, kind: kind, size: Int64(length), modified: modifiedNanos)
+    }
     var pathExtension: String { (name as NSString).pathExtension.lowercased() }
 }
 
@@ -100,9 +113,11 @@ final class BulkWalker {
         var buffer = buffers.popLast() ?? [UInt8](repeating: 0, count: 64 * 1024)
         defer { buffers.append(buffer) }
         let capacity = buffer.count
+        CleanScanCounters.opened()
         while true {
             let count = buffer.withUnsafeMutableBytes { getattrlistbulk(fd, &request, $0.baseAddress!, capacity, options) }
             if count <= 0 { return }
+            CleanScanCounters.listed(Int(count))
             buffer.withUnsafeBytes { raw in
                 var start = raw.baseAddress!
                 for _ in 0..<count {
@@ -150,7 +165,11 @@ final class BulkWalker {
             p += 4
         }
         if has(ATTR_CMN_CRTIME) { entry.created = time() }
-        if has(ATTR_CMN_MODTIME) { entry.modified = time() }
+        if has(ATTR_CMN_MODTIME) {
+            let stamp = p.loadUnaligned(as: timespec.self)
+            entry.modifiedNanos = Int64(stamp.tv_sec) * 1_000_000_000 + Int64(stamp.tv_nsec)
+            entry.modified = time()
+        }
         if has(ATTR_CMN_ACCTIME) { entry.accessed = time() }
         if has(ATTR_CMN_FLAGS) {
             entry.flags = p.loadUnaligned(as: UInt32.self)
@@ -181,10 +200,12 @@ final class BulkWalker {
 }
 
 /// A few threads that work through tasks, where a task may add more. The calling thread
-/// works too, so the pool finishes even when no other thread is free to join it.
+/// works too, so the pool finishes even when no other thread is free to join it. Tasks run
+/// in the order they were added, so the folders a scan names first show first.
 final class TaskPool: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = NSCondition()
     private var tasks: [() -> Void] = []
+    private var head = 0
     private var running = 0
     /// Helpers that joined and have not left yet.
     private var helpers = 0
@@ -192,8 +213,14 @@ final class TaskPool: @unchecked Sendable {
     private let helpersLeft = DispatchSemaphore(value: 0)
 
     func add(_ task: @escaping () -> Void) {
-        lock.withLock { tasks.append(task) }
+        lock.withLock {
+            tasks.append(task)
+            lock.signal()
+        }
     }
+
+    /// Tasks waiting for a thread. A walk splits a folder off as a task only while this is low.
+    var waiting: Int { lock.withLock { tasks.count - head } }
 
     /// Returns when every task, including those added along the way, is done.
     func run(threads: Int, qos: DispatchQoS.QoSClass) {
@@ -223,20 +250,27 @@ final class TaskPool: @unchecked Sendable {
 
     private func work() {
         while true {
-            let next: (() -> Void)?? = lock.withLock {
-                if let task = tasks.popLast() {
-                    running += 1
-                    return .some(task)
+            // Wait while running tasks may still add more; none left and none running means done.
+            let next: (() -> Void)? = lock.withLock {
+                while head == tasks.count {
+                    if running == 0 { return nil }
+                    lock.wait()
                 }
-                return running == 0 ? nil : .some(nil)
+                running += 1
+                let task = tasks[head]
+                head += 1
+                if head > 4096, head * 2 > tasks.count {
+                    tasks.removeFirst(head)
+                    head = 0
+                }
+                return task
             }
-            guard let next else { return }
-            guard let task = next else {
-                usleep(2000)
-                continue
-            }
+            guard let task = next else { return }
             autoreleasepool { task() }
-            lock.withLock { running -= 1 }
+            lock.withLock {
+                running -= 1
+                if running == 0 { lock.broadcast() }
+            }
         }
     }
 }

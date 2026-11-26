@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 
 /// A file the duplicate search may compare.
-struct DuplicateCandidate: Sendable {
+struct DuplicateCandidate: Codable, Sendable {
     var path: String
     var length: Int64
     var allocated: Int64
@@ -16,6 +16,7 @@ struct DuplicateCandidate: Sendable {
     /// Lower is a better place to keep a copy: Documents and Pictures before Downloads and Desktop.
     var placeRank: Int
     var isICloud: Bool
+    var stamp: CleanStamp?
 }
 
 /// Finds identical files: same size, then the same first and last 64 KB, then the same
@@ -23,11 +24,14 @@ struct DuplicateCandidate: Sendable {
 struct DuplicateFinder {
     var limit: Int64
     var isCancelled: () -> Bool
+    /// Hashes from earlier scans, used while the file keeps its id, size and date to the nanosecond.
+    var cache: CleanScanCache?
 
     static let edge = 64 * 1024
     private static let chunk = 1 << 20
 
     func groups(_ candidates: [DuplicateCandidate]) -> DuplicateSummary {
+        defer { cache?.save() }
         var summary = DuplicateSummary()
         var budget = limit
 
@@ -105,7 +109,35 @@ struct DuplicateFinder {
         return fd
     }
 
+    private func known(_ file: DuplicateCandidate) -> CleanScanCache.FileHash? {
+        guard let cache, let stamp = file.stamp, let hash = cache.hash(file.path),
+              hash.fileID == stamp.inode, hash.length == file.length, hash.modified == Double(stamp.modified) else { return nil }
+        return hash
+    }
+
+    private func remember(_ file: DuplicateCandidate, edge: String? = nil, full: String? = nil) {
+        guard let cache, let stamp = file.stamp else { return }
+        var hash = known(file) ?? CleanScanCache.FileHash(fileID: stamp.inode, length: file.length, modified: Double(stamp.modified))
+        if let edge { hash.edge = edge }
+        if let full { hash.full = full }
+        cache.storeHash(file.path, hash)
+    }
+
     private func edgeHash(_ file: DuplicateCandidate) -> String? {
+        if let edge = known(file)?.edge { return edge }
+        guard let digest = readEdges(file) else { return nil }
+        remember(file, edge: digest)
+        return digest
+    }
+
+    private func fullHash(_ file: DuplicateCandidate) -> String? {
+        if let full = known(file)?.full { return full }
+        guard let digest = readWhole(file) else { return nil }
+        remember(file, full: digest)
+        return digest
+    }
+
+    private func readEdges(_ file: DuplicateCandidate) -> String? {
         guard let fd = open(file) else { return nil }
         defer { close(fd) }
         var hasher = SHA256()
@@ -125,7 +157,7 @@ struct DuplicateFinder {
         return Self.hex(hasher.finalize())
     }
 
-    private func fullHash(_ file: DuplicateCandidate) -> String? {
+    private func readWhole(_ file: DuplicateCandidate) -> String? {
         guard let fd = open(file) else { return nil }
         defer { close(fd) }
         var hasher = SHA256()

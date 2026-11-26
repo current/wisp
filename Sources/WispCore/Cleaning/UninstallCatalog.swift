@@ -13,12 +13,8 @@ extension InstalledApps {
     }
 
     /// A bundle's size on disk. Stops early, with what it counted, once `cancel` is set.
+    /// An app unchanged since it was last measured is not read again.
     public static func bundleBytes(_ path: String, cancel: ScanFlag) -> Int64 {
-        var rules = FolderScanner.Rules()
-        // Only the total matters, so no node below the bundle is kept.
-        rules.keepChildren = 0
-        rules.smallestFolder = .max
-        rules.smallestFile = .max
-        return Int64(clamping: FolderScanner(rules: rules, cancel: cancel).folder(at: path).size)
+        CleanSizer(isCancelled: { cancel.isSet }).size(path).bytes
     }
 }

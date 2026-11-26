@@ -105,7 +105,7 @@ public struct LeftoversScanner: CleanScanner {
                 if area.folder == "Containers" {
                     // The container says which bundle made it; when that bundle exists the container is in use.
                     let creator = LibraryArea.containerBundle(path)
-                    if let creator, FileManager.default.fileExists(atPath: creator) { continue }
+                    if let creator, FileManager.default.fileExists(atPath: creator) || Self.onMissingVolume(creator) { continue }
                     add(entry, path, area: area.label, hint: creator.flatMap(Self.appName))
                 } else {
                     add(LibraryArea.bundleKey(entry), path, area: area.label)
@@ -179,27 +179,38 @@ public struct LeftoversScanner: CleanScanner {
             merged[parent] = into
         }
 
-        let meter = FootprintMeter(home: home, fullDiskAccess: access)
+        let meter = FootprintMeter(home: home, fullDiskAccess: access, isCancelled: context.isCancelled)
+        let figures = meter.measure(merged.values.flatMap(\.paths))
+        CleanScanCache.shared?.save()
+        if context.isCancelled() { return [] }
         let trashNames = access ? trashedAppNames(home: home) : [:]
         let cutoff = now().addingTimeInterval(-minimumAge)
         var items: [CleanItem] = []
         for (key, candidate) in merged {
-            if context.isCancelled() { return [] }
             var bytes: Int64 = 0
             var latest: Date?
             for path in candidate.paths {
-                let figure = meter.measure(path)
+                let figure = figures[path] ?? FootprintMeter.Figure(bytes: 0)
                 bytes += figure.bytes
                 if let date = figure.modified { latest = max(latest ?? date, date) }
             }
             if only == nil, let latest, latest > cutoff { continue }
             let name = candidate.nameHint ?? trashNames[key.lowercased()] ?? key
-            items.append(CleanItem(id: "leftovers:" + key, tab: .leftovers, group: "Removed apps", name: name,
-                                   detail: "Files \(name == key ? "an app" : name) left in \(Self.list(candidate.areas)) after it was removed.",
-                                   paths: candidate.paths.sorted(), bytes: bytes, modified: latest, safety: .checkFirst, removal: .trash,
-                                   ownerBundleID: key, checkedByDefault: false))
+            var item = CleanItem(id: "leftovers:" + key, tab: .leftovers, group: "Removed apps", name: name,
+                                 detail: "Files \(name == key ? "an app" : name) left in \(Self.list(candidate.areas)) after it was removed.",
+                                 paths: candidate.paths.sorted(), bytes: bytes, modified: latest, safety: .checkFirst, removal: .trash,
+                                 ownerBundleID: key, checkedByDefault: false)
+            for path in candidate.paths { item.stamps[path] = figures[path]?.stamp }
+            items.append(item)
         }
         return items.sorted { $0.bytes > $1.bytes }
+    }
+
+    /// On a disk that is not connected, the app may well still be there.
+    static func onMissingVolume(_ path: String) -> Bool {
+        guard path.hasPrefix("/Volumes/") else { return false }
+        let volume = path.split(separator: "/").prefix(2).joined(separator: "/")
+        return !CleanFiles.isDirectory("/" + volume)
     }
 
     static func list(_ areas: [String]) -> String {
@@ -243,6 +254,6 @@ public struct LeftoversScanner: CleanScanner {
     }
 
     private func listing(_ folder: String) -> [String] {
-        ((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []).filter { !$0.hasPrefix(".") }
+        CleanFiles.names(folder).filter { !$0.hasPrefix(".") }
     }
 }

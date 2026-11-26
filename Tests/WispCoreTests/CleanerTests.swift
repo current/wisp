@@ -40,6 +40,10 @@ import Testing
         var git: CleanGuards.GitState = .clean
         var toolStatus: Int32 = 0
         var snapshotList = ""
+        /// What `simctl list devices -j`, `simctl runtime list -j` and `git worktree list --porcelain -z` print.
+        var simulators = #"{"devices": {}}"#
+        var runtimes = "{}"
+        var worktrees = ""
         let scratchRoot: String
 
         init(_ scratch: Scratch) { scratchRoot = scratch.root }
@@ -56,6 +60,9 @@ import Testing
                         runTool: { path, arguments in
                             self.lock.withLock { self.tools.append([path] + arguments) }
                             if arguments.first == "listlocalsnapshotdates" { return (0, self.snapshotList) }
+                            if arguments.starts(with: ["simctl", "list"]) { return (0, self.simulators) }
+                            if arguments.starts(with: ["simctl", "runtime", "list"]) { return (0, self.runtimes) }
+                            if arguments.contains("worktree"), arguments.contains("list") { return (0, self.worktrees) }
                             return (self.toolStatus, self.toolStatus == 0 ? "" : "Error: it went wrong\n")
                         },
                         trash: { path in
@@ -68,10 +75,11 @@ import Testing
         }
     }
 
+    /// Stamped as a scan stamps what it finds.
     func item(_ paths: [String], bytes: Int64 = 1000, removal: CleanRemoval = .trash, owner: String? = nil,
               safety: CleanSafety = .safe) -> CleanItem {
         CleanItem(id: "test:" + (paths.first ?? "none"), tab: .junk, group: "Test", name: "Test item", detail: "A test.",
-                  paths: paths, bytes: bytes, safety: safety, removal: removal, ownerBundleID: owner)
+                  paths: paths, bytes: bytes, safety: safety, removal: removal, ownerBundleID: owner).stamped()
     }
 
     // MARK: Path rules
@@ -152,8 +160,9 @@ import Testing
         fakes.use = ProcessUse(runningBundleIDs: ["com.example.app"])
         #expect(cleaner.clean([item([cache], owner: "com.example.app")]).results[0].outcome == .skipped("Its app is open. Quit it and clean again"))
 
+        // A worktree: its .git is a file. A folder whose .git is a folder is a repository and always stays.
         let project = scratch.make("src/old-project")
-        scratch.make("src/old-project/.git")
+        scratch.make("src/old-project/.git", file: true)
         fakes.use = ProcessUse()
         fakes.git = .uncommitted
         #expect(cleaner.clean([item([project])]).results[0].outcome == .skipped("It has changes that are not committed"))
@@ -232,6 +241,7 @@ import Testing
         #expect(Cleaner.worktreeRepository(worktree) == repository)
         #expect(Cleaner.worktreeRepository(repository) == nil)
         let fakes = Fakes(scratch)
+        fakes.worktrees = "worktree \(repository)\0HEAD 4b88aee\0branch refs/heads/main\0\0worktree \(worktree)\0HEAD 4b88aee\0prunable gitdir file points to non-existent location\0\0"
         let report = Cleaner(home: scratch.home, guards: fakes.guards).clean([item([worktree])])
         #expect(report.results[0].outcome == .removed)
         if CleanTools.git != nil { #expect(fakes.tools.last?.suffix(4) == ["-C", repository, "worktree", "prune"]) }
@@ -283,9 +293,12 @@ import Testing
         fakes.snapshotList = "Snapshot dates for all disks:\n2026-11-01-090000\n2026-11-04-101500\n"
         let cleaner = Cleaner(home: scratch.home, guards: fakes.guards)
         let udid = "6F3D1C0E-6B8A-4C3E-9D3B-2A1F0E9C8B7A"
+        let image = "1CE31380-2525-4AA2-9878-679933FF43D3"
+        fakes.simulators = #"{"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-27-0": [{"udid": "\#(udid)", "state": "Shutdown", "isAvailable": true}]}}"#
+        fakes.runtimes = #"{"\#(image)": {"identifier": "\#(image)", "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-18-0", "deletable": true}}"#
         let report = cleaner.clean([
             item([], removal: .simulator(udid: udid)),
-            item([], removal: .simulatorRuntime(identifier: "com.apple.CoreSimulator.SimRuntime.iOS-18-0")),
+            item([], removal: .simulatorRuntime(identifier: image)),
             item([], removal: .localSnapshot(date: "2026-11-01-090000")),
             item([], removal: .localSnapshot(date: "2026-11-04-101500")),
             item([], removal: .simulator(udid: "--all")),
@@ -297,7 +310,7 @@ import Testing
             .skipped("Its name does not look right, so Wisp left it alone"),
         ])
         #expect(fakes.tools.contains(["/usr/bin/xcrun", "simctl", "delete", udid]))
-        #expect(fakes.tools.contains(["/usr/bin/xcrun", "simctl", "runtime", "delete", "com.apple.CoreSimulator.SimRuntime.iOS-18-0"]))
+        #expect(fakes.tools.contains(["/usr/bin/xcrun", "simctl", "runtime", "delete", image]))
         #expect(fakes.tools.contains(["/usr/bin/tmutil", "deletelocalsnapshots", "2026-11-01-090000"]))
         #expect(!fakes.tools.contains(["/usr/bin/tmutil", "deletelocalsnapshots", "2026-11-04-101500"]))
         #expect(fakes.tools.filter { $0.contains("listlocalsnapshotdates") }.count == 1)
@@ -307,6 +320,7 @@ import Testing
         let scratch = Scratch()
         let fakes = Fakes(scratch)
         fakes.toolStatus = 1
+        fakes.simulators = #"{"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-27-0": [{"udid": "6F3D1C0E-6B8A-4C3E-9D3B-2A1F0E9C8B7A", "state": "Shutdown"}]}}"#
         let report = Cleaner(home: scratch.home, guards: fakes.guards)
             .clean([item([], removal: .simulator(udid: "6F3D1C0E-6B8A-4C3E-9D3B-2A1F0E9C8B7A"))])
         #expect(report.results[0].outcome == .failed("Error: it went wrong"))

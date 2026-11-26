@@ -72,6 +72,16 @@ public struct LaunchItem: Sendable, Equatable, Identifiable {
     static let interpreters: Set<String> = ["sh", "bash", "zsh", "env", "python", "python3", "node", "ruby", "perl", "osascript", "bun", "deno", "uv"]
 
     /// A per-user agent whose program no longer exists: safe to move to the Trash.
+    /// A path counts as there when it is, or when it is on a disk that is not connected
+    /// right now (`/Volumes/<name>` missing): plugging the disk back in brings it back,
+    /// so an item pointing there is not left over.
+    public static func presentOrUnplugged(_ path: String) -> Bool {
+        if FileManager.default.fileExists(atPath: path) { return true }
+        let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard path.hasPrefix("/Volumes/"), parts.count >= 2 else { return false }
+        return !FileManager.default.fileExists(atPath: "/Volumes/" + parts[1])
+    }
+
     public var canTrash: Bool {
         guard scope == .user, kind == .agent, let program, program.hasPrefix("/") else { return false }
         guard !programExists || (script != nil && !scriptExists) else { return false }
@@ -359,7 +369,7 @@ public final class LaunchItemScanner: @unchecked Sendable {
             guard let id = Self.bundleID(helper) else { continue }
             let executable = Self.executable(helper)
             var item = LaunchItem(path: helper, label: id, kind: .loginItem, scope: .app, program: executable,
-                                  programExists: executable.map { fileManager.fileExists(atPath: $0) } ?? false)
+                                  programExists: executable.map(LaunchItem.presentOrUnplugged) ?? false)
             item.appPath = app
             item.runAtLoad = true
             items.append(item)
@@ -384,7 +394,7 @@ public final class LaunchItemScanner: @unchecked Sendable {
     }
 
     static func item(plist: [String: Any], path: String, kind: LaunchItem.Kind, scope: LaunchItem.Scope, host: String? = nil,
-                     lookup: (String) -> String?, exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> LaunchItem? {
+                     lookup: (String) -> String?, exists: (String) -> Bool = LaunchItem.presentOrUnplugged) -> LaunchItem? {
         guard let label = plist["Label"] as? String, !label.isEmpty else { return nil }
         var program = plist["Program"] as? String ?? (plist["ProgramArguments"] as? [String])?.first
         if let bundleProgram = plist["BundleProgram"] as? String, let host {

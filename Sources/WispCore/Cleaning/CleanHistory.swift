@@ -88,11 +88,23 @@ public enum CleanHistory {
 
     public static func load(from url: URL = fileURL) -> [CleanRecord] {
         guard let data = try? Data(contentsOf: url) else { return [] }
-        return (try? decoder.decode([CleanRecord].self, from: data)) ?? []
+        return decode(data) ?? []
+    }
+
+    /// Each record on its own: one this build cannot read (written by a newer one, say) is
+    /// left out instead of taking every other record with it. Nil when the file is not a list at all.
+    static func decode(_ data: Data) -> [CleanRecord]? {
+        struct Lenient: Decodable {
+            var record: CleanRecord?
+            init(from decoder: Decoder) throws { record = try? CleanRecord(from: decoder) }
+        }
+        return (try? decoder.decode([Lenient].self, from: data))?.compactMap(\.record)
     }
 
     /// Adds a record and trims the file to the newest `limit`. The app and the CLI can both
-    /// write, so the read and the write happen under a lock on the file.
+    /// write, so the read and the write happen under a lock on the file. Records this build
+    /// cannot read are written back as they were; a file that is not a list at all is kept
+    /// beside it under a dated name, not written over.
     public static func append(_ record: CleanRecord, to url: URL = fileURL) {
         let lock = open(url.path + ".lock", O_CREAT | O_RDWR, 0o600)
         if lock >= 0 { flock(lock, LOCK_EX) }
@@ -102,10 +114,19 @@ public enum CleanHistory {
                 close(lock)
             }
         }
-        var records = load(from: url)
-        records.append(record)
-        if records.count > limit { records.removeFirst(records.count - limit) }
-        guard let data = try? encoder.encode(records) else { return }
+        var entries: [Any] = []
+        if let data = try? Data(contentsOf: url), !data.isEmpty {
+            if let list = try? JSONSerialization.jsonObject(with: data) as? [Any] {
+                entries = list
+            } else {
+                let aside = url.deletingPathExtension().appendingPathExtension("unreadable-\(Int(Date().timeIntervalSince1970)).json")
+                guard (try? FileManager.default.moveItem(at: url, to: aside)) != nil else { return }
+            }
+        }
+        guard let encoded = try? encoder.encode(record), let object = try? JSONSerialization.jsonObject(with: encoded) else { return }
+        entries.append(object)
+        if entries.count > limit { entries.removeFirst(entries.count - limit) }
+        guard let data = try? JSONSerialization.data(withJSONObject: entries, options: [.prettyPrinted, .sortedKeys]) else { return }
         try? data.write(to: url, options: .atomic)
     }
 }

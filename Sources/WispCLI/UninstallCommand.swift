@@ -40,8 +40,11 @@ enum UninstallCommand {
                 fail("\(app.name) is running. Quit it, then run this again")
                 return 1
             }
-            let trashable = checked.filter { $0.removal == .trash && $0.paths.allSatisfy { UninstallPlan.mayRemove($0) } }
-            let report = Cleaner(exclusions: CleanSettings.load().exclusions).clean(trashable)
+            // The Cleaner holds every item to what an uninstall may remove, as it does for the app,
+            // and says why it left one; only Homebrew's removal, which is permanent, is left to the app.
+            var report = Cleaner(exclusions: CleanSettings.load().exclusions).clean(checked.filter { $0.removal == .trash })
+            report.results += checked.filter { $0.removal != .trash }
+                .map { CleanResult(item: $0, outcome: .skipped("wisp uninstall only moves things to the Trash")) }
             if !report.results.isEmpty { CleanHistory.append(report.record(trigger: .cli)) }
             if json {
                 FileHandle.standardOutput.write(Report.json(report.record(trigger: .cli)))
@@ -123,9 +126,6 @@ enum UninstallCommand {
         }, right: [1])
         return 0
     }
-
-    /// The one place the CLI removes anything. Moves to the Trash, never deletes, and only
-    /// what an uninstall plan may touch. The app's Cleaner can take this over.
 
     private static func fail(_ message: String) {
         FileHandle.standardError.write("wisp: \(message)\n".data(using: .utf8)!)

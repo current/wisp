@@ -119,29 +119,51 @@ struct LibraryArea: Sendable {
     }
 }
 
-/// Sizes and dates for files and folders, through one FolderScanner so hard links count once.
+/// Sizes and dates for files and folders in ~/Library, leaving guarded folders alone without Full Disk Access.
 final class FootprintMeter {
-    private let scanner: FolderScanner
+    private let sizer: CleanSizer
     private let enabled: Bool
 
-    init(home: String, fullDiskAccess: Bool, enabled: Bool = true) {
-        var rules = FolderScanner.Rules()
-        rules.skip = fullDiskAccess ? [] : Set(StorageAccess.guarded.map { home + "/" + $0 })
-        scanner = FolderScanner(rules: rules)
+    init(home: String, fullDiskAccess: Bool, enabled: Bool = true, cache: CleanScanCache? = CleanScanCache.shared,
+         isCancelled: @escaping () -> Bool = { false }) {
+        sizer = CleanSizer(isCancelled: isCancelled, cache: cache)
+        sizer.skip = fullDiskAccess ? [] : Set(StorageAccess.guarded.map { home + "/" + $0 })
         self.enabled = enabled
+    }
+
+    struct Figure {
+        var bytes: Int64
+        var modified: Date?
+        var stamp: CleanStamp?
     }
 
     /// Allocated bytes and the latest change below the path.
     func measure(_ path: String) -> (bytes: Int64, modified: Date?) {
-        var info = stat()
-        guard lstat(path, &info) == 0 else { return (0, nil) }
-        let own = Date(timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec))
-        if (info.st_mode & S_IFMT) != S_IFDIR {
-            return (Int64(info.st_blocks) * 512, own)
+        measure([path])[path].map { ($0.bytes, $0.modified) } ?? (0, nil)
+    }
+
+    /// Several paths at once, which the sizer spreads over its threads.
+    func measure(_ paths: [String]) -> [String: Figure] {
+        var result: [String: Figure] = [:]
+        var folders: [String] = []
+        for path in paths {
+            var info = stat()
+            guard lstat(path, &info) == 0 else {
+                result[path] = Figure(bytes: 0)
+                continue
+            }
+            let own = Date(timeIntervalSince1970: TimeInterval(info.st_mtimespec.tv_sec))
+            if (info.st_mode & S_IFMT) != S_IFDIR {
+                result[path] = Figure(bytes: Int64(info.st_blocks) * 512, modified: own, stamp: CleanStamp(info))
+            } else {
+                result[path] = Figure(bytes: 0, modified: own, stamp: CleanStamp(info))
+                if enabled { folders.append(path) }
+            }
         }
-        guard enabled else { return (0, own) }
-        let node = scanner.folder(at: path)
-        let modified = node.modified > 0 ? Date(timeIntervalSince1970: node.modified) : own
-        return (Int64(node.size), max(modified, own))
+        for (path, size) in sizer.sizes(folders) {
+            let own = result[path]?.modified
+            result[path] = Figure(bytes: size.bytes, modified: [size.modified, own].compactMap { $0 }.max(), stamp: size.stamp ?? result[path]?.stamp)
+        }
+        return result
     }
 }

@@ -41,9 +41,12 @@ public struct DeveloperCacheScanner: CleanScanner {
         catalog("homebrew", group: packages, safety: .safe, detail: "Bottles and sources brew downloads again when it needs them."),
         catalog("npm", group: packages, paths: [".npm/_cacache", ".npm/_npx"], safety: .safe,
                 detail: "Packages npm and npx download again when needed."),
-        catalog("pnpm", group: packages, paths: ["Library/pnpm/store", ".pnpm-store", ".local/share/pnpm/store"], safety: .safe,
-                detail: "Packages pnpm shares between projects. pnpm downloads them again when needed."),
-        catalog("yarn", group: packages, safety: .safe, detail: "Packages Yarn downloads again when needed."),
+        // pnpm can run from its own store, and projects link into it.
+        catalog("pnpm", group: packages, paths: ["Library/pnpm/store", ".pnpm-store", ".local/share/pnpm/store"], safety: .checkFirst,
+                detail: "Packages pnpm shares between projects. Projects link into it, so they need pnpm install again."),
+        // Yarn 2 and later load packages straight from .yarn/berry/cache (Plug'n'Play).
+        catalog("yarn", group: packages, safety: .checkFirst,
+                detail: "Packages Yarn downloads again when needed. Projects that load packages from it need yarn install again."),
         catalog("bun", group: packages, safety: .safe, detail: "Packages Bun downloads again when needed."),
         catalog("cocoapods", group: packages, paths: ["Library/Caches/CocoaPods"], safety: .safe,
                 detail: "Pod sources CocoaPods downloads again on the next pod install."),
@@ -132,13 +135,15 @@ public struct DeveloperCacheScanner: CleanScanner {
                 let paths = tool.paths.filter { sizes[$0] != nil }
                 let size = sizer.total(paths, sizes: sizes)
                 guard !paths.isEmpty, size.bytes >= minimumBytes else { continue }
-                batch.append(CleanItem(id: "devcache:\(paths[0])", tab: .developer, group: group, name: tool.name, detail: tool.detail,
+                batch.append(CleanItem(id: "devcache:\(paths[0])", tab: .developer, group: group, name: tool.name, detail: tool.detail + size.unreadNote,
                                        paths: paths, bytes: size.bytes, modified: size.modified, safety: tool.safety,
-                                       ownerBundleID: tool.owner))
+                                       ownerBundleID: tool.owner).stamped(sizes))
             }
             if !batch.isEmpty { context.found(batch) }
             items += batch
         }
+        // A process that ends right after its scan, like the CLI, keeps what it measured.
+        sizer.cache?.save()
         return items
     }
 }

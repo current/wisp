@@ -105,9 +105,8 @@ import Testing
         #expect(report.info[zip.id]?.isICloud == false)
         #expect(report.items.allSatisfy { $0.tab == .largeFiles })
 
-        let clip = report.items.first { $0.name == "clip.mp4" }!
-        #expect(report.info[clip.id]?.isICloud == true)
-        #expect(clip.detail.hasPrefix("Video in iCloud Drive/Trips."))
+        // iCloud Drive's own folder is left: removing a file there removes it from every device.
+        #expect(byName["clip.mp4"] == nil)
     }
 
     @Test func virtualMachineIsOneRowAndOnlyBundlesCountInVMFolders() {

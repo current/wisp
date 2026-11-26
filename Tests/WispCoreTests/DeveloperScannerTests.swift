@@ -126,7 +126,7 @@ import Testing
         home.file(relative + "/README.md", bytes: 10_000)
     }
 
-    @Test func orphanedWorktreesAreFound() throws {
+    @Test func onlyTrackedWorktreesAreOffered() throws {
         let home = FakeHome()
         home.file("src/repo/.git/HEAD", text: "ref: refs/heads/main")
         home.folder("src/repo/.git/worktrees/live")
@@ -143,11 +143,12 @@ import Testing
         let scanner = WorktreeScanner(roots: [home.path + "/src"], workingFolders: { [home.path + "/src/repo-worktrees/busy"] },
                                       readsGuardedFolders: { true })
         let items = scanner.scan(home.context())
-        // "live" is still tracked, and listed because it is in an agent's folder.
-        #expect(Set(items.map(\.name)) == ["gone (repo)", "deleted-repo (deleted)", "beside (repo)", "inner (repo)", "live (repo)"])
+        // "live" is still tracked, and listed because it is in an agent's folder. The ones their
+        // repository forgot are left: git cannot say what in them was never committed.
+        #expect(Set(items.map(\.name)) == ["live (repo)"])
         #expect(items.allSatisfy { $0.safety == .checkFirst && $0.group == "Worktrees" && !$0.checkedByDefault })
-        let gone = try #require(items.first { $0.name == "gone (repo)" })
-        #expect(gone.paths == [home.path + "/.t3/worktrees/repo/gone"])
+        let live = try #require(items.first)
+        #expect(live.paths == [home.path + "/.t3/worktrees/repo/live"])
     }
 
     @Test func agentWorktreesAllListButHandMadeOnesOnlyWhenStale() throws {

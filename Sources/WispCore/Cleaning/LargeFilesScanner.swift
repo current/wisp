@@ -26,18 +26,27 @@ public struct LargeFilesScanner: CleanScanner {
     /// For HF_HOME, HF_HUB_CACHE, OLLAMA_MODELS and the like.
     public var environment: [String: String]
     public var index: LargeFileIndex
+    /// Real paths of the disk images attached right now; asked once, when the scan meets an image.
+    public var attachedImages: @Sendable () -> Set<String>
+    /// Remembers what each folder held, bundles' sizes and files' hashes; nil reads everything every time.
+    var cache: CleanScanCache? = CleanScanCache.shared
 
     public init(findDuplicates: Bool = true, limits: Limits = Limits(),
-                environment: [String: String] = ProcessInfo.processInfo.environment, index: LargeFileIndex = .shared) {
+                environment: [String: String] = ProcessInfo.processInfo.environment, index: LargeFileIndex = .shared,
+                attachedImages: @escaping @Sendable () -> Set<String> = { DiskImages.attached() }) {
         self.findDuplicates = findDuplicates
         self.limits = limits
         self.environment = environment
         self.index = index
+        self.attachedImages = attachedImages
     }
 
     public func scan(_ context: CleanScanContext) -> [CleanItem] {
         report(context).items
     }
+
+    /// Part of every memo key: a change to what the walk keeps makes old memos useless.
+    static let memoVersion = "large-1"
 
     static let largePrefix = "large:"
     static let duplicatePrefix = "duplicate:"
@@ -52,7 +61,10 @@ public struct LargeFilesScanner: CleanScanner {
     public func report(_ context: CleanScanContext) -> LargeFilesReport {
         let started = Date()
         index.reset()
-        let state = ScanState(context: context, index: index)
+        let state = ScanState(context: context, index: index, attachedImages: attachedImages)
+        state.cache = cache.flatMap { $0.isFollowed(context.home.path) ? $0 : nil }
+        state.cache?.catchUp(within: state.cache?.reuseWindow ?? 0, isCancelled: context.isCancelled)
+        state.salt = CleanScanCache.digest([Self.memoVersion, "\(limits.largeFile)", "\(limits.duplicate)"] + context.excluded.sorted())
         let home = context.home.path
         // Without Full Disk Access, opening Desktop, Documents or Downloads makes macOS ask the user.
         let locked = StorageAccess.skipped(home: home)
@@ -66,7 +78,7 @@ public struct LargeFilesScanner: CleanScanner {
         for root in roots {
             pool.add { RootWalk(root: root, state: state, limits: limits, home: home, pool: pool).start() }
         }
-        AIModelFinder(home: home, environment: environment, limits: limits, context: context).find(pool: pool, emit: state.emit)
+        AIModelFinder(home: home, environment: environment, limits: limits, context: context, cache: state.cache).find(pool: pool, emit: state.emit)
         pool.run(threads: 4, qos: .utility)
 
         var duplicates = DuplicateSummary()
@@ -74,7 +86,7 @@ public struct LargeFilesScanner: CleanScanner {
             duplicates.skipped = true
         } else if !context.isCancelled() {
             // Background QoS: hashing is the slow, disk-heavy part and nobody waits on it.
-            let finder = DuplicateFinder(limit: limits.hashedBytes, isCancelled: context.isCancelled)
+            let finder = DuplicateFinder(limit: limits.hashedBytes, isCancelled: context.isCancelled, cache: state.cache)
             let candidates = state.candidates
             let group = DispatchGroup()
             DispatchQueue.global(qos: .background).async(group: group) { duplicates = finder.groups(candidates) }
@@ -82,6 +94,7 @@ public struct LargeFilesScanner: CleanScanner {
             state.emit(Self.rows(for: duplicates, candidates: candidates, state: state, home: home))
         }
         index.setDuplicates(duplicates)
+        state.cache?.save()
         var report = state.report
         report.duplicates = duplicates
         report.seconds = Date().timeIntervalSince(started)
@@ -107,11 +120,11 @@ public struct LargeFilesScanner: CleanScanner {
         let user: [(String, Int)] = [("Documents", 0), ("Pictures", 0), ("Movies", 1), ("Music", 1), ("Desktop", 2), ("Downloads", 2)]
         var candidates = user.map { (home + "/" + $0.0, Root.Kind.user, $0.1) }
         candidates += [(home + "/Parallels", .virtualMachines, 1), (home + "/Virtual Machines.localized", .virtualMachines, 1)]
-        candidates.append((iCloudDrive(home: home), .user, 1))
         let cloud = realPath(iCloudDrive(home: home))
         var roots: [Root] = []
         for (path, kind, rank) in candidates {
-            guard let real = followable(path, home: home) else { continue }
+            // iCloud Drive's own folders are not offered: removing a file there removes it from every device, and the cleaner leaves them.
+            guard let real = followable(path, home: home), !isInMobileDocuments(real, home: home) else { continue }
             if roots.contains(where: { real == $0.real || real.hasPrefix($0.real + "/") || $0.real.hasPrefix(real + "/") }) { continue }
             let insideCloud = cloud.map { real == $0 || real.hasPrefix($0 + "/") } ?? false
             let isICloud = insideCloud
@@ -119,6 +132,11 @@ public struct LargeFilesScanner: CleanScanner {
             roots.append(Root(real: real, display: path, kind: kind, isICloud: isICloud, placeRank: rank))
         }
         return roots
+    }
+
+    static func isInMobileDocuments(_ real: String, home: String) -> Bool {
+        let mobile = (realPath(home) ?? home) + "/Library/Mobile Documents"
+        return real == mobile || real.hasPrefix(mobile + "/")
     }
 
     static func realPath(_ path: String) -> String? {
@@ -180,9 +198,10 @@ public struct LargeFilesScanner: CleanScanner {
                     : "The copy to keep, in \(here). \(others == 1 ? "One identical copy is" : "\(others) identical copies are") elsewhere."
                 let opened = lastUsed[path] ?? lastOpened(path, accessed: file.accessed)
                 let modified = Date(timeIntervalSince1970: file.modified)
-                let item = CleanItem(id: duplicatePrefix + path, tab: .largeFiles, group: duplicatesGroup,
+                var item = CleanItem(id: duplicatePrefix + path, tab: .largeFiles, group: duplicatesGroup,
                                      name: (path as NSString).lastPathComponent, detail: detail, paths: [path], bytes: file.allocated,
                                      modified: opened ?? modified, safety: .checkFirst, checkedByDefault: offset > 0)
+                item.stamps[path] = file.stamp
                 let category = LargeFileKinds.files[(path as NSString).pathExtension.lowercased()]?.0 ?? .other
                 let info = LargeFileInfo(category: category, lastUsed: opened, modified: modified, isICloud: file.isICloud,
                                          duplicateGroup: group.id, isSuggestedKeeper: offset == 0)
@@ -205,15 +224,30 @@ final class ScanState: @unchecked Sendable {
     let context: CleanScanContext
     let index: LargeFileIndex
     var roots: [LargeFilesScanner.Root] = []
+    var cache: CleanScanCache?
+    var salt = ""
     private let lock = NSLock()
     private var _report = LargeFilesReport()
     private var _candidates: [DuplicateCandidate] = []
     private var _lastUsed: [String: Date] = [:]
     private var seen = Set<FileKey>()
+    private let attachedImages: @Sendable () -> Set<String>
+    private var attached: Set<String>?
 
-    init(context: CleanScanContext, index: LargeFileIndex) {
+    init(context: CleanScanContext, index: LargeFileIndex, attachedImages: @escaping @Sendable () -> Set<String> = { [] }) {
         self.context = context
         self.index = index
+        self.attachedImages = attachedImages
+    }
+
+    /// A disk image attached right now: the Trash cannot take it while what is on it may be open.
+    func isAttached(_ path: String) -> Bool {
+        guard DiskImages.extensions.contains((path as NSString).pathExtension.lowercased()) else { return false }
+        let images = lock.withLock {
+            if attached == nil { attached = attachedImages() }
+            return attached ?? []
+        }
+        return DiskImages.isAttached(path, in: images)
     }
 
     var report: LargeFilesReport { lock.withLock { _report } }
@@ -259,6 +293,11 @@ private struct RootWalk {
     /// deep project folder does not leave the other threads idle.
     static let splitDepth = 2
 
+    struct Memo: Codable {
+        var pending: [Collector.Pending]
+        var candidates: [DuplicateCandidate]
+    }
+
     func start() {
         walk(real: root.real, display: root.display, depth: 0, inRepo: false)
     }
@@ -269,8 +308,24 @@ private struct RootWalk {
         let walker = BulkWalker(isCancelled: state.context.isCancelled)
         let collector = Collector(walk: self, walker: walker, inRepo: inRepo)
         if depth >= Self.splitDepth {
+            // A whole subtree in one task: what it found is remembered until something below it changes.
+            let key = "large:\(state.salt):\(inRepo ? 1 : 0):\(root.kind == .user ? root.placeRank : -1):\(root.isICloud ? 1 : 0):" + display
+            if let cache = state.cache, let data = cache.memo(key), let memo = try? PropertyListDecoder().decode(Memo.self, from: data) {
+                for file in memo.pending where file.fileID == 0 || state.firstSighting(device: file.device, id: file.fileID) {
+                    collector.add(file)
+                }
+                collector.candidates = memo.candidates.filter { !state.context.isExcluded($0.path) }
+                collector.flush()
+                return
+            }
+            let event = CleanScanCache.currentEvent()
+            collector.recording = state.cache != nil
             walker.walk(real, display: display) { parent, entry, level in collector.visit(parent, entry, depth + level) }
             collector.flush()
+            if let cache = state.cache, !state.context.isCancelled(),
+               let data = try? PropertyListEncoder().encode(Memo(pending: collector.recorded, candidates: collector.recordedCandidates)) {
+                cache.storeMemo(key, path: real, event: event, data: data)
+            }
             return
         }
         var info = stat()
@@ -299,14 +354,17 @@ private struct RootWalk {
     /// What one task finds, flushed to the shared state in batches.
     final class Collector {
         /// A row waiting for its Spotlight date.
-        struct Pending {
+        struct Pending: Codable {
             var path: String
+            var device: Int32 = 0
+            var fileID: UInt64 = 0
             var bytes: UInt64
             var modified: Double
             var accessed: Double
             var category: LargeFileCategory
             var what: String?
             var suffix: String?
+            var stamp: CleanStamp?
         }
 
         let walk: RootWalk
@@ -333,8 +391,11 @@ private struct RootWalk {
         }
 
         func visit(_ parent: String, _ entry: BulkEntry, _ depth: Int) -> BulkWalker.Visit {
+            if entry.isHidden || entry.isDataless { return .skip }
+            // Most entries are small files; they go before a path is made for them.
+            if entry.kind == .file, Int64(entry.allocated) < limits.largeFile && Int64(entry.length) < limits.duplicate { return .skip }
             let path = parent + "/" + entry.name
-            if entry.isHidden || entry.isDataless || state.context.isExcluded(path) { return .skip }
+            if state.context.isExcluded(path) { return .skip }
             let home = walk.home
             switch entry.kind {
             case .folder:
@@ -362,25 +423,26 @@ private struct RootWalk {
                 return .descend
             case .file:
                 let allocated = Int64(entry.allocated)
-                if allocated < limits.largeFile && Int64(entry.length) < limits.duplicate { return .skip }
                 let ext = entry.pathExtension
                 guard root.kind == .user, !LargeFileKinds.managedFiles.contains(ext),
                       state.firstSighting(device: entry.device, id: entry.fileID) else { return .skip }
+                if state.isAttached(path) { return .skip }
                 if allocated >= limits.largeFile {
                     let kind = LargeFileKinds.files[ext]
-                    add(Pending(path: path, bytes: entry.allocated, modified: entry.modified, accessed: entry.accessed,
-                                category: kind?.0 ?? .other, what: kind?.1))
+                    add(Pending(path: path, device: entry.device, fileID: entry.fileID, bytes: entry.allocated, modified: entry.modified,
+                                accessed: entry.accessed, category: kind?.0 ?? .other, what: kind?.1, stamp: entry.stamp))
                 }
                 if Int64(entry.length) >= limits.duplicate, !insideRepo(parent) {
                     candidates.append(DuplicateCandidate(path: path, length: Int64(entry.length), allocated: allocated,
                                                          device: entry.device, fileID: entry.fileID, cloneID: entry.cloneID,
                                                          created: entry.created, modified: entry.modified, accessed: entry.accessed,
-                                                         placeRank: root.placeRank, isICloud: root.isICloud))
+                                                         placeRank: root.placeRank, isICloud: root.isICloud, stamp: entry.stamp))
                 }
                 return .skip
             case .symlink:
                 // Only a link right inside a root is followed, and only to somewhere safe to walk.
                 if depth == 0, root.kind == .user, let real = LargeFilesScanner.followable(path, home: home),
+                   !LargeFilesScanner.isInMobileDocuments(real, home: home),
                    !state.roots.contains(where: { real == $0.real || real.hasPrefix($0.real + "/") }) {
                     links.append((real, path))
                 }
@@ -391,16 +453,26 @@ private struct RootWalk {
         }
 
         private func bundle(_ path: String, _ entry: BulkEntry, _ category: LargeFileCategory, _ what: String?) {
-            guard state.firstSighting(device: entry.device, id: entry.fileID) else { return }
-            let size = walker.folderSize(path)
-            guard Int64(size.bytes) >= limits.largeFile else { return }
+            guard !state.isAttached(path), state.firstSighting(device: entry.device, id: entry.fileID) else { return }
+            // One thread: the walk around it already keeps the others busy. A bundle that did not change is not read again.
+            let sizer = CleanSizer(isCancelled: state.context.isCancelled, cache: state.cache)
+            sizer.threads = 1
+            let size = sizer.size(path)
+            guard size.bytes >= limits.largeFile else { return }
+            let newest = size.modified?.timeIntervalSince1970 ?? 0
             let suffix = category == .virtualMachines ? "Everything inside the virtual machine goes with it." : nil
-            add(Pending(path: path, bytes: size.bytes, modified: max(size.newest, entry.modified), accessed: entry.accessed,
-                        category: category, what: what, suffix: suffix))
+            add(Pending(path: path, device: entry.device, fileID: entry.fileID, bytes: UInt64(size.bytes), modified: max(newest, entry.modified),
+                        accessed: entry.accessed, category: category, what: what, suffix: suffix, stamp: entry.stamp))
         }
 
-        private func add(_ file: Pending) {
+        /// Everything this task found, kept for its memo.
+        var recorded: [Pending] = []
+        var recordedCandidates: [DuplicateCandidate] = []
+        var recording = false
+
+        func add(_ file: Pending) {
             pending.append(file)
+            if recording { recorded.append(file) }
             if pending.count >= 64 { flush() }
         }
 
@@ -414,13 +486,15 @@ private struct RootWalk {
                 if root.isICloud { detail += " Removing it also removes it from your other devices." }
                 let lastUsed = LargeFilesScanner.lastOpened(file.path, accessed: file.accessed)
                 let modified = Date(timeIntervalSince1970: file.modified)
-                let item = CleanItem(id: LargeFilesScanner.largePrefix + file.path, tab: .largeFiles, group: file.category.rawValue,
+                var item = CleanItem(id: LargeFilesScanner.largePrefix + file.path, tab: .largeFiles, group: file.category.rawValue,
                                      name: (file.path as NSString).lastPathComponent, detail: detail, paths: [file.path],
                                      bytes: Int64(file.bytes), modified: lastUsed ?? modified, safety: .checkFirst, checkedByDefault: false)
+                item.stamps[file.path] = file.stamp
                 return Row(item: item, info: LargeFileInfo(category: file.category, lastUsed: lastUsed, modified: modified, isICloud: root.isICloud))
             }
             pending.removeAll()
             state.emit(rows)
+            if recording { recordedCandidates += candidates }
             state.addCandidates(candidates)
             candidates.removeAll()
         }

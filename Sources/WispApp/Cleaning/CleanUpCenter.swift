@@ -75,7 +75,9 @@ final class CleanUpCenter {
         guard !scanners.isEmpty else { return }
         let context = CleanScanContext(excluded: settings.exclusions)
         Self.queue.async { [weak self] in
-            let items = CleanRegistry.scan([.leftovers], context: context, using: scanners).filter { $0.ownerBundleID == app.bundleID }
+            // Asked right after the app went: the week-old rule that keeps a full scan quiet
+            // about freshly used folders does not apply to an app just deleted.
+            let items = LeftoversScanner().leftovers(forBundleID: app.bundleID, context: context).map { [$0] } ?? []
             let files = items.reduce(0) { $0 + $1.paths.count }
             guard files > 0 else { return }
             DispatchQueue.main.async {

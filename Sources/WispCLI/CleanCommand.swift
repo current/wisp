@@ -10,7 +10,9 @@ enum CleanCommand {
         let apply = arguments.contains("--apply")
         let history = arguments.contains("--history")
         arguments.removeAll { $0 == "--apply" || $0 == "--history" }
-        var tabs = CleanListing.defaultTabs
+        // --apply cleans only what is safe, and only Junk and Developer list safe items, so it
+        // does not read the rest (Large Files hashes up to 20 GB looking for duplicates).
+        var tabs = apply ? CleanRegistry.safeTabs : CleanListing.defaultTabs
         if let index = arguments.firstIndex(of: "--tab") {
             guard index + 1 < arguments.count, let tab = CleanListing.tab(named: arguments[index + 1]) else {
                 fail("--tab takes junk, developer, large, leftovers or uninstall")
@@ -32,10 +34,14 @@ enum CleanCommand {
         printListing(listing)
     }
 
-    /// The JSON the MCP tool `list_cleanable` returns.
+    /// The JSON the MCP tool `list_cleanable` returns. An assistant may call it at any time, so
+    /// Large Files is listed without the duplicate search, which reads up to 20 GB to hash files.
     static func listingJSON(tab name: String?) -> Data {
         let tabs = name.flatMap(CleanListing.tab(named:)).map { [$0] } ?? CleanListing.defaultTabs
-        return Report.json(scan(tabs, settings: .load()))
+        let settings = CleanSettings.load()
+        let scanners = CleanRegistry.scanners.map { $0 is LargeFilesScanner ? LargeFilesScanner(findDuplicates: false) : $0 }
+        let items = CleanRegistry.scan(tabs, context: CleanScanContext(excluded: settings.exclusions), using: scanners)
+        return Report.json(CleanListing(items: items, tabs: tabs))
     }
 
     private static func scan(_ tabs: [CleanTab], settings: CleanSettings) -> CleanListing {
@@ -89,6 +95,8 @@ enum CleanCommand {
         let items = listing.tabs.flatMap(\.items).filter(\.isSafeTrash)
         let report = Cleaner(exclusions: settings.exclusions).clean(items)
         if !report.results.isEmpty { CleanHistory.append(report.record(trigger: .cli)) }
+        // As with wisp uninstall --apply, a script can tell that something stayed.
+        defer { if !report.notRemoved.isEmpty { exit(1) } }
         if json {
             FileHandle.standardOutput.write(Report.json(report.record(trigger: .cli)))
             print()

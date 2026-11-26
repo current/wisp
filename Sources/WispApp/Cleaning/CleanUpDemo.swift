@@ -21,8 +21,22 @@ enum CleanUpDemo {
     /// Uninstall lists the real apps (reading them changes nothing); its removals still go through `guards`.
     static var scanners: [any CleanScanner] { CleanTab.allCases.filter { $0 != .history && $0 != .uninstall }.map { Scanner(tab: $0) } }
 
-    static let guards = CleanGuards(processUse: { ProcessUse() }, gitState: { _ in .clean }, runTool: { _, _ in (0, "") },
-                                    trash: { _ in }, developerTools: { true })
+    /// Its tools answer the checks a clean makes again (the made-up simulator is shut down,
+    /// no simulator uses the made-up runtime) and remove nothing; nothing reads git or walks for links.
+    static let guards = CleanGuards(processUse: { ProcessUse() }, gitState: { _ in .clean }, runTool: { _, arguments in
+                                        if arguments.starts(with: ["simctl", "list"]) {
+                                            return (0, #"{"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-18-0": [{"udid": "\#(CleanUpDemo.simulator)", "state": "Shutdown", "isAvailable": true}]}}"#)
+                                        }
+                                        if arguments.starts(with: ["simctl", "runtime", "list"]) {
+                                            return (0, #"{"\#(CleanUpDemo.runtime)": {"identifier": "\#(CleanUpDemo.runtime)", "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-17-5", "deletable": true}}"#)
+                                        }
+                                        return (0, "")
+                                    },
+                                    trash: { _ in }, developerTools: { true }, dependent: { _, _, _ in nil }, gitTracks: { _, _ in false },
+                                    duplicates: { DuplicateSummary() })
+
+    static let simulator = "6F3D1C0E-6B8A-4C3E-9D3B-2A1F0E9C8B7A"
+    static let runtime = "9D1A27C4-3B5E-4F60-8C2D-71E5A0B3F948"
 
     static func items(home: String) -> [CleanItem] {
         let gb: Int64 = 1_000_000_000, mb: Int64 = 1_000_000
@@ -48,10 +62,10 @@ enum CleanUpDemo {
             item(.developer, "Xcode", "Build files", "Build products and indexes. Xcode makes them again, and the next build takes longer.",
                  "~/Library/Developer/Xcode/DerivedData", 18 * gb),
             item(.developer, "Xcode", "iOS 17.5 simulator runtime", "Not used by any simulator. Xcode can download it again.",
-                 "", 7_800 * mb, safety: .checkFirst, removal: .simulatorRuntime(identifier: "com.apple.CoreSimulator.SimRuntime.iOS-17-5"), ticked: false),
+                 "", 7_800 * mb, safety: .checkFirst, removal: .simulatorRuntime(identifier: runtime), ticked: false),
             item(.developer, "Xcode", "iPhone 15 Pro simulator", "Not opened since March. Its apps and data go with it.",
-                 "~/Library/Developer/CoreSimulator/Devices/6F3D1C0E-6B8A-4C3E-9D3B-2A1F0E9C8B7A", 2_100 * mb, safety: .checkFirst,
-                 removal: .simulator(udid: "6F3D1C0E-6B8A-4C3E-9D3B-2A1F0E9C8B7A"), ticked: false),
+                 "~/Library/Developer/CoreSimulator/Devices/" + simulator, 2_100 * mb, safety: .checkFirst,
+                 removal: .simulator(udid: simulator), ticked: false),
             item(.developer, "Package caches", "npm cache", "Packages npm downloaded. The next install fetches what it needs.",
                  "~/.npm/_cacache", 4_600 * mb),
             item(.developer, "Package caches", "Homebrew downloads", "Bottles Homebrew already installed.",

@@ -8,6 +8,7 @@ struct AIModelFinder {
     let environment: [String: String]
     let limits: LargeFilesScanner.Limits
     let context: CleanScanContext
+    var cache: CleanScanCache?
 
     /// How a store keeps its models on disk.
     enum Layout {
@@ -107,13 +108,22 @@ struct AIModelFinder {
         guard Int64(bytes) >= limits.knownModel, !paths.isEmpty else { return nil }
         let date = modified > 0 ? Date(timeIntervalSince1970: modified) : nil
         let folder = (paths[0] as NSString).deletingLastPathComponent
-        let item = CleanItem(id: "ai:" + paths[0], tab: .largeFiles, group: LargeFileCategory.aiModels.rawValue, name: name,
+        var item = CleanItem(id: "ai:" + paths[0], tab: .largeFiles, group: LargeFileCategory.aiModels.rawValue, name: name,
                              detail: detail ?? self.detail(store, folder), paths: paths, bytes: Int64(bytes), modified: date,
                              safety: .checkFirst, checkedByDefault: false)
+        item.stamp()
         return Row(item: item, info: LargeFileInfo(category: .aiModels, lastUsed: nil, modified: date))
     }
 
     private func walker() -> BulkWalker { BulkWalker(isCancelled: context.isCancelled) }
+
+    /// A folder's size on one thread, as the pool keeps the others busy; unchanged folders are not read again.
+    private func folderSize(_ path: String) -> (bytes: UInt64, newest: Double) {
+        let sizer = CleanSizer(isCancelled: context.isCancelled, cache: cache)
+        sizer.threads = 1
+        let size = sizer.size(path)
+        return (UInt64(max(0, size.bytes)), size.modified?.timeIntervalSince1970 ?? 0)
+    }
 
     /// The entries of one folder, without following links.
     private func entries(_ path: String) -> [BulkEntry] {
@@ -133,7 +143,7 @@ struct AIModelFinder {
                 if relative.count + 1 < depth {
                     visit(child, relative + [entry.name])
                 } else {
-                    let size = walker().folderSize(child)
+                    let size = folderSize(child)
                     if let row = row(store, name: (relative + [entry.name]).joined(separator: "/"), paths: [child],
                                      bytes: size.bytes, modified: size.newest) { rows.append(row) }
                 }
@@ -150,7 +160,7 @@ struct AIModelFinder {
             if entry.isDataless || context.isExcluded(path) { return .skip }
             if entry.kind == .folder {
                 guard entry.pathExtension == "mlpackage" else { return .descend }
-                let size = walker().folderSize(path)
+                let size = folderSize(path)
                 if let row = row(store, name: entry.name, paths: [path], bytes: size.bytes, modified: size.newest) { rows.append(row) }
                 return .skip
             }
@@ -267,7 +277,7 @@ struct AIModelFinder {
         entries(store.root).compactMap { entry in
             guard entry.kind == .folder, let name = Self.huggingFaceName(entry.name) else { return nil }
             let path = store.root + "/" + entry.name
-            let size = walker().folderSize(path)
+            let size = folderSize(path)
             return row(store, name: name, paths: [path], bytes: size.bytes, modified: size.newest)
         }
     }
@@ -282,18 +292,37 @@ struct AIModelFinder {
     /// Weight files under `base`. The base and the folders right inside it list only their own
     /// entries and queue each subfolder as a task. A folder's files all land in one task, so each
     /// task groups them by folder on its own.
+    struct WeightGroup: Codable {
+        var paths: [String] = []
+        var bytes: UInt64 = 0
+        var modified: Double = 0
+    }
+
     private func unknownWeights(base: String, folder: String? = nil, depth: Int = 0, claimed: Set<String>, pool: TaskPool,
                                 emit: @escaping ([Row]) -> Void) -> [Row] {
-        var byFolder: [String: (paths: [String], bytes: UInt64, modified: Double)] = [:]
+        var byFolder: [String: WeightGroup] = [:]
         var subfolders: [String] = []
         func add(_ folder: String, _ path: String, _ bytes: UInt64, _ modified: Double) {
-            var group = byFolder[folder] ?? ([], 0, 0)
+            var group = byFolder[folder] ?? WeightGroup()
             group.paths.append(path)
             group.bytes &+= bytes
             group.modified = max(group.modified, modified)
             byFolder[folder] = group
         }
-        walker().walk(folder ?? base) { parent, entry, level in
+        // Below the second level a task walks a whole subtree, remembered until something in it changes.
+        let path = folder ?? base
+        let key = depth >= 2 ? "weights:" + CleanScanCache.digest([LargeFilesScanner.memoVersion, "\(limits.unknownModel)"]
+            + claimed.sorted() + context.excluded.sorted()) + ":" + path : nil
+        if let key, let cache, let data = cache.memo(key), let memo = try? PropertyListDecoder().decode([String: WeightGroup].self, from: data) {
+            return weightRows(memo, base: base)
+        }
+        let event = CleanScanCache.currentEvent()
+        defer {
+            if let key, let cache, !context.isCancelled(), let data = try? PropertyListEncoder().encode(byFolder) {
+                cache.storeMemo(key, path: path, event: event, data: data)
+            }
+        }
+        walker().walk(path) { parent, entry, level in
             let path = parent + "/" + entry.name
             if entry.isDataless || context.isExcluded(path) { return .skip }
             if entry.kind == .folder {
@@ -302,7 +331,7 @@ struct AIModelFinder {
                 // Apple's own assets are managed by the system, which downloads them again.
                 if depth + level == 0, entry.name.hasPrefix("com.apple.") || Self.unknownSkip.contains(entry.name) { return .skip }
                 if entry.pathExtension == "mlpackage" {
-                    let size = walker().folderSize(path)
+                    let size = folderSize(path)
                     if Int64(size.bytes) >= limits.unknownModel { add(parent, path, size.bytes, size.newest) }
                     return .skip
                 }
@@ -321,7 +350,11 @@ struct AIModelFinder {
         for sub in subfolders {
             pool.add { emit(unknownWeights(base: base, folder: sub, depth: depth + 1, claimed: claimed, pool: pool, emit: emit)) }
         }
-        return byFolder.sorted { $0.key < $1.key }.compactMap { folder, group in
+        return weightRows(byFolder, base: base)
+    }
+
+    private func weightRows(_ byFolder: [String: WeightGroup], base: String) -> [Row] {
+        byFolder.sorted { $0.key < $1.key }.compactMap { folder, group in
             guard Int64(group.bytes) >= limits.unknownModel else { return nil }
             let app = Self.appName(folder: folder, base: base)
             let store = Store(app: app, root: folder, layout: .files(nil))

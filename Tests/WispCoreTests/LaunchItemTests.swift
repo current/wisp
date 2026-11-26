@@ -261,3 +261,14 @@ func probeLaunchItems() {
     #expect(item?.name == "Status")
     #expect(item?.appMissing == true && item?.isLeftover == true)
 }
+
+@Test func itemsOnAnUnpluggedDiskAreNotLeftOver() {
+    let gone = "/Volumes/NoSuchDisk-\(UUID().uuidString)/bin/tool"
+    #expect(LaunchItem.presentOrUnplugged(gone))
+    #expect(!LaunchItem.presentOrUnplugged("/Users/nobody-\(UUID().uuidString)/tool"))
+    #expect(LaunchItem.presentOrUnplugged("/bin/sh"))
+    let plist: [String: Any] = ["Label": "com.example.tool", "ProgramArguments": [gone]]
+    let item = LaunchItemScanner.item(plist: plist, path: NSHomeDirectory() + "/Library/LaunchAgents/com.example.tool.plist",
+                                      kind: .agent, scope: .user, lookup: { _ in nil })
+    #expect(item?.programExists == true && item?.canTrash == false)
+}

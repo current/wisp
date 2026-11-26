@@ -41,12 +41,27 @@ public struct SystemJunkScanner: CleanScanner {
             }.filter { !context.isBlocked($0) }.sorted()
             guard !paths.isEmpty else { continue }
             let sizes = sizer.sizes(paths)
-            let size = sizer.total(paths, sizes: sizes)
-            guard size.bytes >= minimumBytes else { continue }
-            items.append(CleanItem(id: "systemjunk:\(place.folders[0])", tab: .junk, group: Self.group, name: place.name, detail: place.detail,
-                                   paths: paths, bytes: size.bytes, modified: size.modified, safety: .safe))
+            var rest = paths
+            if place.id == "logs" {
+                // One row per app's folder: a log one app holds open then keeps back only that app's.
+                for path in paths where CleanFiles.isDirectory(path) {
+                    guard let size = sizes[path], size.bytes >= minimumBytes else { continue }
+                    rest.removeAll { $0 == path }
+                    let folder = (path as NSString).lastPathComponent
+                    let app = LibraryArea.isReverseDNS(folder) ? AppNames.name(bundleID: folder) ?? folder : folder
+                    items.append(CleanItem(id: "systemjunk:\(path)", tab: .junk, group: Self.group, name: "\(app) logs", detail: place.detail,
+                                           paths: [path], bytes: size.bytes, modified: size.modified, safety: .safe).stamped(sizes))
+                }
+            }
+            let size = sizer.total(rest, sizes: sizes)
+            guard !rest.isEmpty, size.bytes >= minimumBytes else { continue }
+            let name = place.id == "logs" && rest.count < paths.count ? "Other app logs" : place.name
+            items.append(CleanItem(id: "systemjunk:\(place.folders[0])", tab: .junk, group: Self.group, name: name, detail: place.detail,
+                                   paths: rest, bytes: size.bytes, modified: size.modified, safety: .safe).stamped(sizes))
         }
         if !items.isEmpty { context.found(items) }
+        // A process that ends right after its scan, like the CLI, keeps what it measured.
+        sizer.cache?.save()
         return items
     }
 }

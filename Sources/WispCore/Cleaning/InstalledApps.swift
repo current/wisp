@@ -89,16 +89,37 @@ public enum InstalledApps {
         let casks = caskIndex(locations.caskrooms)
         var apps: [InstalledApp] = []
         var seen = Set<String>()
-        let scanner = FolderScanner()
-        for path in bundlePaths(in: locations.appFolders) {
-            if cancelled() { break }
-            guard var app = read(path, casks: casks), !seen.contains(app.bundleID) else { continue }
-            seen.insert(app.bundleID)
-            if measure { app.bundleBytes = Int64(scanner.folder(at: path).size) }
-            app.isRunning = isRunning(app.bundleID, path)
-            apps.append(app)
+        let cache = CleanScanCache.shared
+        cache?.catchUp(within: cache?.reuseWindow ?? 0)
+        withoutActuallyEscaping(cancelled) { cancelled in
+            let sizer = CleanSizer(isCancelled: cancelled, cache: cache)
+            for path in bundlePaths(in: locations.appFolders) {
+                if cancelled() { break }
+                guard var app = remembered(path, casks: casks, cache: cache), !seen.contains(app.bundleID) else { continue }
+                seen.insert(app.bundleID)
+                if measure { app.bundleBytes = sizer.size(path).bytes }
+                app.isRunning = isRunning(app.bundleID, path)
+                apps.append(app)
+            }
         }
+        cache?.save()
         return apps.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// `read`, remembered while nothing in the bundle changes: reading the signature is most of the time a listing of apps takes.
+    static func remembered(_ path: String, casks: [String: HomebrewCask], cache: CleanScanCache?) -> InstalledApp? {
+        guard let cache, cache.isFollowed(path) else { return read(path, casks: casks) }
+        let key = "app:1:" + path
+        if let data = cache.memo(key), var app = try? PropertyListDecoder().decode(InstalledApp.self, from: data) {
+            app.cask = casks[(path as NSString).lastPathComponent]
+            return app
+        }
+        let event = CleanScanCache.currentEvent()
+        guard let app = read(path, casks: casks) else { return nil }
+        var kept = app
+        kept.cask = nil
+        if let data = try? PropertyListEncoder().encode(kept) { cache.storeMemo(key, path: path, event: event, data: data) }
+        return app
     }
 
     /// Finds an app by name, file name or bundle id, ignoring case.

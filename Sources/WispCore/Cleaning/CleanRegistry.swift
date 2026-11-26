@@ -37,20 +37,44 @@ public enum CleanRegistry {
 
     /// Runs the scanners of `tabs` one after another on the calling thread and returns what
     /// they found, without excluded items or repeats. Batches still stream through `context.found`.
+    /// Every path is stamped the first time it comes through, so a row streamed early and the
+    /// same row in the final list carry what the scan saw, not what was there at the end.
     public static func scan(_ tabs: [CleanTab], context: CleanScanContext, using scanners: [any CleanScanner] = scanners) -> [CleanItem] {
+        let book = StampBook()
         var seen = Set<String>()
         var items: [CleanItem] = []
         for tab in tabs {
             for scanner in scanners where scanner.tab == tab {
                 if context.isCancelled() { return items }
                 var forwarding = context
-                forwarding.found = { batch in context.found(batch.filter { !$0.paths.contains(where: context.isExcluded) }) }
+                forwarding.found = { batch in context.found(batch.filter { !$0.paths.contains(where: context.isExcluded) }.map(book.stamp)) }
                 for item in scanner.scan(forwarding) where !item.paths.contains(where: context.isExcluded) {
-                    if seen.insert(item.id).inserted { items.append(item) }
+                    if seen.insert(item.id).inserted { items.append(book.stamp(item)) }
                 }
             }
         }
         return items
+    }
+
+    /// First sightings of paths during one scan. Batches arrive from several threads.
+    final class StampBook: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stamps: [String: CleanStamp] = [:]
+
+        func stamp(_ item: CleanItem) -> CleanItem {
+            var item = item
+            lock.withLock {
+                for path in item.paths {
+                    if let own = item.stamps[path] {
+                        if stamps[path] == nil { stamps[path] = own }
+                    } else if let known = stamps[path] ?? CleanStamp(path: path) {
+                        stamps[path] = known
+                        item.stamps[path] = known
+                    }
+                }
+            }
+            return item
+        }
     }
 
     /// The tabs that list things to clean, in page order.

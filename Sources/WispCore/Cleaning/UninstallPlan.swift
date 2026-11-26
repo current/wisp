@@ -22,14 +22,17 @@ public enum UninstallPlan {
         return UninstallPlanner(home: home, installed: others, fullDiskAccess: fullDiskAccess).items(for: app, appRemoval: appRemoval)
     }
 
-    /// Whether a plan may remove `path`: an app bundle in an Applications folder, or an
-    /// entry inside a folder of ~/Library. Never a top-level folder or anything outside home.
+    /// Whether a plan may remove `path`: an app bundle in an Applications folder, directly or
+    /// one plain folder down, or an entry inside a folder of ~/Library. Never a top-level
+    /// folder, a bundle inside another, or anything outside home.
     public static func mayRemove(_ path: String, home: String = NSHomeDirectory()) -> Bool {
-        let standard = (path as NSString).standardizingPath
-        guard standard == path, !path.contains("/../"), path.hasPrefix("/") else { return false }
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard path.hasPrefix("/"), !path.hasSuffix("/"), !components.dropFirst().contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else {
+            return false
+        }
         for folder in ["/Applications/", home + "/Applications/"] where path.hasPrefix(folder) {
             let rest = path.dropFirst(folder.count).split(separator: "/")
-            return path.hasSuffix(".app") && (1...2).contains(rest.count)
+            return path.hasSuffix(".app") && (rest.count == 1 || (rest.count == 2 && (String(rest[0]) as NSString).pathExtension.isEmpty))
         }
         let library = home + "/Library/"
         guard path.hasPrefix(library) else { return false }
@@ -46,22 +49,30 @@ public final class UninstallPlanner: @unchecked Sendable {
     let library: String
     let installed: [InstalledApp]
     let fullDiskAccess: Bool
+    /// Where Homebrew keeps each cask's install receipt, for the steps its uninstall runs.
+    let caskrooms: [String]
     private let meter: FootprintMeter
     private var listings: [String: [String]] = [:]
     private let lock = NSLock()
 
     public init(home: String = NSHomeDirectory(), installed: [InstalledApp], fullDiskAccess: Bool = StorageAccess.hasFullDiskAccess,
-                measure: Bool = true) {
+                measure: Bool = true, caskrooms: [String] = InstalledApps.Locations.standard().caskrooms) {
         self.home = home
         library = home + "/Library"
         self.installed = installed
         self.fullDiskAccess = fullDiskAccess
+        self.caskrooms = caskrooms
         meter = FootprintMeter(home: home, fullDiskAccess: fullDiskAccess, enabled: measure)
     }
 
+    /// The plan, each path stamped as it is now, so the clean can tell it is the same thing when the owner confirms.
     public func items(for app: InstalledApp, appRemoval: UninstallPlan.AppRemoval = .trash) -> [CleanItem] {
         lock.lock()
         defer { lock.unlock() }
+        return plan(for: app, appRemoval: appRemoval).map { $0.stamped() }
+    }
+
+    private func plan(for app: InstalledApp, appRemoval: UninstallPlan.AppRemoval) -> [CleanItem] {
         let others = installed.filter { $0.bundleID != app.bundleID && $0.path != app.path }
         let otherIDs = Set(others.flatMap(\.ownBundleIDs).map { $0.lowercased() })
         let otherMains = others.map(\.bundleID)
@@ -164,14 +175,47 @@ public final class UninstallPlanner: @unchecked Sendable {
         if bytes == 0 { bytes = meter.measure(app.path).bytes }
         let version = app.version.map { ", version \($0)" } ?? ""
         if removal == .homebrew, let token = app.brewToken {
+            let steps = caskSteps(token).map { " " + $0 } ?? ""
             return CleanItem(id: "uninstall:" + app.path, tab: .uninstall, group: app.name, name: app.name,
-                             detail: "Homebrew deletes the app\(version) for good with brew uninstall --cask \(token).",
+                             detail: "Homebrew deletes the app\(version) for good with brew uninstall --cask \(token).\(steps)",
                              paths: [app.path], bytes: bytes, safety: .checkFirst, removal: .brewCask(token: token),
                              ownerBundleID: app.bundleID, checkedByDefault: true)
         }
         return CleanItem(id: "uninstall:" + app.path, tab: .uninstall, group: app.name, name: app.name,
                          detail: "The app itself\(version).", paths: [app.path], bytes: bytes, safety: .checkFirst,
                          removal: .trash, ownerBundleID: app.bundleID, checkedByDefault: true)
+    }
+
+    /// What else a cask's own uninstall does, from its install receipt, in one sentence: the
+    /// review says it before anything runs. Quitting the app is left out, since Wisp only
+    /// uninstalls an app that is not running. Nil when the uninstall does nothing more.
+    func caskSteps(_ token: String) -> String? {
+        var deletes: [String] = [], agents = 0, scripts = 0, packages = 0, extensions = 0
+        for room in caskrooms {
+            guard let data = FileManager.default.contents(atPath: room + "/" + token + "/.metadata/INSTALL_RECEIPT.json"),
+                  let receipt = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let artifacts = receipt["uninstall_artifacts"] as? [[String: Any]] else { continue }
+            func list(_ value: Any?) -> [String] { (value as? [String]) ?? (value as? String).map { [$0] } ?? [] }
+            for stanza in artifacts.compactMap({ $0["uninstall"] as? [Any] }).joined().compactMap({ $0 as? [String: Any] }) {
+                deletes += list(stanza["delete"]) + list(stanza["trash"]) + list(stanza["rmdir"])
+                agents += list(stanza["launchctl"]).count
+                scripts += stanza["script"] == nil ? 0 : 1
+                packages += list(stanza["pkgutil"]).count
+                extensions += list(stanza["kext"]).count
+            }
+            break
+        }
+        var parts: [String] = []
+        if let first = deletes.first {
+            parts.append("deletes " + (deletes.count == 1 ? first : "\(first) and \(deletes.count - 1) more"))
+        }
+        if agents > 0 { parts.append(agents == 1 ? "unloads 1 launch agent" : "unloads \(agents) launch agents") }
+        if packages > 0 { parts.append("removes the files of \(packages == 1 ? "1 installer package" : "\(packages) installer packages")") }
+        if extensions > 0 { parts.append("unloads \(extensions == 1 ? "1 kernel extension" : "\(extensions) kernel extensions")") }
+        if scripts > 0 { parts.append("runs the cask's own uninstall script") }
+        guard !parts.isEmpty else { return nil }
+        let joined = parts.count == 1 ? parts[0] : parts.dropLast().joined(separator: ", ") + " and " + parts.last!
+        return "Its cask also " + joined + "."
     }
 
     private func item(_ app: InstalledApp, area: LibraryArea, paths: [String], checked: Bool) -> CleanItem {
