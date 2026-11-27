@@ -143,7 +143,8 @@ final class FanControlCard: CardView {
             action.isHidden = false
         case .needsRepair(let message):
             explanation.text = service.checked ? message : "Checking the fan helper"
-            action.title = "Repair…"
+            let outdated = status.map { $0.version != FanHelper.protocolVersion } ?? false
+            action.title = outdated ? "Update…" : "Repair…"
             action.isHidden = !service.checked
         }
         if fans.isEmpty {
@@ -153,7 +154,8 @@ final class FanControlCard: CardView {
         explanation.isHidden = explanation.text.isEmpty
         action.isEnabled = !service.busy
         action.alphaValue = service.busy ? 0.5 : 1
-        problem.text = fans.isEmpty ? "" : service.problem ?? status?.error ?? ""
+        let rawProblem = fans.isEmpty ? "" : service.problem ?? status?.error ?? ""
+        problem.text = rawProblem == explanation.text ? "" : rawProblem
         problem.isHidden = problem.text.isEmpty
 
         let spinning = fans.filter { ($0.rpm ?? 0) > 1 }.count

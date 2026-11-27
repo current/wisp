@@ -30,8 +30,21 @@ final class FanService {
     private var observers: [UUID: () -> Void] = [:]
     private var watchers = 0
     private var timer: Timer?
-    private let work = DispatchQueue(label: "app.wisp.fans.client", qos: .userInitiated)
-    private lazy var hardware = SMCFanHardware()
+    private var refreshing = false
+    private var unreachableStreak = 0
+    /// Incremented on every user action so an older in-flight poll cannot overwrite a newer `set` or `install`.
+    private var generation = 0
+    private let statusQueue = DispatchQueue(label: "app.wisp.fans.status", qos: .userInitiated)
+    private let actionQueue = DispatchQueue(label: "app.wisp.fans.action", qos: .userInitiated)
+    /// Owned solely by `statusQueue` so read-only fallback never crosses actor boundaries.
+    private final class FallbackHardware: @unchecked Sendable {
+        lazy var hardware = SMCFanHardware(allSensors: false)
+        func status() -> FanStatus? {
+            guard let hardware, !hardware.fans.isEmpty else { return nil }
+            return FanEngine(hardware: hardware).status()
+        }
+    }
+    private let fallback = FallbackHardware()
 
     var modes: [FanMode] { FanMode.builtIn + curves.map(FanMode.curve) }
 
@@ -59,33 +72,52 @@ final class FanService {
     }
 
     func refresh() {
-        let hardware = self.hardware
-        work.async {
+        // Never queue overlapping polls: if one is in flight, let it finish.
+        guard !refreshing, !busy else { return }
+        refreshing = true
+        let token = generation
+        let fallback = self.fallback
+        statusQueue.async {
             let answer = FanHelper.status()
-            let fallback: FanStatus? = {
-                guard case .failure = answer, let hardware, !hardware.fans.isEmpty else { return nil }
-                return FanEngine(hardware: hardware).status()
+            let local: FanStatus? = {
+                guard case .failure = answer else { return nil }
+                return fallback.status()
             }()
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self.take(answer, fallback: fallback) }
+                MainActor.assumeIsolated {
+                    self.refreshing = false
+                    guard self.generation == token else { return }
+                    self.take(answer, fallback: local, fromAction: false)
+                }
             }
         }
     }
 
-    private func take(_ answer: Result<FanStatus, FanHelper.Failure>, fallback: FanStatus?) {
+    private func take(_ answer: Result<FanStatus, FanHelper.Failure>, fallback: FanStatus?, fromAction: Bool) {
+        let wasReady = availability == .ready
         checked = true
         switch answer {
         case .success(let status) where status.version != FanHelper.protocolVersion:
+            unreachableStreak = 0
             self.status = status
             availability = .needsRepair("The fan helper is from another version of Wisp")
         case .success(let status):
+            unreachableStreak = 0
             self.status = status
+            self.problem = nil
             availability = .ready
         case .failure(.unreachable):
-            status = fallback
+            unreachableStreak += 1
+            // A single transient timeout while already healthy shouldn't flash the Repair screen;
+            // explicit user actions and launch checks report immediately.
+            if wasReady, !fromAction, unreachableStreak < 2 {
+                return
+            }
+            if let fallback { status = fallback }
             availability = FanHelper.isInstalled ? .needsRepair("The fan helper is not answering") : .notInstalled
         case .failure(.refused(let message)):
-            status = fallback
+            unreachableStreak = 0
+            if let fallback { status = fallback }
             availability = .needsRepair(message)
         }
         changed()
@@ -93,19 +125,22 @@ final class FanService {
 
     func set(_ mode: FanMode) {
         guard availability == .ready else { return }
+        generation += 1
+        let token = generation
         busy = true
         changed()
-        work.async {
+        actionQueue.async {
             let answer = FanHelper.set(mode)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    guard self.generation == token else { return }
                     self.busy = false
                     switch answer {
                     case .failure(.unreachable): self.problem = "The fan helper is not answering"
                     case .failure(.refused(let message)): self.problem = message
                     case .success: self.problem = nil
                     }
-                    self.take(answer, fallback: nil)
+                    self.take(answer, fallback: nil, fromAction: true)
                 }
             }
         }
@@ -113,14 +148,18 @@ final class FanService {
 
     /// Asks for the password, then installs or repairs the helper.
     func install() {
+        generation += 1
+        let token = generation
         busy = true
         changed()
-        work.async {
+        actionQueue.async {
             let error = FanHelper.install(from: Bundle.main.bundleURL)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    guard self.generation == token else { return }
                     self.busy = false
                     self.problem = error == "cancelled" ? nil : error
+                    self.unreachableStreak = 0
                     self.refresh()
                 }
             }
@@ -128,14 +167,18 @@ final class FanService {
     }
 
     func uninstall() {
+        generation += 1
+        let token = generation
         busy = true
         changed()
-        work.async {
+        actionQueue.async {
             let error = FanHelper.uninstall()
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    guard self.generation == token else { return }
                     self.busy = false
                     self.problem = error == "cancelled" ? nil : error
+                    self.unreachableStreak = 0
                     self.refresh()
                 }
             }

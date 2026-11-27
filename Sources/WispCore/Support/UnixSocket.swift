@@ -10,6 +10,7 @@ public enum UnixSocket {
         defer { close(fd) }
         var wait = timeval(tv_sec: timeout, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
         var noSigPipe: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
         var address = sockaddr_un()
@@ -26,16 +27,36 @@ public enum UnixSocket {
         guard connected == 0 else { return nil }
         var line = line
         if line.last != 10 { line.append(10) }
-        let sent = line.withUnsafeBytes { send(fd, $0.baseAddress, $0.count, 0) }
-        guard sent == line.count else { return nil }
+        guard sendAll(fd, line) else { return nil }
         var reply = Data()
         var buffer = [UInt8](repeating: 0, count: 65536)
         while true {
             let n = recv(fd, &buffer, buffer.count, 0)
-            if n <= 0 { break }
+            if n < 0 {
+                if errno == EINTR { continue }
+                break
+            }
+            if n == 0 { break }
             reply.append(buffer, count: n)
             if reply.last == 10 { break }
         }
         return reply.isEmpty ? nil : reply
+    }
+
+    public static func sendAll(_ fd: Int32, _ data: Data) -> Bool {
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return true }
+            var offset = 0
+            while offset < raw.count {
+                let n = send(fd, base.advanced(by: offset), raw.count - offset, 0)
+                if n < 0 {
+                    if errno == EINTR { continue }
+                    return false
+                }
+                if n == 0 { return false }
+                offset += n
+            }
+            return true
+        }
     }
 }

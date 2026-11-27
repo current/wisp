@@ -28,6 +28,13 @@ final class ThermalCollector {
     private var sensors: [Sensor] = []
     private var fans: [Fan] = []
     private var discovered = false
+    private let allComputeSensors: Bool
+
+    /// When `allComputeSensors` is true, every discovered CPU and GPU die sensor is read so
+    /// fan control cannot miss a hot core outside the UI's spread sample.
+    init(allComputeSensors: Bool = false) {
+        self.allComputeSensors = allComputeSensors
+    }
 
     static let prefixes: [(String, Group)] = [
         ("Tp", .cpu), ("Te", .cpu), ("Tg", .gpu), ("Tm", .memory), ("TB", .battery), ("TH", .storage), ("Ts", .ambient),
@@ -93,7 +100,10 @@ final class ThermalCollector {
             byGroup[group, default: []].append(key)
         }
         for (group, keys) in byGroup {
-            let chosen = Self.spread(keys.sorted(), limit: Self.limits[group] ?? 1)
+            let sorted = keys.sorted()
+            let chosen = allComputeSensors && (group == .cpu || group == .gpu)
+                ? sorted
+                : Self.spread(sorted, limit: Self.limits[group] ?? 1)
             for (offset, key) in chosen.enumerated() {
                 guard let info = smc.info(key), smc.read(key, info) != nil else { continue }
                 let label = Self.label(group)

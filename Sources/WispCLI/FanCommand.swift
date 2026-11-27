@@ -66,7 +66,7 @@ enum FanCommand {
     /// The helper's status, or without it the fans as they are, under macOS.
     static func status() -> Result<FanStatus, FanHelper.Failure> {
         let answer = FanHelper.status()
-        guard case .failure(.unreachable) = answer, let hardware = SMCFanHardware(), !hardware.fans.isEmpty else { return answer }
+        guard case .failure(.unreachable) = answer, let hardware = SMCFanHardware(allSensors: false), !hardware.fans.isEmpty else { return answer }
         return .success(FanEngine(hardware: hardware).status())
     }
 

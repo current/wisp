@@ -35,10 +35,15 @@ public struct FanStatus: Codable, Sendable, Equatable {
 /// Reads and drives the fans. The SMC one needs root to write.
 public protocol FanHardware: AnyObject {
     var fans: [FanState] { get }
+    var thermalPressure: ThermalPressure { get }
     func temperatures() -> FanTemperatures
     func rpm(_ index: Int) -> Double?
     func setManual(_ index: Int, rpm: Double) -> Bool
     func setAutomatic(_ index: Int) -> Bool
+}
+
+public extension FanHardware {
+    var thermalPressure: ThermalPressure { .nominal }
 }
 
 /// The loop the helper runs every two seconds: read the temperature, work out the speed the
@@ -49,6 +54,8 @@ public final class FanEngine {
     public static let overheatCelsius = 95.0
     /// ...until every sensor is back under this.
     public static let cooledCelsius = 85.0
+    /// Consecutive manual write failures before handing the fans back to macOS so `Ftst` is never left half-set.
+    public static let maxWriteFailures = 3
     /// Percent per tick. Up fast so heat never builds, down slowly so the sound does not pump.
     static let rampUp = 25.0
     static let rampDown = 4.0
@@ -58,7 +65,10 @@ public final class FanEngine {
     private var percent: Double?
     private var overheated = false
     private var managed = false
+    private var consecutiveWriteFailures = 0
     private var lastError: String?
+
+    public var isManaging: Bool { managed }
 
     public init(hardware: FanHardware) {
         self.hardware = hardware
@@ -66,27 +76,49 @@ public final class FanEngine {
 
     public func set(_ mode: FanMode) {
         self.mode = mode
+        consecutiveWriteFailures = 0
     }
 
     /// One step of the loop. Returns what is in force afterwards.
     @discardableResult
     public func tick() -> FanStatus {
         let temperatures = hardware.temperatures()
-        if let hottest = temperatures.hottest {
-            if hottest >= Self.overheatCelsius { overheated = true }
-            if hottest < Self.cooledCelsius { overheated = false }
+        let pressure = hardware.thermalPressure
+        let pressureHot = pressure == .serious || pressure == .critical
+        if pressureHot || (temperatures.hottest.map { $0 >= Self.overheatCelsius } ?? false) {
+            overheated = true
+        } else if !pressureHot, let hottest = temperatures.hottest, hottest < Self.cooledCelsius {
+            overheated = false
         }
         var wanted = mode.percent(temperatures)
-        if overheated, mode.kind != .auto { wanted = 100 }
-        percent = Self.ease(from: percent, to: wanted)
+        // Missing temperature sensors while holding a manual speed fails safe to full speed.
+        if mode.kind != .auto, temperatures.hottest == nil { wanted = 100 }
+        let emergency = overheated && mode.kind != .auto
+        if emergency { wanted = 100 }
+        percent = emergency ? 100 : Self.ease(from: percent, to: wanted)
         lastError = nil
         if let percent, percent > 0 || mode.kind == .fixed {
             managed = true
+            var failed = false
             for fan in hardware.fans {
                 let rpm = fan.minRPM + (fan.maxRPM - fan.minRPM) * percent / 100
-                if !hardware.setManual(fan.index, rpm: rpm) { lastError = "The SMC did not take fan \(fan.index)'s speed" }
+                if !hardware.setManual(fan.index, rpm: rpm) {
+                    failed = true
+                    lastError = "The SMC did not take fan \(fan.index)'s speed"
+                }
+            }
+            if failed {
+                consecutiveWriteFailures += 1
+                if consecutiveWriteFailures >= Self.maxWriteFailures {
+                    let error = lastError
+                    restore()
+                    lastError = error
+                }
+            } else {
+                consecutiveWriteFailures = 0
             }
         } else if managed {
+            consecutiveWriteFailures = 0
             restore()
         }
         return status(temperatures)
@@ -123,17 +155,18 @@ public final class FanEngine {
 }
 
 /// The real fans, through the SMC. Apple silicon takes a manual speed only after the
-/// `Ftst` key is set, and macOS may take a fan back at any time, so every tick writes
-/// the mode and the target again.
+/// `Ftst` key is set, and macOS may take a fan back at any time (including after sleep),
+/// so every tick writes the mode and target again and re-unlocks if the SMC rejects a write.
 public final class SMCFanHardware: FanHardware {
-    private let smc: SMC
-    private let thermal = ThermalCollector()
+    private var smc: SMC
+    private let thermal: ThermalCollector
     public let fans: [FanState]
     private var unlocked = false
 
-    public init?() {
+    public init?(allSensors: Bool = true) {
         guard let smc = SMC() else { return nil }
         self.smc = smc
+        self.thermal = ThermalCollector(allComputeSensors: allSensors)
         var fans: [FanState] = []
         if let info = smc.info(SMC.code("FNum")), let count = smc.read(SMC.code("FNum"), info) {
             for index in 0..<min(Int(count), 8) {
@@ -156,6 +189,27 @@ public final class SMCFanHardware: FanHardware {
         return smc.write(key, info, value)
     }
 
+    private func reopenSMC() -> Bool {
+        guard let fresh = SMC() else { return false }
+        smc = fresh
+        unlocked = false
+        return true
+    }
+
+    /// Clears cached unlock state after sleep/wake so the next manual tick re-verifies `Ftst`.
+    public func invalidateUnlock() {
+        unlocked = false
+    }
+
+    public var thermalPressure: ThermalPressure {
+        switch ProcessInfo.processInfo.thermalState {
+        case .fair: return .fair
+        case .serious: return .serious
+        case .critical: return .critical
+        default: return .nominal
+        }
+    }
+
     public func temperatures() -> FanTemperatures {
         let reading = thermal.sample(detail: true)
         let cpu = reading.sensors.filter { $0.name.hasPrefix("CPU") }.map(\.celsius).max()
@@ -168,13 +222,57 @@ public final class SMCFanHardware: FanHardware {
     public func setManual(_ index: Int, rpm: Double) -> Bool {
         // Macs without an Ftst key (Intel) refuse the write; their mode key works on its own.
         if !unlocked { unlocked = write("Ftst", 1) }
-        let modeSet = write("F\(index)Md", 1)
-        return write("F\(index)Tg", rpm) && modeSet
+        var modeSet = write("F\(index)Md", 1)
+        if !modeSet {
+            // thermalmonitord may have cleared Ftst (e.g. after sleep) or the IOKit handle may be stale.
+            unlocked = write("Ftst", 1)
+            modeSet = write("F\(index)Md", 1)
+            if !modeSet, reopenSMC() {
+                unlocked = write("Ftst", 1)
+                modeSet = write("F\(index)Md", 1)
+            }
+        }
+        var targetSet = write("F\(index)Tg", rpm)
+        if !targetSet, modeSet, reopenSMC() {
+            unlocked = write("Ftst", 1)
+            modeSet = write("F\(index)Md", 1)
+            targetSet = write("F\(index)Tg", rpm)
+        }
+        return targetSet && modeSet
     }
 
     public func setAutomatic(_ index: Int) -> Bool {
-        let done = write("F\(index)Md", 0)
-        if unlocked, index == fans.last?.index { unlocked = !write("Ftst", 0) }
+        var done = write("F\(index)Md", 0)
+        if !done, reopenSMC() {
+            done = write("F\(index)Md", 0)
+        }
+        // Never gate Ftst=0 on in-memory `unlocked`: a freshly started helper after a crash
+        // or kill must still clear a leftover Ftst=1 left in hardware.
+        if index == fans.last?.index {
+            let ftst = SMC.code("Ftst")
+            if let info = smc.info(ftst) {
+                let current = smc.read(ftst, info)
+                if unlocked || current == nil || current != 0 {
+                    unlocked = !smc.write(ftst, info, 0)
+                }
+            } else {
+                unlocked = false
+            }
+        }
         return done
+    }
+
+    /// Last-resort restore using a brand-new SMC handle, callable from a watchdog thread
+    /// if the helper's main queue ever stalls.
+    public static func emergencyRestore() {
+        guard let smc = SMC() else { return }
+        if let info = smc.info(SMC.code("FNum")), let count = smc.read(SMC.code("FNum"), info) {
+            for index in 0..<min(Int(count), 8) {
+                let key = SMC.code("F\(index)Md")
+                if let modeInfo = smc.info(key) { _ = smc.write(key, modeInfo, 0) }
+            }
+        }
+        let ftst = SMC.code("Ftst")
+        if let ftstInfo = smc.info(ftst) { _ = smc.write(ftst, ftstInfo, 0) }
     }
 }

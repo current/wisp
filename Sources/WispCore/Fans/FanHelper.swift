@@ -19,8 +19,8 @@ public struct FanRequest: Codable, Sendable {
 /// from the user who installed it, over a socket in /var/run.
 public enum FanHelper {
     public static let label = "app.wisp.fans"
-    /// Raised whenever the request or status format changes, so the app offers to update an older helper.
-    public static let protocolVersion = 1
+    /// Raised whenever the request, status format, or daemon setup changes, so the app offers to update an older helper.
+    public static let protocolVersion = 2
     public static let installedPath = "/Library/PrivilegedHelperTools/app.wisp.fans"
     public static let plistPath = "/Library/LaunchDaemons/app.wisp.fans.plist"
     public static let socketPath = "/var/run/app.wisp.fans.sock"
@@ -102,6 +102,10 @@ public enum FanHelper {
             <true/>
             <key>KeepAlive</key>
             <true/>
+            <key>ProcessType</key>
+            <string>Interactive</string>
+            <key>Nice</key>
+            <integer>-10</integer>
         </dict>
         </plist>
         """
@@ -138,8 +142,11 @@ public enum FanHelper {
         let result = runAsAdministrator(installScript(helper: path, sha256: hash, uid: getuid()),
                                         prompt: "Wisp needs your password once to install its fan helper, which changes fan speeds.")
         guard result == nil else { return result }
-        // launchd starts it at once; give it a moment to open its socket.
-        for _ in 0..<20 where !FileManager.default.fileExists(atPath: socketPath) { Thread.sleep(forTimeInterval: 0.1) }
+        // launchd starts it at once; wait until it answers on its socket, not just until the file appears.
+        for _ in 0..<30 {
+            if case .success = status() { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
         return nil
     }
 

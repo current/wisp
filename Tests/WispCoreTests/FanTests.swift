@@ -6,7 +6,9 @@ import Testing
     final class FakeFans: FanHardware {
         var fans = [FanState(index: 0, rpm: nil, minRPM: 2000, maxRPM: 6000), FanState(index: 1, rpm: nil, minRPM: 2500, maxRPM: 7500)]
         var celsius: Double? = 50
+        var thermalPressure: ThermalPressure = .nominal
         var manual: [Int: Double] = [:]
+        var automaticCalls = 0
         var refuses = false
 
         func temperatures() -> FanTemperatures { FanTemperatures(cpu: celsius, gpu: celsius.map { $0 - 5 }, hottest: celsius) }
@@ -17,6 +19,7 @@ import Testing
             return true
         }
         func setAutomatic(_ index: Int) -> Bool {
+            automaticCalls += 1
             manual[index] = nil
             return true
         }
@@ -100,20 +103,53 @@ import Testing
         #expect(!engine.tick().overheated)
     }
 
-    @Test func missingTemperaturesRunCurvesAtFullSpeed() {
+    @Test func missingTemperaturesForceFullSpeedEvenInFixedMode() {
         let fans = FakeFans()
         fans.celsius = nil
         let engine = FanEngine(hardware: fans)
         engine.set(.quiet)
         #expect(engine.tick().percent == 100)
+        engine.set(.fixed(0))
+        #expect(engine.tick().percent == 100)
     }
 
-    @Test func refusedWritesAreReported() {
+    @Test func seriousThermalPressureJumpsImmediatelyToFullSpeed() {
         let fans = FakeFans()
-        fans.refuses = true
+        fans.celsius = 70
+        let engine = FanEngine(hardware: fans)
+        engine.set(.fixed(10))
+        #expect(engine.tick().percent == 10)
+        // macOS thermal throttling jumps straight to 100% on the first tick, skipping the 25%/tick ramp.
+        fans.thermalPressure = .serious
+        let hot = engine.tick()
+        #expect(hot.overheated && hot.percent == 100)
+        // Stays overheated until thermal pressure itself clears, even when sensor temp is below 85°C.
+        #expect(engine.tick().overheated)
+        fans.thermalPressure = .nominal
+        let recovered = engine.tick()
+        #expect(!recovered.overheated)
+    }
+
+    @Test func repeatedRefusedWritesRestoreAutomaticControl() {
+        let fans = FakeFans()
         let engine = FanEngine(hardware: fans)
         engine.set(.max)
-        #expect(engine.tick().error != nil)
+        #expect(engine.tick().percent == 100)
+        fans.refuses = true
+        for _ in 0..<(FanEngine.maxWriteFailures - 1) {
+            let status = engine.tick()
+            #expect(status.error != nil && engine.isManaging)
+        }
+        // On the Nth consecutive failure, the engine hands the fans back to macOS while keeping the error.
+        let failed = engine.tick()
+        #expect(failed.error != nil && !engine.isManaging && fans.manual.isEmpty && fans.automaticCalls == 2)
+    }
+
+    @Test func restoreAlwaysCallsHardwareEvenBeforeManaged() {
+        let fans = FakeFans()
+        let engine = FanEngine(hardware: fans)
+        engine.restore()
+        #expect(fans.automaticCalls == 2 && !engine.isManaging)
     }
 
     @Test func theInstallerChecksTheCopyAndRunsItForOneUser() {
@@ -121,6 +157,8 @@ import Testing
         #expect(script.contains("cp '/Applications/Wis'\\''p.app/Contents/Helpers/wisp-fan-helper' '/Library/PrivilegedHelperTools/app.wisp.fans.new'"))
         #expect(script.contains("!= 'abc123'"))
         #expect(script.contains("<string>--user</string>\n        <string>501</string>"))
+        #expect(script.contains("<key>ProcessType</key>\n    <string>Interactive</string>"))
+        #expect(script.contains("<key>Nice</key>\n    <integer>-10</integer>"))
         #expect(script.contains("\nPLIST\n"))
         #expect(script.hasSuffix("launchctl bootstrap system '/Library/LaunchDaemons/app.wisp.fans.plist'"))
         #expect(FanHelper.uninstallScript.hasPrefix("launchctl bootout system/app.wisp.fans"))
