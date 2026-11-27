@@ -77,6 +77,18 @@ enum UsageWindowChoice: String, Codable, CaseIterable {
     }
 }
 
+/// What the temperature item reads.
+enum TemperatureChoice: String, Codable, CaseIterable {
+    case cpuAverage, cpuHottest
+
+    var title: String {
+        switch self {
+        case .cpuAverage: return "CPU average"
+        case .cpuHottest: return "Hottest CPU sensor"
+        }
+    }
+}
+
 enum MenuStyle: String, Codable, CaseIterable {
     case number, graph, both
 
@@ -166,6 +178,7 @@ struct MenuItemSetting: Codable, Equatable {
     /// AI usage only: one exact limit of the account (a window name, such as "Gemini this
     /// week"), in place of `usageWindow`. Empty for none.
     var usageLimit = ""
+    var temperature: TemperatureChoice = .cpuAverage
 
     init(metric: MenuMetric, enabled: Bool, style: MenuStyle) {
         self.metric = metric
@@ -202,6 +215,7 @@ struct MenuItemSetting: Codable, Equatable {
         usageWindow = (try? c.decode(UsageWindowChoice.self, forKey: .usageWindow)) ?? .session
         usageAccount = (try? c.decode(String.self, forKey: .usageAccount)) ?? ""
         usageLimit = (try? c.decode(String.self, forKey: .usageLimit)) ?? ""
+        temperature = (try? c.decode(TemperatureChoice.self, forKey: .temperature)) ?? .cpuAverage
     }
 }
 
