@@ -33,7 +33,9 @@ final class FakeHome {
 
     /// Sets every file and folder at and below `relative` to `days` ago.
     func age(_ relative: String, days: Double) {
-        let date = Date().addingTimeInterval(-days * 86_400)
+        // Whole days go back by the calendar, so "40 days ago" holds across a clock change.
+        let whole = Calendar.current.date(byAdding: .day, value: -Int(days), to: Date()) ?? Date()
+        let date = whole.addingTimeInterval(-(days - days.rounded(.down)) * 86_400)
         let root = path + "/" + relative
         var all = [root]
         if let more = FileManager.default.subpaths(atPath: root) { all += more.map { root + "/" + $0 } }
