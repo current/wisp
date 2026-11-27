@@ -263,7 +263,9 @@ final class DashboardPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
-        level = .popUpMenu
+        // Under the status items: a soft panel's shadow margin reaches up over the menu bar,
+        // and at pop-up level it took the clicks meant for the items (ours and other apps').
+        level = .mainMenu
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         isReleasedWhenClosed = false
         // Blocks come and go as the dashboard fills; Tab follows whatever is shown.
