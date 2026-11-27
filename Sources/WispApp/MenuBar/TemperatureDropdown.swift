@@ -3,14 +3,19 @@ import WispCore
 
 /// The Temperature item's dropdown: the CPU and GPU over the last few minutes as the
 /// Sensors page charts them, then the sensors by group (the hottest reading of each, on
-/// a slim bar; hovering a group lists its readings) and the fans' speeds. The title's
-/// figure is the CPU reading the menu bar shows, which can sit below the hottest core.
+/// a slim bar; hovering a group lists its readings) and the fans' speeds, with the fan
+/// mode on the fans card's tag once the helper is set up. The title's figure is the CPU
+/// reading the menu bar shows, which can sit below the hottest core.
 @MainActor
 final class TemperatureDropdown: SoftDropdown {
     private let history = SoftCard()
     private let chart = TimeChart()
     private let sensors = SoftCard()
     private let fans = SoftCard()
+    /// Over the fans card's tag: the fan mode, or a way to set fan control up.
+    private let fanTag = TagButton()
+    private var watchingFans = false
+    private var occlusion: NSObjectProtocol?
     /// The GPU's readings while the dropdown is open; the CPU's come from the history.
     private var gpuRing = RecentRing(capacity: HistoryStore.recentSamples)
     private static let groupLimit = 6
@@ -30,13 +35,41 @@ final class TemperatureDropdown: SoftDropdown {
         history.chart = chart
         history.chartHeight = 104
         for card in [history, sensors, fans] { addSubview(card) }
+        fans.addSubview(fanTag)
+        fanTag.onPress = { [weak self] in self?.fanTagPressed() }
+        _ = FanService.shared.observe { [weak self] in
+            guard let self, self.window?.isVisible == true else { return }
+            self.update(self.delegate.system, history: self.delegate.monitor.history)
+        }
         update(delegate.system, history: delegate.monitor.history)
+    }
+
+    /// The helper is asked for the fans only while the dropdown is on screen.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let occlusion { NotificationCenter.default.removeObserver(occlusion) }
+        occlusion = nil
+        guard let window else { return watchFans(false) }
+        occlusion = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let window = self.window else { return }
+                self.watchFans(window.isVisible && window.occlusionState.contains(.visible))
+            }
+        }
+    }
+
+    private func watchFans(_ on: Bool) {
+        guard on != watchingFans else { return }
+        watchingFans = on
+        FanService.shared.watch(on)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func prepare() {
         gpuRing = RecentRing(capacity: HistoryStore.recentSamples)
+        // Ask now so the mode is current when the panel shows, before watching starts.
+        FanService.shared.refresh()
         update(delegate.system, history: delegate.monitor.history)
     }
 
@@ -60,6 +93,7 @@ final class TemperatureDropdown: SoftDropdown {
         plate.count = "\(t.sensors.count) sensors" + fanCount
         plate.footer = "Hover a group for its readings."
         arrange([history, sensors, fans].filter { !$0.isHidden })
+        fanTag.frame = SoftCard.tagRect(fanTag.title, in: fans.bounds)
     }
 
     private func showHistory(_ t: ThermalReading, store: HistoryStore) {
@@ -103,17 +137,49 @@ final class TemperatureDropdown: SoftDropdown {
     private func showFans(_ t: ThermalReading) {
         fans.isHidden = t.fans.isEmpty
         guard !t.fans.isEmpty else { return }
+        let service = FanService.shared
+        let ready = service.availability == .ready
+        let status = ready ? service.status : nil
         let spinning = t.fans.filter { $0.rpm > 1 }.count
+        var tag: String?
+        if ready {
+            let choices = FanModeChoices.list(service)
+            tag = choices.modes[choices.selected].title
+        } else if service.checked {
+            tag = "Set Up Fan Control"
+        }
+        fanTag.title = tag ?? ""
+        fanTag.isHidden = tag == nil
+        fanTag.setAccessibilityLabel(ready ? "Fan mode, " + (tag ?? "") : tag)
         fans.show(mark: .glyph("fan", A2.labelTint(.cpu)), title: t.fans.count == 1 ? "Fan" : "Fans",
                   meta: spinning == 0 ? (t.fans.count == 1 ? "Off" : "All off") : spinning == t.fans.count ? "Spinning" : "\(spinning) spinning",
+                  tag: tag, note: status?.overheated == true ? "Full speed until the chip cools" : nil,
                   lines: t.fans.map { fan in
                       let top = fan.maxRPM ?? 6000
                       let fraction = fan.rpm > 1 ? min(1, fan.rpm / max(top, 1)) : 0
                       let range = fan.minRPM.flatMap { low in fan.maxRPM.map { "\(Self.rpm(low)) to \(Self.rpm($0)) rpm" } }
+                      let target = status?.fans.first { $0.index == fan.index }?.targetRPM.map { "Target \(Self.rpm($0)) rpm" }
                       return SoftCard.Line(label: t.fans.count == 1 ? "Speed" : "Fan \(fan.index + 1)", fraction: fraction,
                                            color: fraction >= 0.8 ? A2.power : A2.cpu, figure: Format.percent(fraction),
-                                           detail: fan.rpm > 1 ? "\(Self.rpm(fan.rpm)) rpm" : "Off", hover: range)
+                                           detail: fan.rpm > 1 ? "\(Self.rpm(fan.rpm)) rpm" : "Off", hover: target ?? range)
                   })
+    }
+
+    private func fanTagPressed() {
+        guard FanService.shared.availability == .ready else { return delegate.showPage(.sensors) }
+        let menu = NSMenu()
+        FanModeChoices.menuItems(FanService.shared).forEach(menu.addItem)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: fanTag.bounds.height + 4), in: fanTag)
+    }
+
+    override func menuItems() -> [NSMenuItem] {
+        let service = FanService.shared
+        guard !(delegate.system.thermal?.fans.isEmpty ?? true) else { return [] }
+        guard service.availability == .ready else {
+            guard service.checked else { return [] }
+            return [ActionItem("Set Up Fan Control…") { [weak self] in self?.delegate.showPage(.sensors) }]
+        }
+        return [.sectionHeader(title: "Fans")] + FanModeChoices.menuItems(service)
     }
 
     /// A reading's bar colour: calm, then amber from 75° and red from 90°, as the limit

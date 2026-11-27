@@ -18,6 +18,7 @@ build_number=$(git rev-list --count HEAD 2>/dev/null || echo 1)
 link=(-Xlinker -platform_version -Xlinker macos -Xlinker 15.0 -Xlinker "$(xcrun --show-sdk-version)")
 swift build -c "$config" ${archs[@]+"${archs[@]}"} --product WispApp "${link[@]}"
 swift build -c "$config" ${archs[@]+"${archs[@]}"} --product wisp "${link[@]}"
+swift build -c "$config" ${archs[@]+"${archs[@]}"} --product wisp-fan-helper "${link[@]}"
 bin=$(swift build -c "$config" ${archs[@]+"${archs[@]}"} --show-bin-path "${link[@]}")
 
 app=build/Wisp.app
@@ -25,11 +26,13 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources"
 cp "$bin/WispApp" "$app/Contents/MacOS/Wisp"
 cp "$bin/wisp" "$app/Contents/Helpers/wisp"
+cp "$bin/wisp-fan-helper" "$app/Contents/Helpers/wisp-fan-helper"
 sed -e "s/__VERSION__/$version/" -e "s/__BUILD__/$build_number/" Resources/Info.plist > "$app/Contents/Info.plist"
 if [[ -f Resources/Wisp.icns ]]; then
     cp Resources/Wisp.icns "$app/Contents/Resources/Wisp.icns"
 fi
 
 codesign --force --options runtime --sign - "$app/Contents/Helpers/wisp"
+codesign --force --options runtime --sign - "$app/Contents/Helpers/wisp-fan-helper"
 codesign --force --options runtime --sign - "$app"
 echo "$app"

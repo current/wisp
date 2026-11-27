@@ -90,6 +90,31 @@ final class IPCServer: @unchecked Sendable {
         return Report.json(Asked(app: app.name), pretty: false)
     }
 
+    struct AskedFans: Encodable {
+        var asked = true
+        var mode: String
+        var note = "Wisp is asking the user now. The fans change only if they agree."
+    }
+
+    /// Shows the owner the fan change an assistant wants and replies at once.
+    private func askFans(_ request: LocalRequest) -> Data {
+        DispatchQueue.main.sync {
+            let service = FanService.shared
+            guard service.availability == .ready else {
+                return Report.json(Responder.Failure(error: "Fan control is not set up. The user can turn it on in Wisp's Sensors page."), pretty: false)
+            }
+            guard let mode = FanMode.parse(request.argument ?? "", curves: service.curves) else {
+                let names = service.modes.map(\.title).joined(separator: ", ")
+                return Report.json(Responder.Failure(error: "Unknown fan mode \"\(request.argument ?? "")\". Modes: \(names), or a percent like 60%."), pretty: false)
+            }
+            let reason = String((request.reason ?? "").prefix(300))
+            guard FanPrompt.shared.ask(mode, current: service.status?.mode, reason: reason) else {
+                return Report.json(Responder.Failure(error: "Another request is already waiting for the user."), pretty: false)
+            }
+            return Report.json(AskedFans(mode: mode.title), pretty: false)
+        }
+    }
+
     private func serve(_ client: Int32) {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
@@ -105,6 +130,8 @@ final class IPCServer: @unchecked Sendable {
                 reply = Report.json(Responder.Failure(error: "Assistant access is turned off in Wisp's settings."), pretty: false)
             } else if request.command == "quit" {
                 reply = askToQuit(request, table: monitor.currentTable)
+            } else if request.command == "fanmode" {
+                reply = askFans(request)
             } else if request.command == "why" {
                 reply = Report.json(monitor.diagnose())
             } else {

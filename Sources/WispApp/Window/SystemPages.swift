@@ -140,8 +140,12 @@ final class SensorsCardPage: CardPage {
     private let stateEnd = TextLine()
     private let stateLines = A2Lines()
     private let temperatures = A2ListCard()
-    private let fans = A2ListCard()
+    private let fans = FanControlCard()
+    private let curve = FanCurveCard()
     private let accessories = A2ListCard()
+    private var fanReadings: [FanReading] = []
+    /// Set while the page is on screen, when the helper is asked for the fans.
+    private var fanObserver: UUID?
     private var accessoriesAt = Date.distantPast
     /// GPU and SSD readings while the page is open; the CPU's comes from the history.
     private var gpuRing = RecentRing(capacity: HistoryStore.recentSamples)
@@ -153,7 +157,7 @@ final class SensorsCardPage: CardPage {
 
     override func loadView() {
         super.loadView()
-        for view in [history, state, temperatures, fans, accessories] as [NSView] { canvas.addSubview(view) }
+        for view in [history, state, temperatures, fans, curve, accessories] as [NSView] { canvas.addSubview(view) }
         historyHeader.title = "History"
         chart.edgeToEdge = true
         chart.primaryColor = A2.cpu
@@ -177,9 +181,8 @@ final class SensorsCardPage: CardPage {
         temperatures.columns.titles("Group", [("Sensors", 226, .left), ("", 96, .left), ("Hottest", 54, .right)])
         temperatures.emptyText("No temperature sensors found")
         temperatures.maxRowHeight = 72
-        fans.header.title = "Fans"
-        fans.listGap = 6
-        fans.emptyText("This Mac has no fans")
+        curve.isHidden = true
+        showFans()
         accessories.header.title = "Accessories"
         accessories.listGap = 6
         accessories.emptyText("No accessory reports a battery")
@@ -201,19 +204,30 @@ final class SensorsCardPage: CardPage {
             state.frame = NSRect(x: rightX, y: y, width: rightWidth, height: top)
             y += top + gap
             temperatures.frame = NSRect(x: margin, y: y, width: left, height: max(lower, temperatures.neededHeight))
-            fans.frame = NSRect(x: rightX, y: y, width: rightWidth, height: half)
-            accessories.frame = NSRect(x: rightX, y: y + half + gap, width: rightWidth, height: lower - half - gap)
+            let fansHeight = max(half, fans.neededHeight(width: rightWidth))
+            fans.frame = NSRect(x: rightX, y: y, width: rightWidth, height: fansHeight)
+            accessories.frame = NSRect(x: rightX, y: y + fansHeight + gap, width: rightWidth,
+                                       height: max(lower - fansHeight - gap, accessories.neededHeight))
             y = max(temperatures.frame.maxY, accessories.frame.maxY)
+            if !curve.isHidden {
+                curve.frame = NSRect(x: margin, y: y + gap, width: inner, height: FanCurveCard.height)
+                y = curve.frame.maxY
+            }
         } else {
             history.frame = NSRect(x: margin, y: y, width: inner, height: 260)
             y += 260 + gap
             state.frame = NSRect(x: margin, y: y, width: inner, height: 280)
             y += 280 + gap
-            for card in [temperatures, fans, accessories] {
-                card.frame = NSRect(x: margin, y: y, width: inner, height: min(card.fullHeight, max(card.neededHeight, 186)))
-                y = card.frame.maxY + gap
+            temperatures.frame = NSRect(x: margin, y: y, width: inner, height: min(temperatures.fullHeight, max(temperatures.neededHeight, 186)))
+            y = temperatures.frame.maxY + gap
+            fans.frame = NSRect(x: margin, y: y, width: inner, height: max(fans.neededHeight(width: inner), 150))
+            y = fans.frame.maxY + gap
+            if !curve.isHidden {
+                curve.frame = NSRect(x: margin, y: y, width: inner, height: FanCurveCard.height)
+                y = curve.frame.maxY + gap
             }
-            y -= gap
+            accessories.frame = NSRect(x: margin, y: y, width: inner, height: min(accessories.fullHeight, max(accessories.neededHeight, 186)))
+            y = accessories.frame.maxY
         }
         historyHeader.frame = NSRect(x: A2.padSide, y: A2.padTop, width: history.bounds.width - A2.padSide * 2, height: 16)
         chart.frame = NSRect(x: 0, y: 54, width: history.bounds.width, height: history.bounds.height - 54)
@@ -237,6 +251,31 @@ final class SensorsCardPage: CardPage {
     override func viewWillAppear() {
         super.viewWillAppear()
         refreshChart(force: true)
+        guard fanObserver == nil else { return }
+        fanObserver = FanService.shared.observe { [weak self] in self?.showFans() }
+        FanService.shared.watch(true)
+        showFans()
+    }
+
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        guard let fanObserver else { return }
+        FanService.shared.stopObserving(fanObserver)
+        FanService.shared.watch(false)
+        self.fanObserver = nil
+    }
+
+    /// The Fans card and the curve editor, which shows once the helper can run a curve.
+    private func showFans() {
+        let service = FanService.shared
+        let fanHeight = fans.neededHeight(width: fans.bounds.width)
+        let curveShown = !curve.isHidden
+        fans.update(service, readings: fanReadings)
+        curve.isHidden = service.availability != .ready || (service.status?.fans.isEmpty ?? true)
+        if !curve.isHidden { curve.update(service) }
+        // Before the page is in the window its first layout places everything anyway.
+        guard view.window != nil else { return }
+        if curveShown != !curve.isHidden || fanHeight != fans.neededHeight(width: fans.bounds.width) { relayout() }
     }
 
     private func refreshChart(force: Bool) {
@@ -308,13 +347,9 @@ final class SensorsCardPage: CardPage {
                          .init(kind: .text(Format.celsius(top), A2.primary, A2.valueFont, .right), width: 54)]
         }
 
-        let spinning = t.fans.filter { $0.rpm > 1 }.count
-        fans.header.items = t.fans.isEmpty ? [] : [.init(text: spinning == 0 ? (t.fans.count == 2 ? "Both off" : "Off") : "\(spinning) spinning")]
-        fans.set(count: t.fans.count) { row, index in
-            let fan = t.fans[index]
-            row.name = "Fan \(fan.index + 1)"
-            row.detail = [fan.minRPM, fan.maxRPM].compactMap { $0 }.count == 2 ? "\(Int(fan.minRPM!)) to \(Int(fan.maxRPM!)) rpm" : ""
-            row.cells = [.init(kind: .text("\(Int(fan.rpm)) rpm", A2.primary, A2.valueFont, .right), width: 64)]
+        if t.fans != fanReadings {
+            fanReadings = t.fans
+            if FanService.shared.status == nil { showFans() }
         }
 
         if Date().timeIntervalSince(accessoriesAt) > 30 {

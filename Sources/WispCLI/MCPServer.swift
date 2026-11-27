@@ -62,6 +62,14 @@ final class MCPServer {
         Tool(name: "why_slow",
              description: "Why this Mac is slow right now: Wisp looks hard for about three seconds, then returns findings ranked by how much each one slows the Mac (CPU, memory pressure and swapping, thermal throttling, disk space and activity, Spotlight, Time Machine, Photos analysis, WindowServer, GPU, coding agents and containers). Each finding is one sentence with the number and the app responsible. An empty list means nothing is wrong.",
              properties: [:], required: []) { _ in LocalRequest(command: "why") },
+        Tool(name: "fan_status",
+             description: "Fan speeds now and each fan's range, the CPU and GPU temperature, and the fan mode: Automatic (macOS decides), a fixed percent, or a curve of speed by temperature such as Quiet or Balanced. Also whether Wisp's fan helper is installed and the modes ask_to_change_fans takes.",
+             properties: [:], required: [], local: { _ in FanCommand.statusJSON() }),
+        Tool(name: "ask_to_change_fans",
+             description: "Ask the user to change the fan mode, for example to Max while a long build runs hot, or back to Automatic. Wisp shows them the mode and your reason, and changes it only if they agree. Needs Wisp running with fan control set up. Returns at once; check fan_status later.",
+             properties: ["mode": ["type": "string", "description": "auto, silent, quiet, balanced, cool, max, a percent like \"60%\", or the name of a saved curve from fan_status"],
+                          "reason": ["type": "string", "description": "One sentence the user will read, e.g. \"The CPU is at 98 °C during the build.\""]],
+             required: ["mode", "reason"], readOnly: false) { LocalRequest(command: "fanmode", argument: $0["mode"] as? String, reason: $0["reason"] as? String) },
         Tool(name: "ask_to_quit_app",
              description: "Ask the user to quit an app, for example one using far too much memory. Wisp shows them the app, what it is using and your reason, and quits it normally only if they agree. Returns at once; check app_details later to see whether it quit.",
              properties: ["name": ["type": "string", "description": "App name or bundle id"],
@@ -82,7 +90,7 @@ final class MCPServer {
                 reply(id, result: ["protocolVersion": requested ?? "2025-06-18",
                                    "capabilities": ["tools": [:] as [String: Any]],
                                    "serverInfo": ["name": "wisp", "version": Wisp.version],
-                                   "instructions": "This Mac's processes, apps, ports, coding agents, Docker containers, storage and Clean Up rows, from the Wisp system monitor. When the user asks what a Clean Up row is or where it came from, call explain_cleanable. Everything is read only, except that you can ask the user to quit an app."])
+                                   "instructions": "This Mac's processes, apps, ports, coding agents, Docker containers, storage, fans and Clean Up rows, from the Wisp system monitor. When the user asks what a Clean Up row is or where it came from, call explain_cleanable. Everything is read only, except that you can ask the user to quit an app or change the fan mode."])
             case "ping":
                 reply(id, result: [:])
             case "tools/list":
@@ -109,7 +117,7 @@ final class MCPServer {
                     } else {
                         var request = tool.request!(arguments)
                         request.fromAssistant = true
-                        data = Local.ask(request) ?? (request.command == "quit"
+                        data = Local.ask(request) ?? (request.command == "quit" || request.command == "fanmode"
                             ? Report.json(Responder.Failure(error: "Wisp is not running, so it cannot ask the user."))
                             : Local.sampleAndAnswer(request))
                     }
