@@ -74,7 +74,8 @@ public struct InstallerScanner: CleanScanner {
                 let ext = (path as NSString).pathExtension.lowercased()
                 batch.append(CleanItem(id: "installer:\(path)", tab: .junk, group: Self.group, name: (path as NSString).lastPathComponent,
                                        detail: Self.kinds[ext] ?? "", paths: [path], bytes: size.bytes, modified: size.modified,
-                                       safety: .checkFirst, checkedByDefault: false).stamped(sizes))
+                                       safety: .checkFirst, checkedByDefault: false,
+                                       origin: CleanOrigin.downloadedFrom(path).map { CleanOrigin(downloadedFrom: $0) }).stamped(sizes))
             }
             if !batch.isEmpty { context.found(batch) }
             items += batch

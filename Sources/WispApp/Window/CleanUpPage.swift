@@ -30,6 +30,7 @@ final class CleanUpPage: CardPage {
     private var history: [CleanRecord]?
     private var visible = false
     private var refreshQueued = false
+    private var snapshotQueued = false
     /// Set by a click on the scheduled-clean notification: review the safe items once the scan is in.
     private var scheduledPending = false
     private var review: CleanReview?
@@ -48,6 +49,7 @@ final class CleanUpPage: CardPage {
     private static let work = DispatchQueue(label: "app.wisp.clean", qos: .utility)
     /// Tabs scan side by side.
     private static let scanWork = DispatchQueue(label: "app.wisp.clean.scan", qos: .utility, attributes: .concurrent)
+    private static let snapshotWork = DispatchQueue(label: "app.wisp.clean.snapshot", qos: .utility)
 
     /// Holds the scrolling cards and the footer over them.
     private final class Root: NSView {
@@ -247,6 +249,28 @@ final class CleanUpPage: CardPage {
         var ids = Set<String>()
     }
 
+    /// Saves the finished scans and the ticks for `wisp clean --explain` and the MCP server, at most
+    /// once every two seconds. Tabs not scanned in this window keep what an earlier one saved.
+    private func queueSnapshot() {
+        guard !demo, !snapshotQueued else { return }
+        snapshotQueued = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self else { return }
+            self.snapshotQueued = false
+            var tabs: [String: CleanSnapshot.Tab] = [:]
+            for (tab, found) in self.found where found.complete {
+                if let date = found.scannedAt { tabs[tab.rawValue] = CleanSnapshot.Tab(scannedAt: date, items: found.items) }
+            }
+            let selected = Array(self.selected)
+            Self.snapshotWork.async {
+                var snapshot = CleanSnapshot.load() ?? CleanSnapshot(tabs: [:], selected: [])
+                snapshot.tabs.merge(tabs) { $1 }
+                snapshot.selected = selected
+                snapshot.save()
+            }
+        }
+    }
+
     /// Batches can arrive many times a second; the list is rebuilt at most four times a second.
     private func queueRefresh() {
         guard !refreshQueued else { return }
@@ -386,6 +410,7 @@ final class CleanUpPage: CardPage {
         for item in found.values.flatMap(\.items) + (uninstall.plan ?? []) where seen.insert(item.id).inserted && item.checkedByDefault {
             selected.insert(item.id)
         }
+        queueSnapshot()
         let listsApps = tab == .uninstall && uninstall.chosen == nil
         list.onOpen = listsApps ? { [weak self] row in self?.openApp(row.id) } : nil
         list.onExclude = tab == .uninstall ? nil : { [weak self] item in self?.exclude(item) }

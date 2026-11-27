@@ -137,7 +137,7 @@ public struct DeveloperCacheScanner: CleanScanner {
                 guard !paths.isEmpty, size.bytes >= minimumBytes else { continue }
                 batch.append(CleanItem(id: "devcache:\(paths[0])", tab: .developer, group: group, name: tool.name, detail: tool.detail + size.unreadNote,
                                        paths: paths, bytes: size.bytes, modified: size.modified, safety: tool.safety,
-                                       ownerBundleID: tool.owner).stamped(sizes))
+                                       ownerBundleID: tool.owner, origin: CleanOrigin(madeBy: tool.name)).stamped(sizes))
             }
             if !batch.isEmpty { context.found(batch) }
             items += batch

@@ -11,7 +11,9 @@ final class MCPServer {
         let properties: [String: Any]
         let required: [String]
         var readOnly = true
-        let request: ([String: Any]) -> LocalRequest
+        var request: (([String: Any]) -> LocalRequest)?
+        /// Answered in this process from files on disk, without the app.
+        var local: (([String: Any]) -> Data)?
     }
 
     private let tools: [Tool] = [
@@ -41,15 +43,22 @@ final class MCPServer {
              properties: [:], required: []) { _ in LocalRequest(command: "alerts") },
         Tool(name: "storage_summary",
              description: "Startup disk space by kind (apps, developer, documents, mail, system data, purgeable, free), what System Data holds, developer caches and build folders with sizes, what could go to the Trash, local snapshots and SSD health. Folder sizes come from the last scan the Wisp app saved.",
-             properties: [:], required: []) { _ in LocalRequest(command: "storage") },
+             properties: [:], required: [], local: { _ in Report.json(StorageReport.current()) }),
         Tool(name: "list_cleanable",
-             description: "What Wisp's Clean Up page would offer to remove: caches, logs, build output, large files and leftovers of deleted apps, by tab, each with its paths, size and a safety label (safe, or check first). Lists only; nothing is removed.",
-             properties: ["tab": ["type": "string", "enum": ["junk", "developer", "large", "leftovers", "uninstall"]]],
-             required: []) { LocalRequest(command: "clean", argument: $0["tab"] as? String) },
+             description: "The rows of Wisp's Clean Up page: caches, logs, build output, git worktrees, large files and leftovers of deleted apps, by tab, each with its id, paths, size, safety label (safe, or check first) and origin (what made it, the project or repository it belongs to, a worktree's branch). When the Clean Up page scanned in the last day, these are the rows the user sees, with scannedAt on each tab and the ids they ticked in selected. Lists only; nothing is removed. To answer where one row comes from, call explain_cleanable.",
+             properties: ["tab": ["type": "string", "enum": ["junk", "developer", "large", "leftovers", "uninstall"]],
+                          "rescan": ["type": "boolean", "description": "Scan now instead of using the Clean Up page's last scan. Slower."]],
+             required: [], local: { CleanCommand.listingJSON(tab: $0["tab"] as? String, rescan: $0["rescan"] as? Bool ?? false) }),
+        Tool(name: "explain_cleanable",
+             description: "Where a Clean Up row comes from and what removing it would lose, for when the user cannot tell from its name (\"what is agent-ae2e7c6 (t3code)?\", \"who made these worktrees?\", \"where did this .dmg come from?\"). Matches the row by id, by a path at or inside it, or by words from its name, and returns up to ten: what made it, the repository with its branch, remote, uncommitted files, unpushed commits and last commit, the address a download came from, the owning app and whether it runs, any process using it now, and whether the user ticked it. Reads only.",
+             properties: ["query": ["type": "string", "description": "The row's id, a path, or words from its name as the user sees it, e.g. \"agent-ae2e7c6afaf6e46fd\" or \"node_modules wisp\""],
+                          "tab": ["type": "string", "enum": ["junk", "developer", "large", "leftovers"]],
+                          "rescan": ["type": "boolean", "description": "Scan now instead of using the Clean Up page's last scan. Slower."]],
+             required: ["query"], local: { CleanCommand.explainJSON($0["query"] as? String ?? "", tab: $0["tab"] as? String, rescan: $0["rescan"] as? Bool ?? false) }),
         Tool(name: "uninstall_plan",
              description: "What uninstalling an app would remove, without removing anything: the app bundle and its files in ~/Library (Application Support, Caches, Preferences, Containers, Group Containers, launch agents...) with paths and sizes. Ticked items match the app's bundle id or app groups exactly; unticked ones are looser matches to confirm.",
              properties: ["name": ["type": "string", "description": "App name or bundle id, e.g. \"Slack\" or \"com.tinyspeck.slackmacgap\""]],
-             required: ["name"]) { LocalRequest(command: "uninstall", argument: $0["name"] as? String) },
+             required: ["name"], local: { UninstallCommand.planJSON($0["name"] as? String ?? "") }),
         Tool(name: "why_slow",
              description: "Why this Mac is slow right now: Wisp looks hard for about three seconds, then returns findings ranked by how much each one slows the Mac (CPU, memory pressure and swapping, thermal throttling, disk space and activity, Spotlight, Time Machine, Photos analysis, WindowServer, GPU, coding agents and containers). Each finding is one sentence with the number and the app responsible. An empty list means nothing is wrong.",
              properties: [:], required: []) { _ in LocalRequest(command: "why") },
@@ -73,7 +82,7 @@ final class MCPServer {
                 reply(id, result: ["protocolVersion": requested ?? "2025-06-18",
                                    "capabilities": ["tools": [:] as [String: Any]],
                                    "serverInfo": ["name": "wisp", "version": Wisp.version],
-                                   "instructions": "This Mac's processes, apps, ports, coding agents and Docker containers, from the Wisp system monitor. Everything is read only, except that you can ask the user to quit an app."])
+                                   "instructions": "This Mac's processes, apps, ports, coding agents, Docker containers, storage and Clean Up rows, from the Wisp system monitor. When the user asks what a Clean Up row is or where it came from, call explain_cleanable. Everything is read only, except that you can ask the user to quit an app."])
             case "ping":
                 reply(id, result: [:])
             case "tools/list":
@@ -89,17 +98,21 @@ final class MCPServer {
                     reply(id, error: (-32602, "Unknown tool \(name)"))
                     continue
                 }
-                var request = tool.request(params["arguments"] as? [String: Any] ?? [:])
-                request.fromAssistant = true
+                let arguments = params["arguments"] as? [String: Any] ?? [:]
                 let text: String
                 if !Self.allowed {
                     text = "{\"error\": \"Assistant access is turned off in Wisp's settings.\"}"
                 } else {
-                    let data = request.command == "uninstall" ? UninstallCommand.planJSON(request.argument ?? "")
-                        : request.command == "storage" ? Report.json(StorageReport.current())
-                        : request.command == "clean" ? CleanCommand.listingJSON(tab: request.argument) : Local.ask(request) ?? (request.command == "quit"
-                        ? Report.json(Responder.Failure(error: "Wisp is not running, so it cannot ask the user."))
-                        : Local.sampleAndAnswer(request))
+                    let data: Data
+                    if let local = tool.local {
+                        data = local(arguments)
+                    } else {
+                        var request = tool.request!(arguments)
+                        request.fromAssistant = true
+                        data = Local.ask(request) ?? (request.command == "quit"
+                            ? Report.json(Responder.Failure(error: "Wisp is not running, so it cannot ask the user."))
+                            : Local.sampleAndAnswer(request))
+                    }
                     text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
                 }
                 reply(id, result: ["content": [["type": "text", "text": text]], "isError": text.hasPrefix("{\"error\"")])

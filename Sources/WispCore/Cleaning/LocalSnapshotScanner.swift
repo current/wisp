@@ -26,7 +26,8 @@ public struct LocalSnapshotScanner: CleanScanner {
             CleanItem(id: "snapshot:\(snapshot.stamp)", tab: .junk, group: Self.group,
                       name: "Snapshot from \(formatter.string(from: snapshot.date))",
                       detail: "A copy of the disk Time Machine keeps for about a day. macOS does not report its size, and removing it is permanent.",
-                      paths: [], bytes: 0, modified: snapshot.date, safety: .checkFirst, removal: .localSnapshot(date: snapshot.stamp))
+                      paths: [], bytes: 0, modified: snapshot.date, safety: .checkFirst, removal: .localSnapshot(date: snapshot.stamp),
+                      origin: CleanOrigin(madeBy: "Time Machine"))
         }
         if !items.isEmpty { context.found(items) }
         return items

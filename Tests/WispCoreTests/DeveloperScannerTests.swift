@@ -179,9 +179,22 @@ import Testing
         #expect(Set(items.map(\.name)) == ["old (repo)", "fresh (repo)", "mine-old (repo)"])
         #expect(items.allSatisfy { $0.safety == .checkFirst && !$0.checkedByDefault })
         let fresh = try #require(items.first { $0.name == "fresh (repo)" })
-        #expect(fresh.detail.hasPrefix("A git worktree, last used yesterday."))
+        #expect(fresh.detail.hasPrefix("A git worktree T3 Code made, last used yesterday."))
+        #expect(fresh.origin == CleanOrigin(madeBy: "T3 Code", project: home.path + "/src/repo", branch: "fresh"))
         let old = try #require(items.first { $0.name == "old (repo)" })
-        #expect(old.detail.hasPrefix("A git worktree, last used 40 days ago."))
+        #expect(old.detail.hasPrefix("A git worktree T3 Code made, last used 40 days ago."))
+        let mine = try #require(items.first { $0.name == "mine-old (repo)" })
+        #expect(mine.detail.hasPrefix("A git worktree, last used 40 days ago."))
+        #expect(mine.origin == CleanOrigin(project: home.path + "/src/repo", branch: "mine-old"))
+    }
+
+    @Test func worktreesNameTheToolWhoseFolderHoldsThem() {
+        let home = "/Users/me"
+        #expect(WorktreeScanner.maker(of: home + "/.t3/worktrees/track/mac-live", home: home) == "T3 Code")
+        #expect(WorktreeScanner.maker(of: home + "/.codex/worktrees/1a2b/repo", home: home) == "Codex")
+        #expect(WorktreeScanner.maker(of: home + "/conductor/workspaces/repo/denver", home: home) == "Conductor")
+        #expect(WorktreeScanner.maker(of: home + "/src/t3code/.claude/worktrees/agent-ae2e", home: home) == "Claude Code")
+        #expect(WorktreeScanner.maker(of: home + "/src/repo-worktrees/mine", home: home) == nil)
     }
 
     // MARK: Tool caches

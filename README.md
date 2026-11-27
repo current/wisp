@@ -169,6 +169,7 @@ wisp app Safari          # one app, its processes and the last hour
 wisp why                 # what is slowing the Mac down right now
 wisp storage             # disk space by kind and what can go
 wisp clean               # what Clean Up would remove; --apply trashes the safe items
+wisp clean --explain agent-ae2e   # where a row came from: tool, repository, branch, download address
 wisp uninstall Slack     # an app and its files in ~/Library; --apply to remove
 wisp ports               # dev servers by project
 wisp agents
@@ -188,7 +189,11 @@ claude mcp add wisp -- /usr/local/bin/wisp mcp
 
 It can also ask to quit an app. Wisp shows you the app and the reason, and quits
 it only if you click Quit. It can list what Clean Up and an uninstall would
-remove, but it can't remove anything.
+remove, but it can't remove anything. When the Clean Up page scanned in the last
+day, the assistant sees the same rows and ticks you do, so you can ask it where a
+row like `agent-ae2e7c6 (t3code)` came from. `explain_cleanable` answers with the
+tool that made it, the repository and branch, uncommitted and unpushed work, or
+the address a download came from.
 
 ### Plan limits
 

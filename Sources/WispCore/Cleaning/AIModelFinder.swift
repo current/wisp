@@ -110,7 +110,7 @@ struct AIModelFinder {
         let folder = (paths[0] as NSString).deletingLastPathComponent
         var item = CleanItem(id: "ai:" + paths[0], tab: .largeFiles, group: LargeFileCategory.aiModels.rawValue, name: name,
                              detail: detail ?? self.detail(store, folder), paths: paths, bytes: Int64(bytes), modified: date,
-                             safety: .checkFirst, checkedByDefault: false)
+                             safety: .checkFirst, checkedByDefault: false, origin: CleanOrigin(madeBy: store.app))
         item.stamp()
         return Row(item: item, info: LargeFileInfo(category: .aiModels, lastUsed: nil, modified: date))
     }
