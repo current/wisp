@@ -29,18 +29,22 @@ final class ThermalCollector {
     private var fans: [Fan] = []
     private var discovered = false
     private let allComputeSensors: Bool
+    private let computeOnly: Bool
 
-    /// When `allComputeSensors` is true, every discovered CPU and GPU die sensor is read so
-    /// fan control cannot miss a hot core outside the UI's spread sample.
-    init(allComputeSensors: Bool = false) {
+    /// When `allComputeSensors` is true, firmware die peaks (`TCM*`, `TVD*`) plus a wide spread of
+    /// CPU and GPU cluster sensors are read so fan control cannot miss a hot core while keeping
+    /// SMC round-trips bounded. Set `computeOnly` when non-compute sensors and fan RPMs are unused.
+    init(allComputeSensors: Bool = false, computeOnly: Bool = false) {
         self.allComputeSensors = allComputeSensors
+        self.computeOnly = computeOnly
     }
 
     static let prefixes: [(String, Group)] = [
-        ("Tp", .cpu), ("Te", .cpu), ("Tg", .gpu), ("Tm", .memory), ("TB", .battery), ("TH", .storage), ("Ts", .ambient),
+        ("TCM", .cpu), ("TVD", .cpu), ("Tp", .cpu), ("Te", .cpu), ("Tg", .gpu), ("Tm", .memory), ("TB", .battery), ("TH", .storage), ("Ts", .ambient),
         ("TC0", .cpu), ("TG0", .gpu), ("TA0", .ambient),
     ]
     static let limits: [Group: Int] = [.cpu: 4, .gpu: 2, .memory: 2, .battery: 2, .storage: 1, .ambient: 2]
+    static let fanComputeLimits: [Group: Int] = [.cpu: 16, .gpu: 8]
 
     func close() {
         smc = nil
@@ -100,10 +104,21 @@ final class ThermalCollector {
             byGroup[group, default: []].append(key)
         }
         for (group, keys) in byGroup {
+            if computeOnly && group != .cpu && group != .gpu { continue }
             let sorted = keys.sorted()
-            let chosen = allComputeSensors && (group == .cpu || group == .gpu)
-                ? sorted
-                : Self.spread(sorted, limit: Self.limits[group] ?? 1)
+            let chosen: [UInt32]
+            if allComputeSensors && (group == .cpu || group == .gpu) {
+                // Always keep Apple Silicon aggregated die sensors (TCM*, TVD*) plus a wide spread
+                // across per-core/cluster diodes without hammering AppleSMC with 140+ calls/tick.
+                let priority = sorted.filter {
+                    let name = SMC.string($0)
+                    return name.hasPrefix("TCM") || name.hasPrefix("TVD")
+                }
+                let rest = sorted.filter { !priority.contains($0) }
+                chosen = priority + Self.spread(rest, limit: Self.fanComputeLimits[group] ?? 8)
+            } else {
+                chosen = Self.spread(sorted, limit: Self.limits[group] ?? 1)
+            }
             for (offset, key) in chosen.enumerated() {
                 guard let info = smc.info(key), smc.read(key, info) != nil else { continue }
                 let label = Self.label(group)
@@ -112,6 +127,7 @@ final class ThermalCollector {
         }
         sensors.sort { ($0.group.rawValue, $0.name) < ($1.group.rawValue, $1.name) }
 
+        guard !computeOnly else { return }
         let fanCountKey = SMC.code("FNum")
         if let info = smc.info(fanCountKey), let n = smc.read(fanCountKey, info) {
             for index in 0..<min(Int(n), 8) {

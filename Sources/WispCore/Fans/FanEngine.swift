@@ -1,4 +1,6 @@
+import Darwin
 import Foundation
+import notify
 
 /// One fan as the hardware reports it.
 public struct FanState: Codable, Sendable, Equatable {
@@ -84,7 +86,9 @@ public final class FanEngine {
     public func tick() -> FanStatus {
         let temperatures = hardware.temperatures()
         let pressure = hardware.thermalPressure
-        let pressureHot = pressure == .serious || pressure == .critical
+        // macOS starts throttling Apple Silicon P-cores at .fair (Moderate, mTPL = 1).
+        // Never hold fans below full speed while macOS is actively thermally throttling.
+        let pressureHot = pressure != .nominal
         if pressureHot || (temperatures.hottest.map { $0 >= Self.overheatCelsius } ?? false) {
             overheated = true
         } else if !pressureHot, let hottest = temperatures.hottest, hottest < Self.cooledCelsius {
@@ -162,11 +166,17 @@ public final class SMCFanHardware: FanHardware {
     private let thermal: ThermalCollector
     public let fans: [FanState]
     private var unlocked = false
+    private var keyInfoCache: [UInt32: SMC.KeyInfo] = [:]
+    private var thermalPressureToken: Int32 = 0
+    private var hasThermalPressureToken = false
 
     public init?(allSensors: Bool = true) {
         guard let smc = SMC() else { return nil }
         self.smc = smc
-        self.thermal = ThermalCollector(allComputeSensors: allSensors)
+        self.thermal = ThermalCollector(allComputeSensors: allSensors, computeOnly: allSensors)
+        if notify_register_check("com.apple.system.thermalpressurelevel", &thermalPressureToken) == NOTIFY_STATUS_OK {
+            hasThermalPressureToken = true
+        }
         var fans: [FanState] = []
         if let info = smc.info(SMC.code("FNum")), let count = smc.read(SMC.code("FNum"), info) {
             for index in 0..<min(Int(count), 8) {
@@ -177,21 +187,40 @@ public final class SMCFanHardware: FanHardware {
         self.fans = fans
     }
 
+    deinit {
+        if hasThermalPressureToken {
+            notify_cancel(thermalPressureToken)
+        }
+    }
+
     private static func value(_ smc: SMC, _ name: String) -> Double? {
         let key = SMC.code(name)
         guard let info = smc.info(key) else { return nil }
         return smc.read(key, info)
     }
 
-    private func write(_ name: String, _ value: Double) -> Bool {
+    private func cachedInfo(_ name: String) -> (UInt32, SMC.KeyInfo)? {
         let key = SMC.code(name)
-        guard let info = smc.info(key) else { return false }
+        if let info = keyInfoCache[key] { return (key, info) }
+        guard let info = smc.info(key) else { return nil }
+        keyInfoCache[key] = info
+        return (key, info)
+    }
+
+    private func read(_ name: String) -> Double? {
+        guard let (key, info) = cachedInfo(name) else { return nil }
+        return smc.read(key, info)
+    }
+
+    private func write(_ name: String, _ value: Double) -> Bool {
+        guard let (key, info) = cachedInfo(name) else { return false }
         return smc.write(key, info, value)
     }
 
     private func reopenSMC() -> Bool {
         guard let fresh = SMC() else { return false }
         smc = fresh
+        keyInfoCache.removeAll(keepingCapacity: true)
         unlocked = false
         return true
     }
@@ -202,6 +231,19 @@ public final class SMCFanHardware: FanHardware {
     }
 
     public var thermalPressure: ThermalPressure {
+        // Read the kernel thermal pressure word directly so a headless launch daemon never
+        // observes a stale ProcessInfo.thermalState cache.
+        if hasThermalPressureToken {
+            var level: UInt64 = 0
+            if notify_get_state(thermalPressureToken, &level) == NOTIFY_STATUS_OK {
+                switch level {
+                case 0: return .nominal
+                case 1: return .fair
+                case 2: return .serious
+                default: return .critical
+                }
+            }
+        }
         switch ProcessInfo.processInfo.thermalState {
         case .fair: return .fair
         case .serious: return .serious
@@ -217,9 +259,15 @@ public final class SMCFanHardware: FanHardware {
         return FanTemperatures(cpu: cpu, gpu: gpu, hottest: [cpu, gpu].compactMap { $0 }.max())
     }
 
-    public func rpm(_ index: Int) -> Double? { Self.value(smc, "F\(index)Ac") }
+    public func rpm(_ index: Int) -> Double? { read("F\(index)Ac") }
 
     public func setManual(_ index: Int, rpm: Double) -> Bool {
+        // Skip redundant SMC writes when the fan is already in manual mode at the requested target.
+        if unlocked,
+           let mode = read("F\(index)Md"), mode == 1,
+           let currentTarget = read("F\(index)Tg"), abs(currentTarget - rpm) < 15 {
+            return true
+        }
         // Macs without an Ftst key (Intel) refuse the write; their mode key works on its own.
         if !unlocked { unlocked = write("Ftst", 1) }
         var modeSet = write("F\(index)Md", 1)
@@ -249,8 +297,7 @@ public final class SMCFanHardware: FanHardware {
         // Never gate Ftst=0 on in-memory `unlocked`: a freshly started helper after a crash
         // or kill must still clear a leftover Ftst=1 left in hardware.
         if index == fans.last?.index {
-            let ftst = SMC.code("Ftst")
-            if let info = smc.info(ftst) {
+            if let (ftst, info) = cachedInfo("Ftst") {
                 let current = smc.read(ftst, info)
                 if unlocked || current == nil || current != 0 {
                     unlocked = !smc.write(ftst, info, 0)

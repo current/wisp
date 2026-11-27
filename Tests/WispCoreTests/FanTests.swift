@@ -113,17 +113,19 @@ import Testing
         #expect(engine.tick().percent == 100)
     }
 
-    @Test func seriousThermalPressureJumpsImmediatelyToFullSpeed() {
+    @Test func anyThermalPressureJumpsImmediatelyToFullSpeed() {
         let fans = FakeFans()
         fans.celsius = 70
         let engine = FanEngine(hardware: fans)
         engine.set(.fixed(10))
         #expect(engine.tick().percent == 10)
-        // macOS thermal throttling jumps straight to 100% on the first tick, skipping the 25%/tick ramp.
-        fans.thermalPressure = .serious
-        let hot = engine.tick()
-        #expect(hot.overheated && hot.percent == 100)
+        // Even .fair (Moderate) thermal pressure already throttles Apple Silicon P-cores,
+        // so any non-nominal pressure jumps straight to 100% on the first tick.
+        fans.thermalPressure = .fair
+        let fairHot = engine.tick()
+        #expect(fairHot.overheated && fairHot.percent == 100)
         // Stays overheated until thermal pressure itself clears, even when sensor temp is below 85°C.
+        fans.thermalPressure = .serious
         #expect(engine.tick().overheated)
         fans.thermalPressure = .nominal
         let recovered = engine.tick()
