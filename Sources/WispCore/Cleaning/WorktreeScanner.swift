@@ -1,16 +1,19 @@
 import Foundation
 
 /// Git worktrees: every one a coding agent made, so their space shows even while they are
-/// in use, and in hand-made `*-worktrees` folders the ones nobody has touched for a while.
+/// in use, and the ones a person made once nobody has touched them for a while. Besides the
+/// folders tools are known to use, every repository in the code folders is asked for its
+/// worktrees, so one a tool keeps somewhere new is still found.
 /// None is ticked or cleaned without a review. A worktree its repository forgot is not
 /// offered: git cannot say what in it was never committed, so the cleaner leaves it.
 public struct WorktreeScanner: CleanScanner {
     static let group = "Worktrees"
 
     /// Where Claude Code, Codex, Cursor, T3 Code and Conductor keep worktrees, relative to the home folder.
-    static let toolFolders = [".claude/worktrees", ".codex/worktrees", ".cursor/worktrees", ".t3/worktrees", "conductor/workspaces"]
+    static let toolFolders = [".claude/worktrees", ".codex/worktrees", ".cursor/worktrees", ".t3/worktrees", ".antimatter/worktrees",
+                              "conductor/workspaces"]
     static let toolNames = [".claude/worktrees": "Claude Code", ".codex/worktrees": "Codex", ".cursor/worktrees": "Cursor",
-                            ".t3/worktrees": "T3 Code", "conductor/workspaces": "Conductor"]
+                            ".t3/worktrees": "T3 Code", ".antimatter/worktrees": "mattr", "conductor/workspaces": "Conductor"]
 
     public var tab: CleanTab { .developer }
     /// Absolute folders holding repositories; nil for the usual code folders in the home folder.
@@ -51,15 +54,18 @@ public struct WorktreeScanner: CleanScanner {
         var containers = Self.toolFolders.map { (home + "/" + $0, agent: true) }
         // Next to repositories: <repo>/.claude/worktrees and <name>-worktrees folders, one or two levels into each root.
         let rootPaths = roots ?? CleanFiles.projectRoots(home: home, readsGuarded: readsGuarded)
+        var repositories: [String] = []
         for root in rootPaths {
             for name in CleanFiles.names(root) where !name.hasPrefix(".") {
                 let child = root + "/" + name
                 containers.append((child + "/.claude/worktrees", true))
                 if name.hasSuffix("-worktrees") { containers.append((child, false)); continue }
+                if CleanFiles.isDirectory(child + "/.git") { repositories.append(child) }
                 guard !CleanFiles.exists(child + "/.git"), CleanFiles.isDirectory(child) else { continue }
                 for inner in CleanFiles.names(child) where !inner.hasPrefix(".") {
                     containers.append((child + "/" + inner + "/.claude/worktrees", true))
                     if inner.hasSuffix("-worktrees") { containers.append((child + "/" + inner, false)) }
+                    if CleanFiles.isDirectory(child + "/" + inner + "/.git") { repositories.append(child + "/" + inner) }
                 }
             }
         }
@@ -69,6 +75,20 @@ public struct WorktreeScanner: CleanScanner {
         for (container, agent) in containers where CleanFiles.isDirectory(container) && seen.insert(container).inserted {
             if context.isCancelled() { return [] }
             find(container, level: 0, listsEvery: agent, home: home, readsGuarded: readsGuarded, context: context, into: &worktrees)
+        }
+        // Each repository's own record of its worktrees, wherever they are. Repositories the tool
+        // folders' worktrees belong to count too, though they may sit outside the code folders.
+        var found = Set(worktrees.map(\.path))
+        var asked = Set<String>()
+        for repository in repositories + worktrees.map(\.repository) where asked.insert(repository).inserted {
+            if context.isCancelled() { return [] }
+            for path in Self.linked(repository) where !found.contains(path) && !context.isExcluded(path) {
+                guard let tracked = Self.tracked(path, home: home, readsGuarded: readsGuarded) else { continue }
+                found.insert(path)
+                // A worktree in a tool's folder, or anywhere hidden in the home folder, is a tool's; people's go stale first.
+                let tools = Self.maker(of: path, home: home) != nil || Self.hidden(path, home: home)
+                if tools || tracked.lastUsed!.timeIntervalSinceNow < -staleAfter { worktrees.append(tracked) }
+            }
         }
 
         let busy = workingFolders()
@@ -97,6 +117,25 @@ public struct WorktreeScanner: CleanScanner {
         // A process that ends right after its scan, like the CLI, keeps what it measured.
         sizer.cache?.save()
         return items
+    }
+
+    /// The worktrees git records for a repository, from `.git/worktrees/<name>/gitdir`, which names each one's `.git` file.
+    static func linked(_ repository: String) -> [String] {
+        let admin = repository + "/.git/worktrees"
+        return CleanFiles.names(admin).compactMap { name in
+            guard let text = try? String(contentsOfFile: admin + "/" + name + "/gitdir", encoding: .utf8) else { return nil }
+            let file = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard file.hasSuffix("/.git") else { return nil }
+            let absolute = file.hasPrefix("/") ? file : ((admin + "/" + name) as NSString).appendingPathComponent(file)
+            let path = ((absolute as NSString).deletingLastPathComponent as NSString).standardizingPath
+            return CleanFiles.isDirectory(path) ? path : nil
+        }
+    }
+
+    /// Inside a folder of the home folder whose name starts with a dot, where people rarely put worktrees by hand.
+    static func hidden(_ path: String, home: String) -> Bool {
+        guard path.hasPrefix(home + "/") else { return false }
+        return path.dropFirst(home.count + 1).hasPrefix(".")
     }
 
     /// Worktrees sit a level or two down (tool/repo/name); a folder with a .git file is one, and is not walked into.
