@@ -188,6 +188,28 @@ import Testing
         #expect(mine.origin == CleanOrigin(project: home.path + "/src/repo", branch: "mine-old"))
     }
 
+    @Test func repositoriesNameWorktreesOutsideTheKnownFolders() throws {
+        let home = FakeHome()
+        home.file("src/repo/.git/HEAD", text: "ref: refs/heads/main")
+        // Where git records each worktree: .git/worktrees/<name>/gitdir names the worktree's .git file.
+        for (name, folder) in [("mattr", ".antimatter/worktrees/repo/t3-1"), ("newtool", ".newtool/trees/repo/a"),
+                               ("mine-fresh", "elsewhere/mine-fresh"), ("mine-old", "elsewhere/mine-old")] {
+            home.file("src/repo/.git/worktrees/\(name)/HEAD", text: "ref: refs/heads/\(name)")
+            home.file("src/repo/.git/worktrees/\(name)/gitdir", text: home.path + "/" + folder + "/.git\n")
+            worktree(home, folder, gitdir: home.path + "/src/repo/.git/worktrees/\(name)")
+        }
+        // git still lists one whose folder is gone; there is nothing to clean.
+        home.file("src/repo/.git/worktrees/gone/gitdir", text: home.path + "/elsewhere/gone/.git\n")
+        home.age("elsewhere/mine-old", days: 40)
+        home.age("src/repo/.git/worktrees/mine-old", days: 40)
+
+        let scanner = WorktreeScanner(roots: [home.path + "/src"], workingFolders: { [] }, readsGuardedFolders: { true })
+        let items = scanner.scan(home.context())
+        #expect(Set(items.map(\.name)) == ["t3-1 (repo)", "a (repo)", "mine-old (repo)"])
+        #expect(items.first { $0.name == "t3-1 (repo)" }?.origin?.madeBy == "mattr")
+        #expect(items.first { $0.name == "a (repo)" }?.origin?.madeBy == nil)
+    }
+
     @Test func worktreesNameTheToolWhoseFolderHoldsThem() {
         let home = "/Users/me"
         #expect(WorktreeScanner.maker(of: home + "/.t3/worktrees/track/mac-live", home: home) == "T3 Code")
