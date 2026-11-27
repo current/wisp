@@ -171,6 +171,8 @@ wisp storage             # disk space by kind and what can go
 wisp clean               # what Clean Up would remove; --apply trashes the safe items
 wisp clean --explain agent-ae2e   # where a row came from: tool, repository, branch, download address
 wisp uninstall Slack     # an app and its files in ~/Library; --apply to remove
+wisp fans                # fan speeds, temperatures and the fan mode
+wisp fans set quiet      # or auto, balanced, max, 60%, or a saved curve
 wisp ports               # dev servers by project
 wisp agents
 wisp docker
@@ -187,13 +189,28 @@ slowing the machine down:
 claude mcp add wisp -- /usr/local/bin/wisp mcp
 ```
 
-It can also ask to quit an app. Wisp shows you the app and the reason, and quits
-it only if you click Quit. It can list what Clean Up and an uninstall would
+It can also ask to quit an app or to change the fan mode. Wisp shows you the
+request and the reason, and acts only if you agree. It can list what Clean Up and an uninstall would
 remove, but it can't remove anything. When the Clean Up page scanned in the last
 day, the assistant sees the same rows and ticks you do, so you can ask it where a
 row like `agent-ae2e7c6 (t3code)` came from. `explain_cleanable` answers with the
 tool that made it, the repository and branch, uncommitted and unpushed work, or
 the address a download came from.
+
+### Fan control
+
+The Sensors page sets the fans to Automatic (macOS decides), one of four curves
+(Silent, Quiet, Balanced, Cool, each faster than the last), Max, a fixed speed, or a curve of your own that sets fan speed by temperature, as a
+percent of each fan's range. Where a curve is at 0%, macOS has
+the fans again, so they stop when the chip is cool.
+
+Writing fan speeds needs root, so the first time you turn it on macOS asks for
+your password and Wisp installs a helper at
+`/Library/PrivilegedHelperTools/app.wisp.fans` as a launch daemon. It runs the
+chosen mode every two seconds with Wisp open or not. It takes requests only from
+your user account. Any CPU or GPU sensor at 95 °C runs the fans at full speed
+until everything is under 85 °C. When the helper stops, the fans go back to
+macOS. `wisp fans uninstall` or Remove Fan Helper on the Sensors page removes it.
 
 ### Plan limits
 

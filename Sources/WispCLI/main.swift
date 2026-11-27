@@ -24,6 +24,10 @@ usage: wisp <command> [options]
   uninstall APP       what uninstalling an app removes: the app and its files in ~/Library
       --apply                                 move the ticked items to the Trash
       --list                                  installed apps and what uninstalling each frees
+  fans                fan speeds, temperatures and the fan mode
+      set MODE                                auto, silent, quiet, balanced, cool, max, 60% or a saved curve (needs the helper)
+      curves                                  the built-in and saved curves
+      install | uninstall                     add or remove the fan helper (asks for your password)
   mcp                 run as a read-only MCP server on stdin/stdout
 
   --json              print JSON instead of a table
@@ -79,6 +83,9 @@ if command == "clean" {
 if command == "storage" {
     StorageCommand.run(json: json)
     exit(0)
+}
+if command == "fans" {
+    exit(FanCommand.run(Array(args.dropFirst()), json: json))
 }
 if command == "uninstall" {
     exit(UninstallCommand.run(Array(args.dropFirst()), json: json))

@@ -8,6 +8,7 @@ let package = Package(
         .library(name: "WispCore", targets: ["WispCore"]),
         .executable(name: "WispApp", targets: ["WispApp"]),
         .executable(name: "wisp", targets: ["WispCLI"]),
+        .executable(name: "wisp-fan-helper", targets: ["WispFanHelper"]),
     ],
     targets: [
         // The collectors wrap Mach, libproc and IOKit calls that are confined to one
@@ -25,6 +26,11 @@ let package = Package(
         ),
         .executableTarget(
             name: "WispCLI",
+            dependencies: ["WispCore"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .executableTarget(
+            name: "WispFanHelper",
             dependencies: ["WispCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

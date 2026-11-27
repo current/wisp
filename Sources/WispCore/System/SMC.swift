@@ -81,6 +81,30 @@ final class SMC {
         }
     }
 
+    /// Writes a number in the key's own type. Only root may write; anyone else gets false.
+    func write(_ key: UInt32, _ info: KeyInfo, _ value: Double) -> Bool {
+        var bytes: [UInt8]
+        switch info.type {
+        case Self.code("flt ") where info.size == 4:
+            bytes = withUnsafeBytes(of: Float32(value)) { Array($0) }
+        case Self.code("ui8 ") where info.size == 1:
+            bytes = [UInt8(clamping: Int(value.rounded()))]
+        case Self.code("ui16") where info.size == 2:
+            bytes = withUnsafeBytes(of: UInt16(clamping: Int(value.rounded())).bigEndian) { Array($0) }
+        default:
+            return false
+        }
+        memset(input, 0, 80)
+        input.storeBytes(of: key, toByteOffset: 0, as: UInt32.self)
+        input.storeBytes(of: info.size, toByteOffset: 28, as: UInt32.self)
+        input.storeBytes(of: info.type, toByteOffset: 32, as: UInt32.self)
+        input.storeBytes(of: UInt8(6), toByteOffset: 42, as: UInt8.self)
+        bytes.withUnsafeBytes { input.advanced(by: 48).copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        var outSize = 80
+        guard IOConnectCallStructMethod(connection, 2, input, 80, output, &outSize) == kIOReturnSuccess else { return false }
+        return output.load(fromByteOffset: 40, as: UInt8.self) == 0
+    }
+
     static func code(_ text: String) -> UInt32 {
         text.utf8.prefix(4).reduce(0) { ($0 << 8) | UInt32($1) }
     }
