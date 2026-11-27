@@ -244,8 +244,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Format.fahrenheit = settings.fahrenheit
         Format.bits = settings.bits
+        applyActivationPolicy()
+    }
+
+    /// A regular app, in the Dock and the app switcher, while the main window is open or the
+    /// setting asks for it; otherwise only in the menu bar. Closing the window keeps the menu bar items.
+    private func applyActivationPolicy() {
         // WISP_REGULAR makes Wisp a regular app, so on-screen captures show it active with its own menus.
-        let regular = settings.showInDock || ProcessInfo.processInfo.environment["WISP_REGULAR"] != nil
+        let windowOpen = mainWindow != nil && !MainWindowController.background
+        let regular = settings.showInDock || windowOpen || ProcessInfo.processInfo.environment["WISP_REGULAR"] != nil
         let policy: NSApplication.ActivationPolicy = regular ? .regular : .accessory
         if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
     }
@@ -302,6 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let appID { mainWindow?.reveal(appID: appID) }
             return
         }
+        applyActivationPolicy()
         NSApp.activate()
         mainWindow?.showWindow(nil)
         mainWindow?.window?.makeKeyAndOrderFront(nil)
@@ -314,6 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Dropping the controller frees the table views and their row caches.
         mainWindow = nil
         windowVisible = false
+        applyActivationPolicy()
     }
 
     func showPage(_ page: PageID) {

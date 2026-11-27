@@ -309,7 +309,7 @@ final class SettingsPage: NSViewController, Page {
                     delegate.change { $0.look = looks[i] }
                     rebuild()
                 }),
-                .control("Show Wisp in the Dock", "Off, Wisp lives in the menu bar only.", SettingsControls.toggle(s.showInDock) { [unowned self] on in delegate.change { $0.showInDock = on } }),
+                .control("Show Wisp in the Dock", "Off, Wisp is in the Dock only while its window is open.", SettingsControls.toggle(s.showInDock) { [unowned self] on in delegate.change { $0.showInDock = on } }),
                 .control("Open the window when Wisp starts", "Off, it starts in the menu bar.",
                          SettingsControls.toggle(s.openWindowAtLaunch) { [unowned self] on in delegate.change { $0.openWindowAtLaunch = on } }),
                 .control("Start on", "The page a new window opens on.",
