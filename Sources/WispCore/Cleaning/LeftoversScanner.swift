@@ -199,7 +199,7 @@ public struct LeftoversScanner: CleanScanner {
             var item = CleanItem(id: "leftovers:" + key, tab: .leftovers, group: "Removed apps", name: name,
                                  detail: "Files \(name == key ? "an app" : name) left in \(Self.list(candidate.areas)) after it was removed.",
                                  paths: candidate.paths.sorted(), bytes: bytes, modified: latest, safety: .checkFirst, removal: .trash,
-                                 ownerBundleID: key, checkedByDefault: false)
+                                 ownerBundleID: key, checkedByDefault: false, origin: CleanOrigin(madeBy: name))
             for path in candidate.paths { item.stamps[path] = figures[path]?.stamp }
             items.append(item)
         }

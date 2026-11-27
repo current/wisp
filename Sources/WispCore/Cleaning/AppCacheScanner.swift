@@ -104,7 +104,8 @@ public struct AppCacheScanner: CleanScanner {
                     : "Temporary files \(app.name) makes again as you use it."
                 batch.append(CleanItem(id: "appcache:\(app.paths[0])", tab: .junk, group: Self.group, name: "\(app.name) cache",
                                        detail: detail + size.unreadNote, paths: app.paths, bytes: size.bytes, modified: size.modified,
-                                       safety: costly ? .checkFirst : .safe, ownerBundleID: app.bundleID).stamped(sizes))
+                                       safety: costly ? .checkFirst : .safe, ownerBundleID: app.bundleID,
+                                       origin: CleanOrigin(madeBy: app.name)).stamped(sizes))
             }
             if !batch.isEmpty { context.found(batch) }
             items += batch

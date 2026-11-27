@@ -78,7 +78,7 @@ public struct SimulatorScanner: CleanScanner {
                         ? "A simulator that is not running. Removing it deletes the apps and data in it."
                         : "A simulator whose system is no longer installed, so it cannot start. Removing it deletes the apps and data in it.",
                     paths: paths, bytes: (device.dataPathSize ?? 0) + (device.logPathSize ?? 0), safety: .checkFirst,
-                    removal: .simulator(udid: device.udid), checkedByDefault: !isAvailable).stamped()
+                    removal: .simulator(udid: device.udid), checkedByDefault: !isAvailable, origin: CleanOrigin(madeBy: "Xcode")).stamped()
                 if isAvailable { stopped.append(item) } else { unavailable.append(item) }
             }
         }
@@ -94,7 +94,7 @@ public struct SimulatorScanner: CleanScanner {
                              name: "\(os) runtime" + (runtime.build.map { " (\($0))" } ?? ""),
                              detail: "A simulator system no simulator uses. Xcode downloads it again from Settings, Components.",
                              paths: [], bytes: runtime.sizeBytes ?? 0, safety: .checkFirst,
-                             removal: .simulatorRuntime(identifier: runtime.identifier))
+                             removal: .simulatorRuntime(identifier: runtime.identifier), origin: CleanOrigin(madeBy: "Xcode"))
         }
 
         let items = unavailable.sorted { $0.bytes > $1.bytes } + runtimeItems + stopped.sorted { $0.bytes > $1.bytes }

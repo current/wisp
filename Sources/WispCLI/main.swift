@@ -19,6 +19,7 @@ usage: wisp <command> [options]
       --tab junk|developer|large|leftovers|uninstall
       --apply                                 move the items marked safe to the Trash
       --history                               past cleans
+      --explain NAME                          where a row came from: the tool, repository, branch, download address
   why                 why the Mac is slow right now (looks for about 3 seconds)
   uninstall APP       what uninstalling an app removes: the app and its files in ~/Library
       --apply                                 move the ticked items to the Trash

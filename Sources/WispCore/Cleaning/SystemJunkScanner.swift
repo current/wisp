@@ -50,7 +50,8 @@ public struct SystemJunkScanner: CleanScanner {
                     let folder = (path as NSString).lastPathComponent
                     let app = LibraryArea.isReverseDNS(folder) ? AppNames.name(bundleID: folder) ?? folder : folder
                     items.append(CleanItem(id: "systemjunk:\(path)", tab: .junk, group: Self.group, name: "\(app) logs", detail: place.detail,
-                                           paths: [path], bytes: size.bytes, modified: size.modified, safety: .safe).stamped(sizes))
+                                           paths: [path], bytes: size.bytes, modified: size.modified, safety: .safe,
+                                           origin: CleanOrigin(madeBy: app)).stamped(sizes))
                 }
             }
             let size = sizer.total(rest, sizes: sizes)

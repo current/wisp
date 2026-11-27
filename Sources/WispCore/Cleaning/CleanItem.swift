@@ -76,6 +76,39 @@ public struct CleanStamp: Codable, Sendable, Hashable {
     }
 }
 
+/// Where an item came from, so a person or an assistant can tell what made a row
+/// whose name alone does not say. Each field is set only when the scanner knows it.
+public struct CleanOrigin: Codable, Sendable, Hashable {
+    /// The app or tool that made it: "T3 Code", "Xcode", "Google Chrome", "Time Machine".
+    public var madeBy: String?
+    /// The project or repository folder it belongs to.
+    public var project: String?
+    /// The branch a git worktree has checked out.
+    public var branch: String?
+    /// Where a downloaded file came from: its address, then the page it was downloaded from.
+    public var downloadedFrom: [String]?
+
+    public init(madeBy: String? = nil, project: String? = nil, branch: String? = nil, downloadedFrom: [String]? = nil) {
+        self.madeBy = madeBy
+        self.project = project
+        self.branch = branch
+        self.downloadedFrom = downloadedFrom
+    }
+
+    /// The addresses Safari, Chrome, curl and most browsers record on a file they download,
+    /// in its `com.apple.metadata:kMDItemWhereFroms` attribute. Nil when there are none.
+    public static func downloadedFrom(_ path: String) -> [String]? {
+        let name = "com.apple.metadata:kMDItemWhereFroms"
+        let length = getxattr(path, name, nil, 0, 0, XATTR_NOFOLLOW)
+        guard length > 0 else { return nil }
+        var bytes = [UInt8](repeating: 0, count: length)
+        guard getxattr(path, name, &bytes, length, 0, XATTR_NOFOLLOW) == length,
+              let list = try? PropertyListSerialization.propertyList(from: Data(bytes), format: nil) as? [String] else { return nil }
+        let addresses = list.filter { !$0.isEmpty }
+        return addresses.isEmpty ? nil : addresses
+    }
+}
+
 /// One row on the Clean Up page: something that can go, what it is and what removing it costs.
 public struct CleanItem: Codable, Sendable, Identifiable, Hashable {
     /// Stable across scans: the scanner's kind plus the first path, so selections and exclusions survive a rescan.
@@ -97,17 +130,19 @@ public struct CleanItem: Codable, Sendable, Identifiable, Hashable {
     public var ownerBundleID: String?
     /// Strict matches arrive ticked; loose ones (a name match) arrive unticked for the owner to confirm.
     public var checkedByDefault: Bool
+    /// What made it and what it belongs to, when the scanner knows.
+    public var origin: CleanOrigin?
     /// What each path was when the scan saw it. A clean leaves a path whose stamp is missing
     /// or no longer matches. Kept out of JSON: it means nothing outside this Mac and this run.
     public var stamps: [String: CleanStamp] = [:]
 
     private enum CodingKeys: String, CodingKey {
-        case id, tab, group, name, detail, paths, bytes, modified, safety, removal, ownerBundleID, checkedByDefault
+        case id, tab, group, name, detail, paths, bytes, modified, safety, removal, ownerBundleID, checkedByDefault, origin
     }
 
     public init(id: String, tab: CleanTab, group: String, name: String, detail: String, paths: [String], bytes: Int64,
                 modified: Date? = nil, safety: CleanSafety, removal: CleanRemoval = .trash, ownerBundleID: String? = nil,
-                checkedByDefault: Bool = true) {
+                checkedByDefault: Bool = true, origin: CleanOrigin? = nil) {
         self.id = id
         self.tab = tab
         self.group = group
@@ -120,6 +155,7 @@ public struct CleanItem: Codable, Sendable, Identifiable, Hashable {
         self.removal = removal
         self.ownerBundleID = ownerBundleID
         self.checkedByDefault = checkedByDefault
+        self.origin = origin
     }
 
     /// Records what is at each path not stamped yet. Scanners call it where they measure a

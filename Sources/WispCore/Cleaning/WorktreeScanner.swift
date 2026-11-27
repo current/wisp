@@ -9,6 +9,8 @@ public struct WorktreeScanner: CleanScanner {
 
     /// Where Claude Code, Codex, Cursor, T3 Code and Conductor keep worktrees, relative to the home folder.
     static let toolFolders = [".claude/worktrees", ".codex/worktrees", ".cursor/worktrees", ".t3/worktrees", "conductor/workspaces"]
+    static let toolNames = [".claude/worktrees": "Claude Code", ".codex/worktrees": "Codex", ".cursor/worktrees": "Cursor",
+                            ".t3/worktrees": "T3 Code", "conductor/workspaces": "Conductor"]
 
     public var tab: CleanTab { .developer }
     /// Absolute folders holding repositories; nil for the usual code folders in the home folder.
@@ -28,8 +30,18 @@ public struct WorktreeScanner: CleanScanner {
 
     struct Worktree {
         var path: String
+        /// The main repository's folder.
         var repository: String
+        var branch: String?
         var lastUsed: Date?
+
+        var repositoryName: String { (repository as NSString).lastPathComponent }
+    }
+
+    /// The tool whose folder holds `path`: one of `toolFolders` in the home folder, or `.claude/worktrees` inside a repository.
+    static func maker(of path: String, home: String) -> String? {
+        if let folder = toolFolders.first(where: { path.hasPrefix(home + "/" + $0 + "/") }) { return toolNames[folder] }
+        return path.contains("/.claude/worktrees/") ? "Claude Code" : nil
     }
 
     public func scan(_ context: CleanScanContext) -> [CleanItem] {
@@ -70,10 +82,12 @@ public struct WorktreeScanner: CleanScanner {
             if sizer.cancelled { return [] }
             let found = batch.map { worktree in
                 let size = sizes[worktree.path] ?? .init(bytes: 0, modified: nil)
+                let maker = Self.maker(of: worktree.path, home: home)
                 return CleanItem(id: "worktree:\(worktree.path)", tab: .developer, group: Self.group,
-                                 name: "\((worktree.path as NSString).lastPathComponent) (\(worktree.repository))",
-                                 detail: "A git worktree, last used \(Self.ago(worktree.lastUsed ?? Date())). Its commits and branch stay in \(worktree.repository); files git ignores, like build output and .env files, go with it. Wisp leaves it if anything in it is not committed." + size.unreadNote,
-                                 paths: [worktree.path], bytes: size.bytes, modified: size.modified, safety: .checkFirst, checkedByDefault: false)
+                                 name: "\((worktree.path as NSString).lastPathComponent) (\(worktree.repositoryName))",
+                                 detail: "A git worktree\(maker.map { " \($0) made" } ?? ""), last used \(Self.ago(worktree.lastUsed ?? Date())). Its commits and branch stay in \(worktree.repositoryName); files git ignores, like build output and .env files, go with it. Wisp leaves it if anything in it is not committed." + size.unreadNote,
+                                 paths: [worktree.path], bytes: size.bytes, modified: size.modified, safety: .checkFirst, checkedByDefault: false,
+                                 origin: CleanOrigin(madeBy: maker, project: worktree.repository, branch: worktree.branch))
                     .stamped(sizes)
             }
             context.found(found)
@@ -117,7 +131,14 @@ public struct WorktreeScanner: CleanScanner {
             if lstat(path, &info) == 0 { newest = max(newest, Double(info.st_mtimespec.tv_sec)) }
         }
         let repository = gitdir.components(separatedBy: "/.git/worktrees/")[0]
-        return Worktree(path: worktree, repository: (repository as NSString).lastPathComponent, lastUsed: Date(timeIntervalSince1970: newest))
+        return Worktree(path: worktree, repository: repository, branch: branch(gitdir: gitdir), lastUsed: Date(timeIntervalSince1970: newest))
+    }
+
+    /// The branch HEAD names in a git folder; nil for a detached HEAD.
+    static func branch(gitdir: String) -> String? {
+        guard let head = try? String(contentsOfFile: gitdir + "/HEAD", encoding: .utf8),
+              head.hasPrefix("ref: refs/heads/") else { return nil }
+        return head.dropFirst("ref: refs/heads/".count).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// "today", "yesterday" or "12 days ago".

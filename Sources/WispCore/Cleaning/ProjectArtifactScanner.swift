@@ -154,7 +154,7 @@ public struct ProjectArtifactScanner: CleanScanner {
                 batch.append(CleanItem(id: "project-\(name):\(project)", tab: .developer, group: Self.group, name: "\(name) in \(projectName)",
                                        detail: artifact.detail + "." + size.unreadNote, paths: paths, bytes: size.bytes,
                                        modified: Date(timeIntervalSince1970: last), safety: artifact.cleanSafety,
-                                       checkedByDefault: artifact.cleanSafety == .safe).stamped(sizes))
+                                       checkedByDefault: artifact.cleanSafety == .safe, origin: CleanOrigin(project: project)).stamped(sizes))
             }
             batch.sort { $0.bytes > $1.bytes }
             if !batch.isEmpty { context.found(batch) }
