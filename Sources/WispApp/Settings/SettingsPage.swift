@@ -660,6 +660,9 @@ final class SettingsPage: NSViewController, Page {
                 }))
             }
         }
+        if item.metric == .temperature {
+            rows.append(.control("Shows", nil, popup(item.temperature, \.title) { $0.temperature = $1 }))
+        }
         rows.append(.control("Label", nil, popup(item.label, \.title, rebuilds: true) { $0.label = $1 }))
         if item.label == .above || item.label == .before {
             let usage = item.metric == .usage ? delegate.plans.plans.first { $0.id == item.usageAccount } : nil

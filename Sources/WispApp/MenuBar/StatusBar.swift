@@ -265,7 +265,11 @@ final class StatusBar {
         case .gpu:
             return Reading(text: s.gpu?.utilization.map { Format.percent($0) } ?? "–", strained: Strain.gpu(s.gpu), ceiling: 1)
         case .temperature:
-            return Reading(text: s.thermal?.cpuCelsius.map(Format.celsius) ?? "–", strained: Strain.temperature(s.thermal), ceiling: 110)
+            let celsius = setting.temperature == .cpuHottest
+                ? s.thermal?.sensors.filter { $0.name.hasPrefix("CPU") }.map(\.celsius).max()
+                : s.thermal?.cpuCelsius
+            return Reading(text: celsius.map(Format.celsius) ?? "–", strained: Strain.temperature(s.thermal), ceiling: 110,
+                           name: setting.temperature == .cpuHottest ? "hottest CPU sensor" : "CPU average")
         case .battery:
             return Reading(text: s.battery.map { Format.percent($0.percent / 100) } ?? "–", strained: Strain.battery(s.battery), ceiling: 100)
         case .disk:
